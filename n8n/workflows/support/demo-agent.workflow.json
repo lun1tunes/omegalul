@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Agent — Demo Agent** — один LLM + FastAPI tools (сгенерировано из `agents/demo_agent.py`).\n\n1. Bind **Qwen** credential on Demo Agent Chat Model — Qwen\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (поле `demo_agent_url` = URL сервиса).\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `excel_protocol`).\n4. Оркестратор вызывает этот workflow через универсальный `Call agent (n8n)` по id из `agent_registry.invoke`. После импорта через UI id меняется — впишите новый id (из URL этого workflow) в `MAS — Runtime Config` → `agent_workflow_ids`.\n5. Settings → **Error workflow** = `Error — MAS Node Traces` (после импорта через UI ссылка по id теряется): упавший узел попадёт в лог кейса (Activity → Режим разработчика → Лог).\n\nИнструмент выбирает LLM по задаче (нет regex-роутера). Вопрос инженеру — только `ask_engineer` прозой с вариантами; ошибки аргументов возвращаются LLM, не человеку. Результат читается из GET /sessions/{id}/result, сессия закрывается POST /sessions/{id}/close.",
+        "content": "## edit after import\n\n**Agent — Demo Agent** — один LLM + FastAPI tools (сгенерировано из `agents/demo_agent.py`).\n\n1. Bind **Qwen** credential on **Demo Agent Agent chat** (тот же OpenAI-compatible, что у Decision chat оркестратора).\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (поле `demo_agent_url` = URL сервиса).\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `excel_protocol`).\n4. Оркестратор вызывает этот workflow через универсальный `Call agent (n8n)` по id из `agent_registry.invoke`. После импорта через UI id меняется — впишите новый id (из URL этого workflow) в `MAS — Runtime Config` → `agent_workflow_ids`.\n5. Settings → **Error workflow** = `Error — MAS Node Traces` (после импорта через UI ссылка по id теряется): упавший узел попадёт в лог кейса (Activity → Режим разработчика → Лог).\n\nИнструмент выбирает LLM по задаче (нет regex-роутера). Вопрос инженеру — только `ask_engineer` прозой с вариантами; ошибки аргументов возвращаются LLM, не человеку. Результат читается из GET /sessions/{id}/result, сессия закрывается POST /sessions/{id}/close.",
         "height": 360,
         "width": 480,
         "color": 1
@@ -281,7 +281,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const RAG_TARGET_BASE=\"excel_protocol\";\nconst RAG_ACCESS_SCOPE=\"petroleum-engineering\";\nconst RAG_KNOWLEDGE_TYPES=[\"protocol_instruction\"];\nconst RAG_TOP_K=8;\nconst RAG_TOPICS=[\"протокол\", \"clarification\"];\nconst opened=$json||{};\nconst task=$('Normalize demo task').first().json.agent_task||{};\nconst objective=String(opened.objective||task.objective||'');\nconst handoff=String(opened.handoff_message||task.handoff_message||'');\nconst blob=[objective,handoff].join('\\n');\nconst low=blob.toLowerCase();\n// Retrieval filters. Hints below only narrow the RAG slice — they never pick a tool.\nconst keyword_families=[];\nconst topics=RAG_TOPICS.slice();\nconst task_patterns=[];\nconst query=blob.trim().replace(/\\b[\\w.-]+\\.(xlsx|xls|xlsm|inc|dev|txt|csv)\\b/gi,' ').replace(/\\s+/g,' ').trim().slice(0,800)||\"excel_protocol instruction\";\nconst retrieval_selector={target_base:RAG_TARGET_BASE,knowledge_types:RAG_KNOWLEDGE_TYPES};\nconst schedule_retrieval_request={\n  query,\n  filters:{target_base:RAG_TARGET_BASE,access_scope:RAG_ACCESS_SCOPE,knowledge_types:RAG_KNOWLEDGE_TYPES,keyword_families:[...new Set(keyword_families)].slice(0,6),topics:[...new Set(topics)],task_patterns:[...new Set(task_patterns)]},\n  top_k:RAG_TOP_K\n};\n// The LLM decides which tool fits: task text + what open_session found + what the engineer already answered.\nconst engineerAnswers=Array.isArray(opened.engineer_answers)?opened.engineer_answers:[];\nconst reworkReason=String(opened.rework_reason||(task.inputs&&task.inputs.rework_reason)||'').trim();\nconst planner_input=JSON.stringify({\n  objective,\n  handoff_message:handoff,\n  inspect:opened.inspect||{},\n  engineer_answers:engineerAnswers,\n  ...(reworkReason?{rework_reason:reworkReason}:{}),\n  ...(opened.expected_output&&typeof opened.expected_output==='object'&&Object.keys(opened.expected_output).length?{expected_output:opened.expected_output}:{})\n});\nreturn [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];\n"
+        "jsCode": "const RAG_TARGET_BASE=\"excel_protocol\";\nconst RAG_ACCESS_SCOPE=\"petroleum-engineering\";\nconst RAG_KNOWLEDGE_TYPES=[\"protocol_instruction\"];\nconst RAG_TOP_K=8;\nconst RAG_TOPICS=[\"протокол\"];\nconst opened=$json||{};\nconst task=$('Normalize demo task').first().json.agent_task||{};\nconst objective=String(opened.objective||task.objective||'');\nconst handoff=String(opened.handoff_message||task.handoff_message||'');\nconst blob=[objective,handoff].join('\\n');\nconst low=blob.toLowerCase();\n// Retrieval filters from inspect / expected_output (spec JS). Task text is query only.\nconst keyword_families=[];\nconst topics=RAG_TOPICS.slice();\nconst task_patterns=[];\nconst query=blob.trim().replace(/\\b[\\w.-]+\\.(xlsx|xls|xlsm|inc|dev|txt|csv)\\b/gi,' ').replace(/\\s+/g,' ').trim().slice(0,800)||\"excel_protocol instruction\";\nconst retrieval_selector={target_base:RAG_TARGET_BASE,knowledge_types:RAG_KNOWLEDGE_TYPES};\nconst schedule_retrieval_request={\n  query,\n  filters:{target_base:RAG_TARGET_BASE,access_scope:RAG_ACCESS_SCOPE,knowledge_types:RAG_KNOWLEDGE_TYPES,keyword_families:[...new Set(keyword_families)].slice(0,6),topics:[...new Set(topics)],task_patterns:[...new Set(task_patterns)]},\n  top_k:RAG_TOP_K\n};\n// The LLM decides which tool fits: task text + what open_session found + what the engineer already answered.\nconst engineerAnswers=Array.isArray(opened.engineer_answers)?opened.engineer_answers:[];\nconst reworkReason=String(opened.rework_reason||(task.inputs&&task.inputs.rework_reason)||'').trim();\nconst planner_input=JSON.stringify({\n  objective,\n  handoff_message:handoff,\n  inspect:opened.inspect||{},\n  engineer_answers:engineerAnswers,\n  ...(reworkReason?{rework_reason:reworkReason}:{}),\n  ...(opened.expected_output&&typeof opened.expected_output==='object'&&Object.keys(opened.expected_output).length?{expected_output:opened.expected_output}:{})\n});\nreturn [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];\n"
       },
       "id": "9d997123-b7f8-528d-932f-08dc602d891d",
       "name": "Prepare AI Agent input",
@@ -328,7 +328,7 @@
     },
     {
       "parameters": {
-        "jsCode": "function unwrapRetrieval(raw){\n  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\n  const src=obj(raw)?raw:{};\n  if(obj(src.schedule_retrieval_result)) return src.schedule_retrieval_result;\n  if(obj(src.body)&&obj(src.body.schedule_retrieval_result)) return src.body.schedule_retrieval_result;\n  if(String(src.contract||'')==='schedule_retrieval_result') return src;\n  if(src.error||Number(src.statusCode)>=400) return {status:'failed',findings:[{code:'RETRIEVAL_CALL_FAILED'}],results:[]};\n  return src;\n}\nfunction compactRetrievalCards(result, selector, limit, textLimit){\n  const rows=Array.isArray(result.results)?result.results:[];\n  const wantedBase=String(selector.target_base||'');\n  const wantedTypes=new Set((selector.knowledge_types||[]).map(v=>String(v).toLowerCase()));\n  const cap=Number(limit)||6;\n  const cut=Number(textLimit)||700;\n  const minText=50;\n  const relKeep=0.45;\n  const scored=[];\n  for(const r of rows){\n    if(!r||typeof r!=='object') continue;\n    const body=r.body&&typeof r.body==='object'?r.body:{};\n    const base=String(r.target_base||body.target_base||(result.filters&&result.filters.target_base)||'');\n    const kt=String(r.knowledge_type||body.knowledge_type||'').toLowerCase();\n    if(wantedBase&&base&&base!==wantedBase) continue;\n    if(wantedTypes.size&&kt&&!wantedTypes.has(kt)) continue;\n    const text=String(body.text||body.instruction||r.text||'').trim();\n    if(text.length<minText) continue;\n    const score=r.rrf_score!=null?Number(r.rrf_score):(body.rrf_score!=null?Number(body.rrf_score):null);\n    if(Number.isFinite(score)&&score<=0) continue;\n    scored.push({\n      knowledge_id:String(r.knowledge_id||body.knowledge_id||''),\n      title:String(r.title||body.title||'').slice(0,160),\n      knowledge_type:kt||null,\n      text:text.slice(0,cut),\n      _score:Number.isFinite(score)?score:null\n    });\n  }\n  const finite=scored.map(c=>c._score).filter(s=>s!=null);\n  const best=finite.length?Math.max.apply(null,finite):0;\n  const floor=best>0?best*relKeep:0;\n  const kept=scored.filter(c=>c._score==null||floor<=0||c._score>=floor);\n  kept.sort((a,b)=>{\n    if(a._score==null&&b._score==null) return 0;\n    if(a._score==null) return 1;\n    if(b._score==null) return -1;\n    return b._score-a._score;\n  });\n  return kept.slice(0,cap).map(c=>({knowledge_id:c.knowledge_id,title:c.title,knowledge_type:c.knowledge_type,text:c.text}));\n}\nconst prev=$(\"Prepare AI Agent input\").first().json||{};\nconst raw=$json||{};\nconst result=unwrapRetrieval(raw);\nconst fallbackSelector={\"target_base\": \"excel_protocol\", \"knowledge_types\": [\"protocol_instruction\"]};\nconst fromPrev=prev.retrieval_selector;\nconst selector=(fromPrev&&fromPrev.target_base)?{target_base:String(fromPrev.target_base),knowledge_types:Array.isArray(fromPrev.knowledge_types)&&fromPrev.knowledge_types.length?fromPrev.knowledge_types:fallbackSelector.knowledge_types}:fallbackSelector;\nconst failed=result.status==='abstain'||result.status==='failed'||result.status==='needs_input'||Boolean(raw.error);\nconst cards=failed?[]:compactRetrievalCards(result,selector,8,1200);\nconst rag={contract:'mas_rag_evidence',contract_version:'1.0',target_base:selector.target_base,knowledge_types:selector.knowledge_types,status:failed?'unavailable':(cards.length?'ready':'empty'),cards,findings:(Array.isArray(result.findings)?result.findings:[]).slice(0,6).map(f=>f&&f.code).filter(Boolean)};\nconst note=rag.status==='ready'?\"Карточки — протокол инструментов (excel_protocol). Работай по задаче; про базу знаний инженера не спрашивай.\":\"Срез протокола пуст или недоступен — работай по задаче и правилам инструментов.\";\nconst planner=`${prev.planner_input||prev.agent_input||''}\\n\\nRetrieved knowledge (target_base=${selector.target_base}):\\n${JSON.stringify(rag,null,2)}\\n\\n${note}\\n`;\nreturn [{json:{...prev,rag,planner_input:planner,agent_input:planner}}];\n"
+        "jsCode": "function unwrapRetrieval(raw){\n  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\n  const src=obj(raw)?raw:{};\n  if(obj(src.schedule_retrieval_result)) return src.schedule_retrieval_result;\n  if(obj(src.body)&&obj(src.body.schedule_retrieval_result)) return src.body.schedule_retrieval_result;\n  if(String(src.contract||'')==='schedule_retrieval_result') return src;\n  if(src.error||Number(src.statusCode)>=400) return {status:'failed',findings:[{code:'RETRIEVAL_CALL_FAILED'}],results:[]};\n  return src;\n}\nfunction retrievalOutage(result, raw){\n  if(Boolean(raw&&raw.error)||Number(raw&&raw.statusCode)>=400) return 'failed';\n  const st=String((result&&result.status)||'').toLowerCase();\n  if(st==='failed'||st==='error') return 'failed';\n  if(st==='needs_input') return 'needs_input';\n  if(st==='abstain') return 'abstain';\n  if(st==='unavailable') return 'unavailable';\n  return '';\n}\nfunction compactRetrievalCards(result, selector, limit, textLimit, preferFull){\n  const rows=Array.isArray(result.results)?result.results:[];\n  const wantedBase=String(selector.target_base||'');\n  const wantedTypes=new Set((selector.knowledge_types||[]).map(v=>String(v).toLowerCase()));\n  const cap=Number(limit)||6;\n  const cut=Number(textLimit)||700;\n  const minText=50;\n  const relKeep=0.45;\n  const scored=[];\n  for(const r of rows){\n    if(!r||typeof r!=='object') continue;\n    const body=r.body&&typeof r.body==='object'?r.body:{};\n    const base=String(r.target_base||body.target_base||(result.filters&&result.filters.target_base)||'');\n    const kt=String(r.knowledge_type||body.knowledge_type||'').toLowerCase();\n    if(wantedBase&&base&&base!==wantedBase) continue;\n    if(wantedTypes.size&&kt&&!wantedTypes.has(kt)) continue;\n    const summary=String(body.summary||r.summary||'').trim();\n    const full=String(body.text||body.instruction||r.text||'').trim();\n    const text=preferFull?(full||summary):(summary||full);\n    if(text.length<minText) continue;\n    const score=r.rrf_score!=null?Number(r.rrf_score):(body.rrf_score!=null?Number(body.rrf_score):null);\n    if(Number.isFinite(score)&&score<=0) continue;\n    const topics=Array.isArray(r.topics)?r.topics:(Array.isArray(body.topics)?body.topics:[]);\n    scored.push({\n      knowledge_id:String(r.knowledge_id||body.knowledge_id||''),\n      title:String(r.title||body.title||'').slice(0,160),\n      knowledge_type:kt||null,\n      text:text.slice(0,cut),\n      revision:(r.revision!=null&&r.revision!=='')?r.revision:((body.revision!=null&&body.revision!=='')?body.revision:null),\n      rrf_score:Number.isFinite(score)?score:null,\n      branches:Array.isArray(r.branches)?r.branches.slice(0,6).map(b=>String(b)):(Array.isArray(body.branches)?body.branches.slice(0,6).map(b=>String(b)):[]),\n      topics:topics.slice(0,12).map(t=>String(t||'').trim()).filter(Boolean),\n      _score:Number.isFinite(score)?score:null\n    });\n  }\n  const finite=scored.map(c=>c._score).filter(s=>s!=null);\n  const best=finite.length?Math.max.apply(null,finite):0;\n  const floor=best>0?best*relKeep:0;\n  const want=new Set((Array.isArray(selector.topics)?selector.topics:[]).map(t=>String(t||'').toLowerCase()).filter(Boolean));\n  const orch=String(selector.target_base||'')==='orchestrator_routing';\n  const kept=scored.filter(c=>{\n    if(c._score==null||floor<=0) return true;\n    const cardTopics=(Array.isArray(c.topics)?c.topics:[]).map(t=>String(t||'').toLowerCase());\n    if(want.size&&cardTopics.some(t=>want.has(t))) return true;\n    const n=Array.isArray(c.branches)?c.branches.length:0;\n    if(n<2){\n      if(orch&&want.size) return false;\n      return true;\n    }\n    return c._score>=floor;\n  });\n  kept.sort((a,b)=>{\n    if(a._score==null&&b._score==null) return 0;\n    if(a._score==null) return 1;\n    if(b._score==null) return -1;\n    return b._score-a._score;\n  });\n  return kept.slice(0,cap).map(c=>({knowledge_id:c.knowledge_id,title:c.title,knowledge_type:c.knowledge_type,text:c.text,revision:c.revision,rrf_score:c.rrf_score,branches:c.branches,topics:c.topics}));\n}\nconst prev=$(\"Prepare AI Agent input\").first().json||{};\nconst raw=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst result=unwrapRetrieval(raw);\nconst fallbackSelector={\"target_base\": \"excel_protocol\", \"knowledge_types\": [\"protocol_instruction\"]};\nconst fromPrev=prev.retrieval_selector;\nconst req=obj(prev.schedule_retrieval_request)?prev.schedule_retrieval_request:{};\nconst wantTopics=Array.isArray(req.filters&&req.filters.topics)?req.filters.topics:[];\nconst selector=(fromPrev&&fromPrev.target_base)?{target_base:String(fromPrev.target_base),knowledge_types:Array.isArray(fromPrev.knowledge_types)&&fromPrev.knowledge_types.length?fromPrev.knowledge_types:fallbackSelector.knowledge_types,topics:wantTopics}:Object.assign({},fallbackSelector,{topics:wantTopics});\nconst outage=retrievalOutage(result,raw);\nconst cards=(outage==='failed'||outage==='needs_input')?[]:compactRetrievalCards(result,selector,8,1200);\nconst rag={contract:'mas_rag_evidence',contract_version:'1.0',target_base:selector.target_base,knowledge_types:selector.knowledge_types,status:outage||(cards.length?'ready':'empty'),phase:\"initial\",cards,findings:(Array.isArray(result.findings)?result.findings:[]).slice(0,6).map(f=>f&&f.code).filter(Boolean)};\nconst note=rag.status==='ready'?\"Карточки — протокол инструментов (excel_protocol). Работай по задаче; про базу знаний инженера не спрашивай.\":\"Срез протокола пуст или недоступен — работай по задаче и правилам инструментов.\";\nconst planner=`${prev.planner_input||prev.agent_input||''}\\n\\nRetrieved knowledge (target_base=${selector.target_base}):\\n${JSON.stringify(rag,null,2)}\\n\\n${note}\\n`;\nconst logCards=(Array.isArray(cards)?cards:[]).map(c=>({knowledge_id:String((c&&c.knowledge_id)||''),revision:(c&&c.revision)!=null?c.revision:null,rrf_score:Number.isFinite(Number(c&&c.rrf_score))?Number(c.rrf_score):null,branches:Array.isArray(c&&c.branches)?c.branches.slice(0,6):[]}));\nconst logFindings=(Array.isArray(result.findings)?result.findings:[]).slice(0,8).map(f=>{if(obj(f)&&f.code)return{code:String(f.code)};const code=String(f||'').trim();return code?{code}:null}).filter(Boolean);\nconst activity={activity_kind:'trace.rag',status_message:`База знаний: ${rag.status} · ${logCards.length} карточек`,activity_payload:{caller:\"demo_agent\",query:String(req.query||result.query||'').slice(0,800),filters:obj(req.filters)?req.filters:{},status:rag.status,phase:rag.phase,findings:logFindings,cards:logCards}};\nreturn [{json:{...prev,rag,planner_input:planner,agent_input:planner,...activity}}];\n"
       },
       "id": "cfede67b-a116-5558-81ef-65d2cad232de",
       "name": "Attach demo RAG evidence",
@@ -341,67 +341,417 @@
     },
     {
       "parameters": {
-        "promptType": "define",
-        "text": "={{ $json.planner_input }}",
-        "hasOutputParser": false,
-        "options": {
-          "systemMessage": "Ты — решатель агента Demo Agent (демонстрационный агент-шаблон). Ты читаешь задачу инженера и вызываешь один инструмент; считают инструменты, ты сам ничего не вычисляешь и SCHEDULE не пишешь.\n\nsession_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nКакой инструмент когда:\n- Задача просит посчитать или перечислить скважины (в тексте есть их номера или есть факты предыдущих агентов) → count_wells. Один вызов.\n- Задача просит запустить расчёт, прогон, долгую операцию или явно упоминает демонстрацию долгой работы → start_long_job с коротким русским названием расчёта в label. Один вызов, после ответа in_progress — STOP.\n- Из задачи непонятно, что считать, и в ней нет скважин → ask_engineer одним вопросом обычной русской фразой.\n\nОтветы инструментов:\n- ok:false, code:no_wells_found — это тебе, не инженеру: спроси инженера через ask_engineer, о каких скважинах речь.\n- ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.\n- status completed / in_progress / needs_input — результат зафиксирован, STOP.\n\nНе придумывай скважины и числа — только из ответов инструментов. Заверши одним коротким фактическим предложением по-русски.\n",
-          "maxIterations": 8,
-          "returnIntermediateSteps": true,
-          "passthroughBinaryImages": false,
-          "passthroughBinaryPdfs": false,
-          "enableStreaming": false
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize demo task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
         },
-        "needsFallback": false
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"demo_agent\", agent_id: \"demo_agent\", task_id: $('Normalize demo task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: Object.assign({source: \"demo-agent-agent-workflow\"}, $json.activity_payload || {}, {execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')})}) }}"
       },
-      "id": "f6527ea5-9ccf-503a-9b7b-2c322a9c5d2b",
-      "name": "Demo Agent AI Agent",
-      "type": "@n8n/n8n-nodes-langchain.agent",
-      "typeVersion": 3.1,
+      "id": "3b924d0c-a91a-55a9-8130-bbbe1208a4df",
+      "name": "Activity — Demo Agent RAG",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
       "position": [
-        1720,
+        1880,
+        300
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Attach demo RAG evidence').first().json||{}; return [{json:x}];"
+      },
+      "id": "0405eccd-53b7-5850-b304-59c9d348fcac",
+      "name": "Restore after Demo Agent RAG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2040,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst SYSTEM=\"Ты — решатель агента Demo Agent (демонстрационный агент-шаблон). Ты читаешь задачу инженера и вызываешь один инструмент; считают инструменты, ты сам ничего не вычисляешь и SCHEDULE не пишешь.\\n\\nsession_id привязан workflow: никогда не передавай session_id и обёртку args/input.\\n\\nКакой инструмент когда:\\n- Задача просит посчитать или перечислить скважины (в тексте есть их номера или есть факты предыдущих агентов) → count_wells. Один вызов.\\n- Задача просит запустить расчёт, прогон, долгую операцию или явно упоминает демонстрацию долгой работы → start_long_job с коротким русским названием расчёта в label. Один вызов, после ответа in_progress — STOP.\\n- Из задачи непонятно, что считать, и в ней нет скважин → ask_engineer одним вопросом обычной русской фразой.\\n\\nОтветы инструментов:\\n- ok:false, code:no_wells_found — это тебе, не инженеру: спроси инженера через ask_engineer, о каких скважинах речь.\\n- ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.\\n- status completed / in_progress / needs_input — результат зафиксирован, STOP.\\n\\nНе придумывай скважины и числа — только из ответов инструментов. Заверши одним коротким фактическим предложением по-русски.\\n\";\nconst TOOLS=[{\"type\": \"function\", \"function\": {\"name\": \"count_wells\", \"description\": \"Посчитать скважины, упомянутые в задаче и в фактах предыдущих агентов. Детерминированно.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"text\": {\"type\": \"string\", \"description\": \"Текст для подсчёта; пусто — берётся задача инженера\"}}, \"additionalProperties\": true}}}, {\"type\": \"function\", \"function\": {\"name\": \"start_long_job\", \"description\": \"Запустить долгий расчёт (имитация). Сразу возвращает in_progress; результат придёт позже через Activity.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"label\": {\"type\": \"string\", \"description\": \"Короткое русское название расчёта для ленты, например «Прогон демо-модели»\"}}, \"additionalProperties\": true}}}, {\"type\": \"function\", \"function\": {\"name\": \"ask_engineer\", \"description\": \"Спросить инженера одним вопросом по-русски, когда из задачи непонятно, что считать. Не для ошибок вызова инструментов.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"question\": {\"type\": \"string\", \"description\": \"Обычная русская фраза без имён полей и JSON\"}, \"options\": {\"type\": \"string\", \"description\": \"Варианты через точку с запятой, как их видит инженер; пусто — свободный ответ\"}}, \"additionalProperties\": true, \"required\": [\"question\"]}}}, {\"type\": \"function\", \"function\": {\"name\": \"retrieve_knowledge\", \"description\": \"Найти карточки в базе знаний по запросу. Вызови, когда в текущем срезе нет инструкции по нужному keyword или протоколу — особенно перед первым apply_dataset / apply_operations / extract_table по ним. keywords — имена keyword через запятую.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"Поисковый запрос (русская фраза или имена keyword)\"}, \"keywords\": {\"type\": \"string\", \"description\": \"Необязательно: семейства keyword через запятую\"}}, \"required\": [\"query\"]}}}];\nconst THINKING_OFF={\"reasoning\": {\"enabled\": false}, \"enable_thinking\": false, \"chat_template_kwargs\": {\"enable_thinking\": false}};\nconst SAMPLING={\"temperature\": 0.7, \"top_p\": 0.8, \"top_k\": 20, \"presence_penalty\": 1.5};\nconst DEFAULT_CHAT_MODEL=\"qwen/qwen3.6-27b\";\nconst MAX_ITER=8;\nconst prev=$json||{};\nlet cfg={};\ntry{cfg=$('Runtime configuration').first().json||{};}catch(e){cfg={}}\nconst model=String(cfg.chat_model||'').trim()||DEFAULT_CHAT_MODEL;\nconst base=String(cfg.chat_base_url||'').replace(/[/]+$/,'');\nconst chat_url=base?base+'/chat/completions':'';\nlet messages=Array.isArray(prev.messages)?prev.messages:[];\nif(!messages.length){\n  messages=[{role:'system',content:SYSTEM},{role:'user',content:String(prev.planner_input||prev.agent_input||'')}];\n}\nconst extra=parseChatExtra(cfg);\nconst chat_request={model,...SAMPLING,...THINKING_OFF,messages,tools:TOOLS,tool_choice:'auto',...extra};\nreturn [{json:{...prev,messages,chat_request,chat_url,max_iterations:MAX_ITER,iteration:Number(prev.iteration||0)}}];\n"
+      },
+      "id": "71cc6d5a-94e8-598f-b580-fc0e82d13469",
+      "name": "Build chat request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
         160
       ]
     },
     {
       "parameters": {
-        "model": {
-          "mode": "id",
-          "value": "qwen/qwen3.6-27b"
+        "method": "POST",
+        "url": "={{ $json.chat_url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
         },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.chat_request }}",
         "options": {
-          "temperature": 0,
           "timeout": 600000,
-          "maxRetries": 5
-        },
-        "responsesApiEnabled": false
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "neverError": true
+            }
+          }
+        }
       },
-      "id": "26c1fb21-a3e7-5337-b204-99d94b830096",
-      "name": "Demo Agent Chat Model — Qwen",
-      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
-      "typeVersion": 1.3,
+      "id": "843cda8b-9f1c-5b37-830f-ca7922df598e",
+      "name": "Demo Agent Agent chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
       "position": [
-        1720,
-        40
+        2480,
+        160
       ],
       "credentials": {
         "openAiApi": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Qwen OpenAI-compatible agent credential"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
     },
     {
       "parameters": {
-        "jsCode": "const agent=$json||{};\nconst opened=$('Open demo session').first().json||{};\nconst steps=Array.isArray(agent.intermediateSteps)?agent.intermediateSteps:(Array.isArray(agent.intermediate_steps)?agent.intermediate_steps:[]);\nconst toolName=step=>{\n  if(!step||typeof step!=='object') return '';\n  const a=step.action&&typeof step.action==='object'?step.action:step;\n  return String(a.tool||a.toolName||a.name||step.tool||'');\n};\nconst tools=steps.map(toolName).filter(Boolean);\nconst unique=[...new Set(tools)];\nconst counts={};\nfor(const name of tools) counts[name]=(counts[name]||0)+1;\nconst repeated=Object.keys(counts).some(name=>counts[name]>3);\n// A stored result exists after one of the result tools (completed) or ask_engineer (needs_input); the session is authoritative.\nconst hasResult=tools.some(n=>n==='count_wells' || n==='start_long_job' || n==='ask_engineer');\nconst skipFetch=!hasResult;\nconst finalText=String(agent.output||agent.text||'').trim();\n// Engineer-facing fallback when the LLM ended without fixing a result: plain Russian, no tool names.\nconst question=repeated?\"Demo Agent несколько раз пытался разобрать задачу и не смог. Опишите её одним-двумя предложениями.\":\"Demo Agent не понял, что нужно сделать. Опишите задачу одним-двумя предложениями: посчитать скважины или запустить расчёт.\";\nconst message=hasResult?(finalText||\"Demo Agent выполнил задачу.\"):(finalText?finalText+' ':'')+question;\nreturn [{json:{\n  ...(skipFetch?{\n    task_id:opened.task_id||'',\n    agent_id:\"demo_agent\",\n    status:'needs_input',\n    message:question,\n    data:{tools_used:unique,total_calls:steps.length,llm_final_text:finalText.slice(0,600)},\n    artifacts:{},\n    issues:[{type:repeated?'repeated_tools':\"no_demo_result\"}],\n    assumptions:[],\n    requests:[{question_id:\"Q-demo\",question,options:[],accepts:{free_text:true,files:[]}}]\n  }:agent),\n  skip_fetch:skipFetch,\n  has_result:hasResult,\n  activity_kind:'agent.progress',\n  status_message:message.slice(0,400),\n  activity_payload:{source:\"demo-agent-agent-workflow\",total_calls:steps.length,tools_used:unique,iterations:steps.length}\n}}];\n"
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst http=$json||{};\nconst prev=fromNode('Build chat request');\nconst choice=obj((http.choices||[])[0])?(http.choices||[])[0]:{};\nconst msg=obj(choice.message)?choice.message:{};\nconst content=stripThink(typeof msg.content==='string'?msg.content:'');\nconst usage=obj(http.usage)?http.usage:{};\nconst details=obj(usage.completion_tokens_details)?usage.completion_tokens_details:{};\nconst finish=String(choice.finish_reason||http.finish_reason||'');\nconst errObj=obj(http.error)?http.error:null;\nconst errText=typeof http.error==='string'?http.error:String((errObj&&(errObj.message||errObj.code))||'');\nconst statusCode=Number(http.statusCode||http.status||(errObj&&errObj.status)||0);\nconst toolCalls=Array.isArray(msg.tool_calls)?msg.tool_calls:[];\nconst pending=toolCalls.map(tc=>{\n  const fn=obj(tc.function)?tc.function:{};\n  return {id:String(tc.id||''),name:String(fn.name||tc.name||''),arguments:fn.arguments!=null?fn.arguments:tc.arguments};\n}).filter(t=>t.name);\nconst iteration=Number(prev.iteration||0)+1;\nconst maxIter=Number(prev.max_iterations||8);\nconst over=iteration>=maxIter;\nlet messages=Array.isArray(prev.messages)?prev.messages.slice():[];\nconst assistant={role:'assistant',content:content||null};\nif(toolCalls.length) assistant.tool_calls=toolCalls;\nmessages.push(assistant);\nconst tool_log=Array.isArray(prev.tool_log)?prev.tool_log.slice():[];\nconst llm_unavailable=(!pending.length)&&(Boolean(errText)||statusCode>=400||!Array.isArray(http.choices)||finish==='error');\nconst loop_route=llm_unavailable?'done':(pending.length?loopRouteForPending(pending, over):'done');\nconst promptMsgs=obj(prev.chat_request)&&Array.isArray(prev.chat_request.messages)?prev.chat_request.messages:[];\nconst tokens=Number(usage.prompt_tokens||0)+Number(usage.completion_tokens||0);\nconst payload={\n  role:'agent',\n  model:String((obj(prev.chat_request)&&prev.chat_request.model)||''),\n  prompt_tokens:Number(usage.prompt_tokens||0),\n  completion_tokens:Number(usage.completion_tokens||0),\n  reasoning_tokens:Number(details.reasoning_tokens||0),\n  finish_reason:llm_unavailable?(finish||'error'):(finish||(errText?'error':'stop')),\n  tool_calls:pending.map(t=>({name:t.name,args_preview:clip(String(t.arguments||''),400)})),\n  prompt_preview:previewChatMessages(promptMsgs, Number(prev.prompt_len||0)),\n  content_preview:clip(content,2000)\n};\nif(errText) payload.error=errText.slice(0,200);\nreturn [{json:{\n  ...prev,\n  messages,\n  pending_tools:llm_unavailable?[]:pending,\n  iteration,\n  over,\n  loop_route,\n  llm_final_text:content,\n  llm_unavailable,\n  prompt_len:promptMsgs.length,\n  tool_log,\n  finish_reason:payload.finish_reason,\n  activity_kind:'trace.llm',\n  status_message:`agent: ${payload.finish_reason} · ${tokens} tok`,\n  activity_payload:payload\n}}];\n"
+      },
+      "id": "77621528-7232-5862-bbff-d91e80df3868",
+      "name": "Parse agent chat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2720,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize demo task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"demo_agent\", agent_id: \"demo_agent\", task_id: $('Normalize demo task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: Object.assign({source: \"demo-agent-agent-workflow\"}, $json.activity_payload || {}, {execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')})}) }}"
+      },
+      "id": "2ebfccb0-188e-546a-8076-22023e201d2c",
+      "name": "Activity — Demo Agent LLM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2720,
+        320
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Parse agent chat').first().json||{}; return [{json:x}];"
+      },
+      "id": "004ab7c6-c1f3-532b-be17-64ce124f3fdc",
+      "name": "Restore after Demo Agent LLM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2920,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 4,
+        "output": "={{ ({chat:0,tool:1,retrieve:2,done:3})[$json.loop_route] ?? 3 }}"
+      },
+      "id": "3f299773-5b25-5dea-a262-6956a90b82da",
+      "name": "Agent loop router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        3120,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst ALLOWED=new Set([\"count_wells\", \"start_long_job\", \"ask_engineer\"]);\nconst SERVICE_KEY=\"demo_agent_url\";\nconst OPEN_NAME=\"Open demo session\";\n\nconst prev=$json||{};\nconst pending=Array.isArray(prev.pending_tools)?prev.pending_tools:[];\nconst call=pending[0]||{};\nconst name=String(call.name||'');\nconst args=parseArgs(call.arguments);\nconst opened=fromNode(OPEN_NAME);\nconst sessionId=String(opened.session_id||prev.session_id||'');\nlet cfg={};\ntry{cfg=$('Runtime configuration').first().json||{};}catch(e){cfg={}}\nconst base=String(cfg[SERVICE_KEY]||prev[SERVICE_KEY]||'').replace(/[/]+$/,'');\nconst log=Array.isArray(prev.tool_log)?prev.tool_log:[];\nconst needKb=name==='apply_dataset'&&ALLOWED.has(name)&&!log.includes('retrieve_knowledge');\nconst skip_http=!name||!ALLOWED.has(name)||needKb;\nconst skip_result=needKb?{ok:false,code:'knowledge_required',message:'Сначала вызови retrieve_knowledge с query (смысл набора) и keywords (имя keyword), затем get_keyword, затем apply_dataset. Стартовый срез — краткие summary; полный текст — только из retrieve_knowledge.'}:(skip_http?{ok:false,code:'unknown_tool',message:'Нет такого инструмента',available:[...ALLOWED]}:null);\nconst tool_url=skip_http?'':(base+'/agent-tools/'+name);\nconst tool_body={session_id:sessionId,...args};\nreturn [{json:{...prev,pending_tool:call,tool_url,tool_body,skip_http,skip_result}}];\n"
+      },
+      "id": "6d1eb469-9bb8-53b4-985d-caa3223a303f",
+      "name": "Prepare tool call",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a892a737-ec96-5fd8-a90b-6c5b888e21dc",
+              "leftValue": "={{ Boolean($json.skip_http) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d8d2e6c1-7dfd-5cc2-8e8e-bdef82100ce8",
+      "name": "Skip unknown tool?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3560,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.tool_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.tool_body }}"
+      },
+      "id": "fb11350f-a433-5308-8713-05d39b54f863",
+      "name": "Call agent tool",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3760,
+        40
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst http=$json||{};\nconst prev=fromNode('Prepare tool call');\nconst call=obj(prev.pending_tool)?prev.pending_tool:{};\nlet pending=Array.isArray(prev.pending_tools)?prev.pending_tools.slice(1):[];\nlet messages=Array.isArray(prev.messages)?prev.messages.slice():[];\nconst transport=prev.skip_http?'':toolTransportCode(http);\nconst result=prev.skip_http?prev.skip_result:(transport?{ok:false,code:transport,message:transport==='service_unreachable'?'Сервис агента не отвечает':'Инструмент не ответил'}:http);\nconst body=typeof result==='string'?result:JSON.stringify(result==null?{}:result);\nmessages.push({role:'tool',tool_call_id:String(call.id||''),content:body});\nconst tool_log=Array.isArray(prev.tool_log)?prev.tool_log.slice():[];\nif(call.name) tool_log.push(String(call.name));\nconst down=transport==='service_unreachable';\nconst loop_route=down?'done':loopRouteForPending(pending, Boolean(prev.over));\nreturn [{json:{...prev,messages,pending_tools:down?[]:pending,tool_log,loop_route,skip_http:false,skip_result:null,service_unreachable:Boolean(prev.service_unreachable||down)}}];\n"
+      },
+      "id": "1678478a-6db2-5a36-96d3-25bbb288285c",
+      "name": "Append tool result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst prev=$json||{};\nconst pending=Array.isArray(prev.pending_tools)?prev.pending_tools:[];\nconst call=pending[0]||{};\nconst args=parseArgs(call.arguments);\nconst req=obj(prev.schedule_retrieval_request)?{...prev.schedule_retrieval_request}:{};\nconst filters=obj(req.filters)?{...req.filters}:{};\nconst keywords=String(args.keywords||'').split(/[,;]/).map(s=>s.trim().toUpperCase()).filter(Boolean);\nif(keywords.length) filters.keyword_families=[...new Set(keywords)].slice(0,6);\nelse filters.keyword_families=[];\nconst query=clip(String(args.query||'').trim()||String(req.query||''),800);\nreturn [{json:{...prev,pending_tool:call,schedule_retrieval_request:{...req,query,filters}}}];\n"
+      },
+      "id": "57a5f02d-647e-5053-befe-3b805210c9cd",
+      "name": "Prepare retrieve request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI",
+          "mode": "list",
+          "cachedResultName": "MAS — Knowledge Retrieval"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "schedule_retrieval_request": "={{ $json.schedule_retrieval_request }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "858ec44c-996c-5949-bbd5-217a7bb17ccc",
+      "name": "Retrieve knowledge",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        3560,
+        320
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nfunction unwrapRetrieval(raw){\n  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\n  const src=obj(raw)?raw:{};\n  if(obj(src.schedule_retrieval_result)) return src.schedule_retrieval_result;\n  if(obj(src.body)&&obj(src.body.schedule_retrieval_result)) return src.body.schedule_retrieval_result;\n  if(String(src.contract||'')==='schedule_retrieval_result') return src;\n  if(src.error||Number(src.statusCode)>=400) return {status:'failed',findings:[{code:'RETRIEVAL_CALL_FAILED'}],results:[]};\n  return src;\n}\nfunction retrievalOutage(result, raw){\n  if(Boolean(raw&&raw.error)||Number(raw&&raw.statusCode)>=400) return 'failed';\n  const st=String((result&&result.status)||'').toLowerCase();\n  if(st==='failed'||st==='error') return 'failed';\n  if(st==='needs_input') return 'needs_input';\n  if(st==='abstain') return 'abstain';\n  if(st==='unavailable') return 'unavailable';\n  return '';\n}\nfunction compactRetrievalCards(result, selector, limit, textLimit, preferFull){\n  const rows=Array.isArray(result.results)?result.results:[];\n  const wantedBase=String(selector.target_base||'');\n  const wantedTypes=new Set((selector.knowledge_types||[]).map(v=>String(v).toLowerCase()));\n  const cap=Number(limit)||6;\n  const cut=Number(textLimit)||700;\n  const minText=50;\n  const relKeep=0.45;\n  const scored=[];\n  for(const r of rows){\n    if(!r||typeof r!=='object') continue;\n    const body=r.body&&typeof r.body==='object'?r.body:{};\n    const base=String(r.target_base||body.target_base||(result.filters&&result.filters.target_base)||'');\n    const kt=String(r.knowledge_type||body.knowledge_type||'').toLowerCase();\n    if(wantedBase&&base&&base!==wantedBase) continue;\n    if(wantedTypes.size&&kt&&!wantedTypes.has(kt)) continue;\n    const summary=String(body.summary||r.summary||'').trim();\n    const full=String(body.text||body.instruction||r.text||'').trim();\n    const text=preferFull?(full||summary):(summary||full);\n    if(text.length<minText) continue;\n    const score=r.rrf_score!=null?Number(r.rrf_score):(body.rrf_score!=null?Number(body.rrf_score):null);\n    if(Number.isFinite(score)&&score<=0) continue;\n    const topics=Array.isArray(r.topics)?r.topics:(Array.isArray(body.topics)?body.topics:[]);\n    scored.push({\n      knowledge_id:String(r.knowledge_id||body.knowledge_id||''),\n      title:String(r.title||body.title||'').slice(0,160),\n      knowledge_type:kt||null,\n      text:text.slice(0,cut),\n      revision:(r.revision!=null&&r.revision!=='')?r.revision:((body.revision!=null&&body.revision!=='')?body.revision:null),\n      rrf_score:Number.isFinite(score)?score:null,\n      branches:Array.isArray(r.branches)?r.branches.slice(0,6).map(b=>String(b)):(Array.isArray(body.branches)?body.branches.slice(0,6).map(b=>String(b)):[]),\n      topics:topics.slice(0,12).map(t=>String(t||'').trim()).filter(Boolean),\n      _score:Number.isFinite(score)?score:null\n    });\n  }\n  const finite=scored.map(c=>c._score).filter(s=>s!=null);\n  const best=finite.length?Math.max.apply(null,finite):0;\n  const floor=best>0?best*relKeep:0;\n  const want=new Set((Array.isArray(selector.topics)?selector.topics:[]).map(t=>String(t||'').toLowerCase()).filter(Boolean));\n  const orch=String(selector.target_base||'')==='orchestrator_routing';\n  const kept=scored.filter(c=>{\n    if(c._score==null||floor<=0) return true;\n    const cardTopics=(Array.isArray(c.topics)?c.topics:[]).map(t=>String(t||'').toLowerCase());\n    if(want.size&&cardTopics.some(t=>want.has(t))) return true;\n    const n=Array.isArray(c.branches)?c.branches.length:0;\n    if(n<2){\n      if(orch&&want.size) return false;\n      return true;\n    }\n    return c._score>=floor;\n  });\n  kept.sort((a,b)=>{\n    if(a._score==null&&b._score==null) return 0;\n    if(a._score==null) return 1;\n    if(b._score==null) return -1;\n    return b._score-a._score;\n  });\n  return kept.slice(0,cap).map(c=>({knowledge_id:c.knowledge_id,title:c.title,knowledge_type:c.knowledge_type,text:c.text,revision:c.revision,rrf_score:c.rrf_score,branches:c.branches,topics:c.topics}));\n}\nconst fallbackSelector={\"target_base\": \"excel_protocol\", \"knowledge_types\": [\"protocol_instruction\"]};\nconst caller=\"demo_agent\";\nconst maxCards=8;\nconst textLimit=4000;\n\nconst prev=fromNode('Prepare retrieve request');\nconst raw=$json||{};\nconst result=unwrapRetrieval(raw);\nconst fromPrev=prev.retrieval_selector;\nconst selector=(fromPrev&&fromPrev.target_base)?{target_base:String(fromPrev.target_base),knowledge_types:Array.isArray(fromPrev.knowledge_types)&&fromPrev.knowledge_types.length?fromPrev.knowledge_types:fallbackSelector.knowledge_types}:fallbackSelector;\nconst outage=retrievalOutage(result,raw);\nconst cards=(outage==='failed'||outage==='needs_input')?[]:compactRetrievalCards(result,selector,maxCards,textLimit,true);\nconst rag={contract:'mas_rag_evidence',contract_version:'1.0',target_base:selector.target_base,knowledge_types:selector.knowledge_types,status:outage||(cards.length?'ready':'empty'),phase:'on_demand',cards,findings:(Array.isArray(result.findings)?result.findings:[]).slice(0,6).map(f=>f&&f.code).filter(Boolean)};\nconst call=obj(prev.pending_tool)?prev.pending_tool:{};\nlet pending=Array.isArray(prev.pending_tools)?prev.pending_tools.slice(1):[];\nlet messages=Array.isArray(prev.messages)?prev.messages.slice():[];\nmessages.push({role:'tool',tool_call_id:String(call.id||''),content:JSON.stringify({status:rag.status,findings:rag.findings,cards:rag.cards})});\nconst tool_log=Array.isArray(prev.tool_log)?prev.tool_log.slice():[];\ntool_log.push('retrieve_knowledge');\nconst loop_route=loopRouteForPending(pending, Boolean(prev.over));\nconst req=obj(prev.schedule_retrieval_request)?prev.schedule_retrieval_request:{};\nconst logCards=(Array.isArray(cards)?cards:[]).map(c=>({knowledge_id:String((c&&c.knowledge_id)||''),revision:(c&&c.revision)!=null?c.revision:null,rrf_score:Number.isFinite(Number(c&&c.rrf_score))?Number(c.rrf_score):null,branches:Array.isArray(c&&c.branches)?c.branches.slice(0,6):[]}));\nconst logFindings=(Array.isArray(result.findings)?result.findings:[]).slice(0,8).map(f=>{if(obj(f)&&f.code)return{code:String(f.code)};const code=String(f||'').trim();return code?{code}:null}).filter(Boolean);\nreturn [{json:{\n  ...prev,\n  messages,\n  pending_tools:pending,\n  tool_log,\n  loop_route,\n  rag,\n  activity_kind:'trace.rag',\n  status_message:`База знаний: ${rag.status} · ${logCards.length} карточек`,\n  activity_payload:{caller,query:String(req.query||result.query||'').slice(0,800),filters:obj(req.filters)?req.filters:{},status:rag.status,phase:rag.phase,findings:logFindings,cards:logCards}\n}}];\n"
+      },
+      "id": "cbb273af-b63e-5a80-b328-994386466287",
+      "name": "Attach retrieve evidence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3760,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize demo task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"demo_agent\", agent_id: \"demo_agent\", task_id: $('Normalize demo task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: Object.assign({source: \"demo-agent-agent-workflow\"}, $json.activity_payload || {}, {execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')})}) }}"
+      },
+      "id": "6b4dc215-9195-50ca-becd-411dd84e3e37",
+      "name": "Activity — Demo Agent retrieve",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3960,
+        320
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Attach retrieve evidence').first().json||{}; return [{json:x}];"
+      },
+      "id": "b776c63e-1446-5f0a-af7f-d7ce13d1f036",
+      "name": "Restore after Demo Agent retrieve",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4160,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst OPEN_NAME=\"Open demo session\";\n\nconst prev=$json||{};\nconst opened=fromNode(OPEN_NAME);\nconst tools=Array.isArray(prev.tool_log)?prev.tool_log.filter(Boolean):[];\nconst unique=[...new Set(tools)];\nconst finalText=stripThink(String(prev.llm_final_text||''));\nconst counts={};\nfor(const name of tools) counts[name]=(counts[name]||0)+1;\nconst repeated=Object.keys(counts).some(name=>name!=='retrieve_knowledge'&&counts[name]>3);\nconst total=tools.filter(n=>n!=='retrieve_knowledge').length;\nconst human=finalText.trim();\nconst status_message=(human&&!looksMachine(human))?clip(human,400):'Агент завершил шаг.';\nreturn [{json:{\n  ...prev,\n  llm_final_text:finalText,\n  tools_used:unique,\n  total_calls:total,\n  repeated,\n  activity_kind:'agent.progress',\n  status_message,\n  activity_payload:{source:\"demo-agent-agent-workflow\",total_calls:total,tools_used:unique,iterations:Number(prev.iteration||0)}\n}}];\n"
       },
       "id": "75e6115f-4e8a-5578-b9cb-b58aeca7a0f9",
       "name": "Summarize AI steps",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1960,
-        160
+        3360,
+        520
       ]
     },
     {
@@ -436,8 +786,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1960,
-        300
+        3560,
+        520
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -451,41 +801,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2160,
-        300
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "215b06e4-3b49-5770-827b-4db36d1324c6",
-              "leftValue": "={{ Boolean($json.skip_fetch) }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "true"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "5b022107-5ae3-5b2a-8678-999b9856b625",
-      "name": "Result stored?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        2160,
-        160
+        3760,
+        520
       ]
     },
     {
@@ -527,7 +844,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const fetched=$json||{};\nconst opened=$('Open demo session').first().json||{};\nconst arts=fetched.artifacts&&typeof fetched.artifacts==='object'?fetched.artifacts:{};\n// n8n may coerce an empty artifact text to a boolean; a boolean card is no card.\nconst artifacts=Object.fromEntries(Object.entries(arts).filter(([,v])=>typeof v!=='boolean'));\nif(fetched.status){\n  return [{json:{\n    task_id:fetched.task_id||opened.task_id||'',\n    agent_id:\"demo_agent\",\n    status:fetched.status,\n    message:fetched.message||'',\n    data:fetched.data||{},\n    artifacts,\n    issues:fetched.issues||[],\n    assumptions:fetched.assumptions||[],\n    requests:fetched.requests||[],\n    // in_progress (long job): what the feed/monitor may show or poll (CASE-6a9f3bc9-10cb9f: was dropped here).\n    ...(fetched.watch&&typeof fetched.watch==='object'?{watch:fetched.watch}:{})\n  }}];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:\"demo_agent\",\n  status:'failed',\n  message:String(fetched.message||fetched.error||\"Demo Agent не вернул результат\"),\n  data:{},\n  artifacts:{},\n  issues:[{type:\"demo_agent_no_result\"}],\n  assumptions:[],\n  requests:[]\n}}];\n"
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst AGENT_ID=\"demo_agent\";\nconst NO_RESULT_ISSUE=\"no_demo_result\";\nconst QUESTION_ID=\"Q-demo\";\nconst ACCEPTS_FILES=[];\nconst FAIL_MSG=\"Demo Agent не вернул результат\";\nconst FAIL_ISSUE=\"demo_agent_no_result\";\nconst OPEN_NAME=\"Open demo session\";\nconst DOWN_MSG=\"Сервис агента „Demo Agent“ не отвечает по адресу из настроек среды. Проверьте, что он запущен, и перезапустите задачу.\";\nconst LLM_DOWN_MSG=\"Модель чата не ответила. Проверьте доступ к модели в настройках среды и перезапустите задачу.\";\n\nconst fetched=$json||{};\nconst opened=fromNode(OPEN_NAME);\nconst summarized=fromNode('Summarize AI steps');\nconst finalText=stripThink(String(summarized.llm_final_text||fetched.llm_final_text||''));\nconst arts=fetched.artifacts&&typeof fetched.artifacts==='object'?fetched.artifacts:{};\nconst artifacts=Object.fromEntries(Object.entries(arts).filter(([,v])=>typeof v!=='boolean'));\nfunction pack(src){\n  return {json:{\n    task_id:src.task_id||opened.task_id||'',\n    agent_id:AGENT_ID,\n    status:src.status,\n    message:src.message||'',\n    data:src.data||{},\n    artifacts:src.artifacts&&typeof src.artifacts==='object'?src.artifacts:artifacts,\n    issues:src.issues||[],\n    assumptions:src.assumptions||[],\n    requests:src.requests||[],\n    ...(src.watch&&typeof src.watch==='object'?{watch:src.watch}:{})\n  }};\n}\nif(summarized.service_unreachable||fetched.service_unreachable){\n  return [pack({status:'failed',message:DOWN_MSG,data:{},artifacts:{},issues:[{code:'service_unreachable'}],requests:[]})];\n}\nif(summarized.llm_unavailable||fetched.llm_unavailable){\n  return [pack({status:'failed',message:LLM_DOWN_MSG,data:{},artifacts:{},issues:[{code:'llm_unavailable'}],requests:[]})];\n}\nif(fetched.status){\n  const issues=Array.isArray(fetched.issues)?fetched.issues:[];\n  const generic=issues.some(i=>i&&i.type===NO_RESULT_ISSUE);\n  if(generic&&fetched.status==='needs_input'&&finalText&&!looksMachine(finalText)){\n    const reqs=Array.isArray(fetched.requests)?fetched.requests:[];\n    const requests=reqs.length?reqs.map((r,i)=>i===0?{...r,question:finalText}:r):[{question_id:QUESTION_ID,question:finalText,options:[],accepts:{free_text:true,files:ACCEPTS_FILES}}];\n    return [pack({...fetched,message:finalText,requests,artifacts})];\n  }\n  return [pack({...fetched,artifacts})];\n}\nif(finalText&&!looksMachine(finalText)){\n  return [pack({\n    status:'needs_input',\n    message:finalText,\n    data:{llm_final_text:finalText.slice(0,600)},\n    artifacts:{},\n    issues:[{type:NO_RESULT_ISSUE}],\n    requests:[{question_id:QUESTION_ID,question:finalText,options:[],accepts:{free_text:true,files:ACCEPTS_FILES}}]\n  })];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:AGENT_ID,\n  status:'failed',\n  message:String(fetched.message||FAIL_MSG),\n  data:{},\n  artifacts:{},\n  issues:[{type:FAIL_ISSUE}],\n  assumptions:[],\n  requests:[]\n}}];\n"
       },
       "id": "f94e45ab-abaa-581f-9140-e1cee204aff8",
       "name": "Format demo result",
@@ -574,126 +891,6 @@
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "toolDescription": "Посчитать скважины, упомянутые в задаче и в фактах предыдущих агентов. Детерминированно.",
-        "descriptionType": "manual",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.demo_agent_url + '/agent-tools/' + \"count_wells\" }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({session_id: $('Open demo session').first().json.session_id, text: $fromAI(\"text\", \"Текст для подсчёта; пусто — берётся задача инженера\", \"string\", \"\")}) }}",
-        "options": {
-          "timeout": 180000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "id": "374a0971-cd61-5b1a-9cd7-618e400772d6",
-      "name": "count_wells",
-      "type": "n8n-nodes-base.httpRequestTool",
-      "typeVersion": 4.4,
-      "position": [
-        760,
-        -420
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
-    },
-    {
-      "parameters": {
-        "toolDescription": "Запустить долгий расчёт (имитация). Сразу возвращает in_progress; результат придёт позже через Activity.",
-        "descriptionType": "manual",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.demo_agent_url + '/agent-tools/' + \"start_long_job\" }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({session_id: $('Open demo session').first().json.session_id, label: $fromAI(\"label\", \"Короткое русское название расчёта для ленты, например «Прогон демо-модели»\", \"string\", \"\")}) }}",
-        "options": {
-          "timeout": 180000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "id": "1696e4e8-2952-570d-a6c7-250b15a28fe1",
-      "name": "start_long_job",
-      "type": "n8n-nodes-base.httpRequestTool",
-      "typeVersion": 4.4,
-      "position": [
-        980,
-        -420
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
-    },
-    {
-      "parameters": {
-        "toolDescription": "Спросить инженера одним вопросом по-русски, когда из задачи непонятно, что считать. Не для ошибок вызова инструментов.",
-        "descriptionType": "manual",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.demo_agent_url + '/agent-tools/' + \"ask_engineer\" }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({session_id: $('Open demo session').first().json.session_id, question: $fromAI(\"question\", \"Обычная русская фраза без имён полей и JSON\", \"string\"), options: $fromAI(\"options\", \"Варианты через точку с запятой, как их видит инженер; пусто — свободный ответ\", \"string\", \"\")}) }}",
-        "options": {
-          "timeout": 180000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "id": "2d20fb43-7303-5b9d-896b-d7c4470854c3",
-      "name": "ask_engineer",
-      "type": "n8n-nodes-base.httpRequestTool",
-      "typeVersion": 4.4,
-      "position": [
-        1200,
-        -420
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
     }
   ],
   "connections": {
@@ -829,62 +1026,244 @@
       "main": [
         [
           {
-            "node": "Demo Agent AI Agent",
+            "node": "Activity — Demo Agent RAG",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Demo Agent Chat Model — Qwen": {
-      "ai_languageModel": [
-        [
-          {
-            "node": "Demo Agent AI Agent",
-            "type": "ai_languageModel",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "count_wells": {
-      "ai_tool": [
-        [
-          {
-            "node": "Demo Agent AI Agent",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "start_long_job": {
-      "ai_tool": [
-        [
-          {
-            "node": "Demo Agent AI Agent",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "ask_engineer": {
-      "ai_tool": [
-        [
-          {
-            "node": "Demo Agent AI Agent",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Demo Agent AI Agent": {
+    "Activity — Demo Agent RAG": {
       "main": [
         [
           {
+            "node": "Restore after Demo Agent RAG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format demo result": {
+      "main": [
+        [
+          {
+            "node": "Close demo session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close demo session": {
+      "main": [
+        [
+          {
+            "node": "Restore after Demo Agent activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after Demo Agent RAG": {
+      "main": [
+        [
+          {
+            "node": "Build chat request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build chat request": {
+      "main": [
+        [
+          {
+            "node": "Demo Agent Agent chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo Agent Agent chat": {
+      "main": [
+        [
+          {
+            "node": "Parse agent chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse agent chat": {
+      "main": [
+        [
+          {
+            "node": "Activity — Demo Agent LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Demo Agent LLM": {
+      "main": [
+        [
+          {
+            "node": "Restore after Demo Agent LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after Demo Agent LLM": {
+      "main": [
+        [
+          {
+            "node": "Agent loop router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent loop router": {
+      "main": [
+        [
+          {
+            "node": "Build chat request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare tool call",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare retrieve request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Summarize AI steps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare tool call": {
+      "main": [
+        [
+          {
+            "node": "Skip unknown tool?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip unknown tool?": {
+      "main": [
+        [
+          {
+            "node": "Append tool result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call agent tool",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call agent tool": {
+      "main": [
+        [
+          {
+            "node": "Append tool result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append tool result": {
+      "main": [
+        [
+          {
+            "node": "Agent loop router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare retrieve request": {
+      "main": [
+        [
+          {
+            "node": "Retrieve knowledge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retrieve knowledge": {
+      "main": [
+        [
+          {
+            "node": "Attach retrieve evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach retrieve evidence": {
+      "main": [
+        [
+          {
+            "node": "Activity — Demo Agent retrieve",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Demo Agent retrieve": {
+      "main": [
+        [
+          {
+            "node": "Restore after Demo Agent retrieve",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after Demo Agent retrieve": {
+      "main": [
+        [
+          {
+            "node": "Agent loop router",
             "type": "main",
             "index": 0
           }
@@ -917,24 +1296,6 @@
       "main": [
         [
           {
-            "node": "Result stored?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Result stored?": {
-      "main": [
-        [
-          {
-            "node": "Format demo result",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
             "node": "Fetch demo result",
             "type": "main",
             "index": 0
@@ -947,28 +1308,6 @@
         [
           {
             "node": "Format demo result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Format demo result": {
-      "main": [
-        [
-          {
-            "node": "Close demo session",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Close demo session": {
-      "main": [
-        [
-          {
-            "node": "Restore after Demo Agent activity",
             "type": "main",
             "index": 0
           }
@@ -989,5 +1328,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "3c6167e9-8878-4385-9fa5-0fbad1b072ac"
+  "versionId": "cda43fd7-faf4-4a3f-be7c-779ce99f8759"
 }

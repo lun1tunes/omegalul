@@ -9,6 +9,8 @@ from pathlib import Path
 
 from llm_runtime_options import (
     CHAT_THINKING_OFF,
+    PARSE_CHAT_EXTRA_JS,
+    SAMPLING,
     DEFAULT_CHAT_MODEL,
     LLM_HTTP_TIMEOUT_MS,
 )
@@ -125,6 +127,8 @@ SYSTEM = """Ты оркестратор инженерной задачи. Пр�
 - Если следующему агенту для этой цели нужны данные из input_schema.data, которых ещё нет в журнале — сначала вызови агента, у которого они в output_provides. Не заказывай ключ только потому, что он есть в каталоге.
 - Если карточки знаний недоступны (status=empty или unavailable) — решай по реестру и состоянию. Не спрашивай инженера про базу знаний.
 
+Политика из базы знаний (блок «Политика из базы знаний» в planner_input) имеет приоритет над догадкой: пункты плана и выбор действия следуют ей, если она их даёт. Если политика требует уточнения у инженера — ask_user, не выдумывай недостающие факты.
+
 Сначала заполни progress — короткую оценку хода по журналу (compact.journal.history: итоги агентов, данные, артефакты, ответы человека). Это пояснение, не флаги для программы:
 - evidence: что в журнале это подтверждает (или чего не хватает).
 - missing: что ещё нужно сделать (пусто, если выбираешь finish).
@@ -192,7 +196,7 @@ VERIFY_SCHEMA = {
 
 VERIFY_SYSTEM = """Ты проверяющий завершения инженерной задачи. Оркестратор предлагает завершить задачу; твоя работа — проверить это по журналу, а не поверить на слово.
 
-Тебе даны: цель (текст инженера), журнал (что агенты фактически сделали — их итоги со статусом и добавленные артефакты, ответы инженера), план оркестратора (его собственная разбивка цели на результаты со статусами) и предложенный итог.
+Тебе даны: цель (текст инженера), журнал (что агенты фактически сделали — их итоги со статусом и добавленные артефакты, ответы инженера), план оркестратора (его собственная разбивка цели на результаты со статусами) и предложенный итог. Если есть блок «Политика завершения» — это критерии готовности из базы знаний, не факты журнала: сверяй части цели с журналом, а политику используй как правило, что считать покрытым.
 
 1. Разбей цель инженера на части — результаты, которые он должен получить на выходе (обычно 1–3). Часть — это результат («получен обновлённый файл X»), не действие («вызвать агента»). План оркестратора — подсказка, не источник требований: пункт плана, которого нет в цели, не делай обязательной частью (оркестратор мог дописать то, что агент умеет, но инженер не просил). Добавь то, что цель требует, а план упустил. Файлы, которые инженер приложил сам (шаг 0 журнала), — исходные данные, а не результат: «получить/использовать исходный файл» не выделяй в отдельную часть.
 2. Для каждой части решай, покрыта ли она записью журнала со статусом completed, чей итог по смыслу говорит, что это сделано. Промежуточный шаг не покрывает конечный результат: извлечь данные ≠ построить на их основе итог; «исходный файл есть во вложении» ≠ «получен новый файл». Но не придирайся к формулировкам: если агент отчитался о сделанных изменениях (сдвинул даты, добавил/убрал скважины, перепривязал группы) и/или в записи есть добавленные артефакты (новый файл, diff), результат получен. Если агент completed и пишет, что запрошенного набора в исходных файлах нет — это покрытие «набора не было», а не дырка цели, когда этот набор из цели не следует. evidence — пересказ записи журнала (шаг N) либо «в журнале нет».
@@ -248,22 +252,28 @@ BUILD_DECISION_CHAT = (
     + json.dumps(DEFAULT_CHAT_MODEL)
     + ";\nconst THINKING_OFF = "
     + json.dumps(CHAT_THINKING_OFF)
-    + """;
+    + ";\nconst SAMPLING = "
+    + json.dumps(SAMPLING["decision"])
+    + ";\n"
+    + PARSE_CHAT_EXTRA_JS
+    + """
 const prev=$json||{};
 let cfg={};
 try{cfg=$('Runtime endpoints').first().json||{}}catch(e){cfg={}}
 const model=String(cfg.chat_model||'').trim()||DEFAULT_CHAT_MODEL;
 const base=String(cfg.chat_base_url||'').replace(/[/]+$/,'');
 const chat_url=base?base+'/chat/completions':'';
+const extra=parseChatExtra(cfg);
 const chat_request={
   model,
-  temperature:0,
   response_format:{type:'json_object'},
+  ...SAMPLING,
   ...THINKING_OFF,
   messages:[
     {role:'system',content:SYSTEM},
     {role:'user',content:String(prev.planner_input||'')}
-  ]
+  ],
+  ...extra
 };
 return [{json:{...prev,chat_request,chat_url,decision_schema:DECISION_SCHEMA}}];
 """
@@ -278,43 +288,66 @@ BUILD_VERIFY_CHAT = (
     + json.dumps(DEFAULT_CHAT_MODEL)
     + ";\nconst THINKING_OFF = "
     + json.dumps(CHAT_THINKING_OFF)
-    + """;
+    + ";\nconst SAMPLING = "
+    + json.dumps(SAMPLING["decision"])
+    + ";\n"
+    + PARSE_CHAT_EXTRA_JS
+    + """
 const prev=$json||{};
 let cfg={};
 try{cfg=$('Runtime endpoints').first().json||{}}catch(e){cfg={}}
 const model=String(cfg.chat_model||'').trim()||DEFAULT_CHAT_MODEL;
 const base=String(cfg.chat_base_url||'').replace(/[/]+$/,'');
 const chat_url=base?base+'/chat/completions':'';
+const extra=parseChatExtra(cfg);
 const chat_request={
   model,
-  temperature:0,
   response_format:{type:'json_object'},
+  ...SAMPLING,
   ...THINKING_OFF,
   messages:[
     {role:'system',content:VERIFY_SYSTEM},
     {role:'user',content:String(prev.verify_input||'')}
-  ]
+  ],
+  ...extra
 };
 return [{json:{...prev,chat_request,chat_url,verify_schema:VERIFY_SCHEMA}}];
 """
 )
 
-PREPARE_VERIFY = r"""
+PREPARE_VERIFY = (
+    "const PLANNER_HEADING_AGENT_DATA = "
+    + json.dumps("Данные агентов:")
+    + ";\nconst PLANNER_HEADING_COMPLETION = "
+    + json.dumps("Политика завершения:")
+    + ";\n"
+    + r"""
 const ctx=$('Prepare decision context').first().json||{};
 const llm=$('Decision LLM').first().json||{};
 const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
 const parse=v=>{if(obj(v))return v;try{const p=JSON.parse(String(v||''));return obj(p)?p:{}}catch{return {}}};
+const nodeJson=(name)=>{try{const n=$(name).first().json;return obj(n)?n:{}}catch{return {}}};
+const attach=nodeJson('Attach orchestrator RAG evidence');
 const decision=parse(llm.output||llm.text||llm);
 const action=obj(decision.action)?decision.action:{};
 const proposed=String((obj(action.result)&&action.result.summary_for_human)||'').trim();
 const progress=obj(decision.progress)?decision.progress:{};
-/* Same goal + journal the Decision LLM saw (planner_input starts with them), plus its proposal. */
-const planner=String(ctx.planner_input||'');
-const cut=planner.indexOf('\nТекущее состояние:');
+const planner=String(attach.planner_input||ctx.planner_input||'');
+const marker='\n'+PLANNER_HEADING_AGENT_DATA;
+const cut=planner.indexOf(marker);
 const goalAndJournal=cut>0?planner.slice(0,cut):planner;
-const verify_input=`${goalAndJournal}\n\nПредложенный итог оркестратора:\n${proposed||'(итог не написан)'}\n\nОбоснование оркестратора:\n${String(progress.evidence||'').slice(0,600)||'(нет)'}\n`;
-return [{json:{...ctx, verify_input, proposed_summary:proposed}}];
+const rag=obj(attach.rag)?attach.rag:(obj(ctx.rag)?ctx.rag:{});
+const completionCards=(Array.isArray(rag.cards)?rag.cards:[]).filter(c=>{
+  const topics=Array.isArray(c&&c.topics)?c.topics:[];
+  return topics.some(t=>String(t||'').toLowerCase()==='completion');
+});
+const policy=completionCards.length
+  ? `\n\n${PLANNER_HEADING_COMPLETION}\n`+completionCards.map(c=>`- ${String((c&&c.title)||(c&&c.knowledge_id)||'').trim()}: ${String((c&&c.text)||'').trim()}`).join('\n')
+  : '';
+const verify_input=`${goalAndJournal}${policy}\n\nПредложенный итог оркестратора:\n${proposed||'(итог не написан)'}\n\nОбоснование оркестратора:\n${String(progress.evidence||'').slice(0,600)||'(нет)'}\n`;
+return [{json:{...ctx, rag, verify_input, proposed_summary:proposed}}];
 """
+)
 
 INTERPRET_SCHEMA = {
     "type": "object",
@@ -350,22 +383,28 @@ BUILD_INTERPRET_CHAT = (
     + json.dumps(DEFAULT_CHAT_MODEL)
     + ";\nconst THINKING_OFF = "
     + json.dumps(CHAT_THINKING_OFF)
-    + """;
+    + ";\nconst SAMPLING = "
+    + json.dumps(SAMPLING["decision"])
+    + ";\n"
+    + PARSE_CHAT_EXTRA_JS
+    + """
 const prev=$json||{};
 let cfg={};
 try{cfg=$('Runtime endpoints').first().json||{}}catch(e){cfg={}}
 const model=String(cfg.chat_model||'').trim()||DEFAULT_CHAT_MODEL;
 const base=String(cfg.chat_base_url||'').replace(/[/]+$/,'');
 const chat_url=base?base+'/chat/completions':'';
+const extra=parseChatExtra(cfg);
 const chat_request={
   model,
-  temperature:0,
   response_format:{type:'json_object'},
+  ...SAMPLING,
   ...THINKING_OFF,
   messages:[
     {role:'system',content:INTERPRET_SYSTEM},
     {role:'user',content:String(prev.interpret_input||'')}
-  ]
+  ],
+  ...extra
 };
 return [{json:{...prev,chat_request,chat_url,interpret_schema:INTERPRET_SCHEMA}}];
 """
@@ -382,6 +421,28 @@ const qid=String(prev.interpret_qid||'Q-1');
 const q0=obj(prev.interpret_question)?prev.interpret_question:{};
 const raw=prev.interpret_raw;
 const applied=applyInterpretedDecision(qid,q0,raw,decision);
+const interpretTrace=()=>{
+  const parseLlm=obj(llm.llm_parse)?llm.llm_parse:{};
+  let chat={};
+  try{chat=$('Build interpret chat').first().json||{}}catch{chat={}}
+  const msgs=obj(chat.chat_request)&&Array.isArray(chat.chat_request.messages)?chat.chat_request.messages:[];
+  const tokens=Number(parseLlm.prompt_tokens||0)+Number(parseLlm.completion_tokens||0);
+  const finish=String(parseLlm.finish_reason||parseLlm.error||'');
+  let content='';
+  try{content=typeof llm.output==='string'?llm.output:JSON.stringify(llm.output||llm.text||'');}catch{content=String(llm.output||llm.text||'');}
+  return [prev.case_id,'','trace.llm','orchestrator','','running',`interpret: ${finish||'stop'} · ${tokens} tok`,'',JSON.stringify({
+    role:'interpret',
+    model:String((obj(chat.chat_request)&&chat.chat_request.model)||''),
+    prompt_tokens:Number(parseLlm.prompt_tokens||0),
+    completion_tokens:Number(parseLlm.completion_tokens||0),
+    reasoning_tokens:Number(parseLlm.reasoning_tokens||0),
+    finish_reason:finish,
+    prompt_preview:previewChatMessages(msgs),
+    content_preview:String(content||'').slice(0,2000),
+    step_count:Number(state.step_count||0),
+    ...execRef()
+  })];
+};
 const hitl=state.hitl&&typeof state.hitl==='object'?{...state.hitl}:{pending:false,questions:[],answers:{}};
 const questions=Array.isArray(hitl.questions)?hitl.questions:[];
 const answers={...(hitl.answers&&typeof hitl.answers==='object'?hitl.answers:{})};
@@ -390,7 +451,7 @@ if(!applied.accepted){
   state.hitl={pending:true,questions:[q],answers};
   state.status='waiting_user';
   state.version=Number(state.version||0)+1;
-  const persistEvents=[[prev.case_id,'','hitl.request','orchestrator','','waiting_user',q.question,'',JSON.stringify({...q,...execRef()})]];
+  const persistEvents=[interpretTrace(), [prev.case_id,'','hitl.request','orchestrator','','waiting_user',q.question,'',JSON.stringify({...q,...execRef()})]];
   return [{json:{
     ...prev,
     state,
@@ -413,7 +474,7 @@ ledgerPush(state,{kind:'human',step:Number(state.step_count||0),question_id:qid,
 state.ledger.last_human_step=Number(state.step_count||0);
 state.ledger.stall_count=0;
 const said=humanAnswerText(applied.answer);
-const persistEvents=[[prev.case_id,'','hitl.answered','user','','answered',said?('Пользователь ответил: '+said):'Пользователь ответил','',JSON.stringify({question_id:qid,answer:applied.answer,...execRef()})]];
+const persistEvents=[interpretTrace(), [prev.case_id,'','hitl.answered','user','','answered',said?('Пользователь ответил: '+said):'Пользователь ответил','',JSON.stringify({question_id:qid,answer:applied.answer,...execRef()})]];
 return [{json:{
   ...prev,
   state,
@@ -799,7 +860,7 @@ if(req.is_resume===true){
     state.version=Number(state.version||0)+1;
     state.ledger.last_human_step=Number(state.step_count||0);
     state.ledger.stall_count=0;
-    const persistEvents=[[req.case_id,taskId,'orchestrator.resume',source,agentId,nextStatus,'Продолжение по событию агента или системы','',JSON.stringify({source,task_id:taskId})],
+    const persistEvents=[[req.case_id,taskId,'orchestrator.resume',source,agentId,nextStatus,'Продолжение по событию агента или системы','',JSON.stringify({source,task_id:taskId,...execRef()})],
       ...events.map(e=>[req.case_id,e.task_id||'',e.kind,e.actor,e.agent_id||'',e.status||'',e.status_message||'',e.handoff_message||'',JSON.stringify(e.payload||{})])];
     return [{json:{
       ...req,
@@ -898,6 +959,12 @@ PREPARE_DECISION = STATE_SHAPE_JS + (
     "const ORCH_RAG_KNOWLEDGE_TYPES=" + json.dumps(_ORCH_SEL["knowledge_types"]) + ";\n"
     "const ORCH_RAG_TOP_K=" + str(int(_ORCH_SEL["top_k"])) + ";\n"
     "const PLANNER_COLUMNS=" + json.dumps(list(PLANNER_COLUMNS)) + ";\n"
+    "const PLANNER_HEADING_GOAL=" + json.dumps("Цель:") + ";\n"
+    "const PLANNER_HEADING_PLAN=" + json.dumps("План задачи (твоя декомпозиция; статусы pending, active, done, blocked, dropped):") + ";\n"
+    "const PLANNER_HEADING_JOURNAL=" + json.dumps("Журнал задачи (что уже сделано, по шагам):") + ";\n"
+    "const PLANNER_HEADING_AGENT_DATA=" + json.dumps("Данные агентов:") + ";\n"
+    "const PLANNER_HEADING_OPEN_QUESTIONS=" + json.dumps("Открытые вопросы:") + ";\n"
+    "const PLANNER_HEADING_REGISTRY=" + json.dumps("Доступные агенты (реестр):") + ";\n"
     + r"""
 const req=$('Normalize step request').first().json||{};
 const interpreted=(()=>{try{return $('Apply interpreted answer').first().json}catch{return null}})();
@@ -933,21 +1000,22 @@ const inputCards=artifactCards(state.artifacts||{}).filter(c=>c.kind==='input');
 const inputNames=inputCards.map(c=>String(c.filename||c.artifact_id||'').trim()).filter(Boolean);
 const inputsLine=inputNames.length?`- шаг 0: инженер приложил ${inputNames.length} файл(ов): ${inputNames.slice(0,6).join(', ')}${inputNames.length>6?` и ещё ${inputNames.length-6}`:''}`:'';
 const journalText=[inputsLine,...journalLines].filter(Boolean).join('\n')||'- пока ничего не сделано';
-/* O13: the plan sits next to the journal — the Decision LLM updates it, Verify completion reads both
-   (Prepare verify cuts planner_input before «Текущее состояние»). */
-const planText=planLines(state.plan).join('\n')||'- план ещё не составлен: составь его в plan_update';
-const prompt=`Цель:\n${compact.goal}\n\nЖурнал задачи (что уже сделано, по шагам):\n${journalText}\n\nПлан задачи (твоя декомпозиция; статусы pending, active, done, blocked, dropped):\n${planText}\n\nТекущее состояние:\n${JSON.stringify(compact,null,2)}\n\nДоступные агенты (реестр):\n${JSON.stringify(plannerRegistry,null,2)}\n`;
+/* O13/O29: Goal → Plan → Journal → Agent data → Open questions → Registry; Attach appends Policy.
+   Prepare verify cuts planner_input before «Данные агентов». */
+const planText=planLines(state.plan).join('\n')||'- план ещё не составлен — запиши пункты с идентификатором, заголовком и статусом';
+const agentData=JSON.stringify((compact.agents&&typeof compact.agents==='object')?compact.agents:{},null,2);
+const openQ=(compact.hitl_pending&&compact.hitl_question)?`- ${String(compact.hitl_question).trim()}`:'- нет';
+const prompt=`${PLANNER_HEADING_GOAL}\n${compact.goal}\n\n${PLANNER_HEADING_PLAN}\n${planText}\n\n${PLANNER_HEADING_JOURNAL}\n${journalText}\n\n${PLANNER_HEADING_AGENT_DATA}\n${agentData}\n\n${PLANNER_HEADING_OPEN_QUESTIONS}\n${openQ}\n\n${PLANNER_HEADING_REGISTRY}\n${JSON.stringify(plannerRegistry,null,2)}\n`;
 const retrieval_selector={target_base:ORCH_RAG_TARGET_BASE,knowledge_types:ORCH_RAG_KNOWLEDGE_TYPES};
-/* Plain-text query: goal + plan titles + agent summaries. Selectors (target_base / knowledge_types) do the
-   filtering; the tag branch gets the registry roles of the agents named in open plan items
-   (planRetrievalTopics) — no regex-derived topics or keyword families (Phase 2 / O4). */
+/* Plain-text query: goal + plan titles + open HITL (no files, no journal). Tag branch: registry
+   roles of open plan agents, or at step 0 the file roles (`input_required`) of covered agents. */
 const schedule_retrieval_request={
   query:buildRetrievalQuery(compact),
   filters:{
     target_base:ORCH_RAG_TARGET_BASE,
     access_scope:ORCH_RAG_ACCESS_SCOPE,
     knowledge_types:ORCH_RAG_KNOWLEDGE_TYPES,
-    topics:planRetrievalTopics(state.plan, registry)
+    topics:planRetrievalTopics(state.plan, registry, compact)
   },
   top_k:ORCH_RAG_TOP_K
 };
@@ -993,6 +1061,46 @@ const describeLlmRaw=(node)=>{
   };
 };
 const llmParse=describeLlmRaw(raw);
+const nodeJson=(name)=>{try{const n=$(name).first().json;return obj(n)?n:{}}catch{return {}}};
+const attach=nodeJson('Attach orchestrator RAG evidence');
+const ragSrc=obj(attach.rag)?attach.rag:(obj(prev.rag)?prev.rag:{});
+const req=obj(attach.schedule_retrieval_request)?attach.schedule_retrieval_request:(obj(prev.schedule_retrieval_request)?prev.schedule_retrieval_request:{});
+const ragCards=(Array.isArray(ragSrc.cards)?ragSrc.cards:[]).map(c=>({
+  knowledge_id:String((c&&c.knowledge_id)||''),
+  revision:(c&&c.revision)!=null?c.revision:null,
+  rrf_score:Number.isFinite(Number(c&&c.rrf_score))?Number(c.rrf_score):null,
+  branches:Array.isArray(c&&c.branches)?c.branches.slice(0,6):[]
+}));
+const ragFindings=(Array.isArray(ragSrc.findings)?ragSrc.findings:[]).slice(0,8).map(f=>{
+  if(obj(f)&&f.code) return {code:String(f.code)};
+  const code=String(f||'').trim();
+  return code?{code}:null;
+}).filter(Boolean);
+const ragLog={
+  query:String(req.query||ragSrc.query||'').slice(0,800),
+  filters:obj(req.filters)?req.filters:(obj(ragSrc.filters)?ragSrc.filters:{}),
+  status:String(ragSrc.status||'empty'),
+  phase:String(ragSrc.phase||'initial'),
+  cards:ragCards,
+  findings:ragFindings
+};
+const chatMessages=(chat)=>{
+  const cr=obj(chat.chat_request)?chat.chat_request:chat;
+  return Array.isArray(cr.messages)?cr.messages:[];
+};
+const previewContent=(v)=>{
+  if(typeof v==='string') return v.slice(0,2000);
+  if(v==null) return '';
+  try{return JSON.stringify(v).slice(0,2000);}catch{return String(v).slice(0,2000);}
+};
+const decisionChat=nodeJson('Build decision chat');
+const llmLog={
+  model:String((obj(decisionChat.chat_request)&&decisionChat.chat_request.model)||''),
+  prompt_tokens:Number(llmParse.prompt_tokens||0),
+  completion_tokens:Number(llmParse.completion_tokens||0),
+  reasoning_tokens:Number(llmParse.reasoning_tokens||0),
+  finish_reason:String(llmParse.finish_reason||llmParse.error||'')
+};
 const out=parse(raw.output||raw.text||raw);
 const decision=obj(out.action)?out:(obj(raw)?raw:{});
 const verification=(()=>{
@@ -1155,7 +1263,7 @@ const decisionEvent={
   kind:'orchestrator.decision',
   actor:'orchestrator',
   status_message:statusMessage,
-  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count,version:state.version,progress:{goal_satisfied:progress.goal_satisfied===true,evidence:String(progress.evidence||'').slice(0,300),missing:String(progress.missing||'').slice(0,300)},...(guard?{guard}:{}),...(unparsed?{llm_parse:{...llmParse,attempt:state.ledger.parse_failures}}:{}),plan:{total:state.plan.length,open:planOpenItems(state.plan).length,accepted:planMerge.accepted,rejected:planMerge.rejected},...(verification?{verification:{all_covered:verification.all_covered===true,goal_parts:(Array.isArray(verification.goal_parts)?verification.goal_parts:[]).slice(0,6).map(p=>({part:String((p&&p.part)||'').slice(0,160),covered:Boolean(p&&p.covered)}))}}:{}),decision:decisionRaw,...execRef()}
+  payload:{action_type:type,agent_id:action.agent_id||null,step_count:state.step_count,version:state.version,progress:{goal_satisfied:progress.goal_satisfied===true,evidence:String(progress.evidence||'').slice(0,300),missing:String(progress.missing||'').slice(0,300)},...(guard?{guard}:{}),llm:llmLog,rag:{query:ragLog.query,status:ragLog.status,cards:ragLog.cards,findings:ragLog.findings},...(unparsed?{llm_parse:{...llmParse,attempt:state.ledger.parse_failures}}:{}),plan:{total:state.plan.length,open:planOpenItems(state.plan).length,accepted:planMerge.accepted,rejected:planMerge.rejected},...(verification?{verification:{all_covered:verification.all_covered===true,goal_parts:(Array.isArray(verification.goal_parts)?verification.goal_parts:[]).slice(0,6).map(p=>({part:String((p&&p.part)||'').slice(0,160),covered:Boolean(p&&p.covered)}))}}:{}),decision:decisionRaw,...execRef()}
 };
 const events=[];
 let nextStatus='running';
@@ -1251,6 +1359,43 @@ if(type==='call_agent'){
   decisionEvent.status_message=statusMessage;
   events.push(decisionEvent, {kind:'case.failed',actor:'orchestrator',status:'failed',status_message:statusMessage,payload:{reason:'decision_unparsed',llm_parse:{...llmParse,attempt:state.ledger.parse_failures},...execRef()}});
 }
+const stepNo=Number(state.step_count||0);
+const traceEvents=[{
+  kind:'trace.rag',
+  actor:'orchestrator',
+  status_message:`База знаний: ${ragLog.status} · ${ragLog.cards.length} карточек`,
+  payload:{caller:'orchestrator',...ragLog,step_count:stepNo,...execRef()}
+},{
+  kind:'trace.llm',
+  actor:'orchestrator',
+  status_message:`decision: ${llmLog.finish_reason||'stop'} · ${Number(llmLog.prompt_tokens||0)+Number(llmLog.completion_tokens||0)} tok`,
+  payload:{role:'decision',...llmLog,prompt_preview:previewChatMessages(chatMessages(decisionChat)),content_preview:previewContent(raw.output||raw.text||llmParse.sample||''),step_count:stepNo,...execRef()}
+}];
+if(verification){
+  const verifyChat=nodeJson('Build verify chat');
+  const verifyRaw=nodeJson('Verify completion');
+  const vParse=obj(verifyRaw.llm_parse)?verifyRaw.llm_parse:describeLlmRaw(verifyRaw);
+  const vTok=Number(vParse.prompt_tokens||0)+Number(vParse.completion_tokens||0);
+  const vFinish=String(vParse.finish_reason||vParse.error||'');
+  traceEvents.push({
+    kind:'trace.llm',
+    actor:'orchestrator',
+    status_message:`verify: ${vFinish||'stop'} · ${vTok} tok`,
+    payload:{
+      role:'verify',
+      model:String((obj(verifyChat.chat_request)&&verifyChat.chat_request.model)||llmLog.model),
+      prompt_tokens:Number(vParse.prompt_tokens||0),
+      completion_tokens:Number(vParse.completion_tokens||0),
+      reasoning_tokens:Number(vParse.reasoning_tokens||0),
+      finish_reason:vFinish,
+      prompt_preview:previewChatMessages(chatMessages(verifyChat)),
+      content_preview:previewContent(verifyRaw.output||verifyRaw.text||''),
+      step_count:stepNo,
+      ...execRef()
+    }
+  });
+}
+events.unshift(...traceEvents);
 state.status=nextStatus;
 const persistEvents=events.map(e=>[
   prev.case_id,
@@ -1695,7 +1840,7 @@ def main() -> None:
             knowledge_retrieval_execute_params(),
             onError="continueRegularOutput",
         ),
-        code("Attach orchestrator RAG evidence", (1440, 180), attach_orchestrator_rag_js()),
+        code("Attach orchestrator RAG evidence", (1440, 180), attach_orchestrator_rag_js(policy_heading="Политика из базы знаний:")),
         code("Build decision chat", (1440, 0), BUILD_DECISION_CHAT),
         openai_chat_http("Decision chat", (1560, 0)),
         code("Decision LLM", (1680, 0), FORMAT_OPENAI_CHAT, alwaysOutputData=True),

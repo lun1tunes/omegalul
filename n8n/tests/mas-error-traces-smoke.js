@@ -46,12 +46,12 @@ async function run(name, json, nodes = {}) {
       url: 'https://n8n.corp/workflow/wf-excel/executions/5150',
       retryOf: null,
       mode: 'integrated',
-      lastNodeExecuted: 'Excel Extractor AI Agent',
+      lastNodeExecuted: 'Excel Extractor Agent chat',
       error: {
         message: 'Bad request - please check your parameters',
         name: 'NodeApiError',
         stack: 'NodeApiError: Bad request\n' + '    at frame\n'.repeat(200),
-        node: { name: 'Excel Extractor AI Agent', type: '@n8n/n8n-nodes-langchain.agent' },
+        node: { name: 'Excel Extractor Agent chat', type: 'n8n-nodes-base.httpRequest' },
       },
     },
     workflow: { id: 'wf-excel', name: 'Agent — Excel Extractor' },
@@ -61,8 +61,8 @@ async function run(name, json, nodes = {}) {
   assert.equal(normalized.execution_url, 'https://n8n.corp/workflow/wf-excel/executions/5150');
   assert.equal(normalized.workflow_name, 'Agent — Excel Extractor');
   assert.equal(normalized.workflow_id, 'wf-excel');
-  assert.equal(normalized.node_name, 'Excel Extractor AI Agent');
-  assert.equal(normalized.node_type, '@n8n/n8n-nodes-langchain.agent');
+  assert.equal(normalized.node_name, 'Excel Extractor Agent chat');
+  assert.equal(normalized.node_type, 'n8n-nodes-base.httpRequest');
   assert.equal(normalized.error_type, 'NodeApiError');
   assert.deepEqual(normalized.lookup_sql_parameters, ['5150']);
 
@@ -70,24 +70,24 @@ async function run(name, json, nodes = {}) {
   const attached = await run('Attach case_id', { case_id: 'CASE-1' }, { 'Normalize n8n error trigger': normalized });
   assert.equal(attached.case_id, 'CASE-1');
   assert.equal(attached.trace_sql_parameters[0], 'CASE-1');
-  assert.equal(attached.trace_sql_parameters[3], 'Excel Extractor AI Agent');
+  assert.equal(attached.trace_sql_parameters[3], 'Excel Extractor Agent chat');
   assert.deepEqual(JSON.parse(attached.trace_sql_parameters[7]), {
     execution_id: '5150',
     execution_url: 'https://n8n.corp/workflow/wf-excel/executions/5150',
     workflow_id: 'wf-excel',
-    node_type: '@n8n/n8n-nodes-langchain.agent',
+    node_type: 'n8n-nodes-base.httpRequest',
   });
 
   const event = await run('Prepare system.node_error', { ...attached, error_id: 42 });
   assert.equal(event.skip_event, false);
   const [caseId, taskId, kind, actor, agentId, status, message, handoff, payloadJson] = event.event_sql_parameters;
   assert.deepEqual([caseId, taskId, kind, actor, agentId, status, handoff], ['CASE-1', null, 'system.node_error', 'n8n', null, 'error', null]);
-  assert.equal(message, 'Упал узел Excel Extractor AI Agent');
+  assert.equal(message, 'Упал узел Excel Extractor Agent chat');
   const payload = JSON.parse(payloadJson);
   assert.equal(payload.error_id, 42);
   assert.equal(payload.execution_url, 'https://n8n.corp/workflow/wf-excel/executions/5150', 'the log links straight to the failed execution');
   assert.equal(payload.workflow_name, 'Agent — Excel Extractor');
-  assert.equal(payload.node_name, 'Excel Extractor AI Agent');
+  assert.equal(payload.node_name, 'Excel Extractor Agent chat');
   assert.equal(payload.error_message, 'Bad request - please check your parameters');
   assert.ok(payload.stack.length <= 1500 && payload.stack.startsWith('NodeApiError'), 'bounded stack in the event; the full one is in error_traces');
 

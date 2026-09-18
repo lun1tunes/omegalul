@@ -118,6 +118,15 @@ def test_missing_ca_bundle_fails_closed(monkeypatch, tmp_path) -> None:
         Settings()
 
 
+def _settings_env_names() -> list[str]:
+    names: list[str] = []
+    for field in Settings.model_fields.values():
+        alias = field.validation_alias
+        if isinstance(alias, str) and alias:
+            names.append(alias)
+    return names
+
+
 def test_env_candidates_include_service_file() -> None:
     assert SERVICE_ROOT.name == "mas-activity-service"
     example = SERVICE_ROOT / "mas-activity.env.example"
@@ -127,5 +136,7 @@ def test_env_candidates_include_service_file() -> None:
     assert "HITL_MODE" not in text
     assert "ORCHESTRATOR_WEBHOOK_URL" in text
     assert "KNOWLEDGE_INGEST_URL" in text
+    missing = [name for name in _settings_env_names() if name not in text]
+    assert missing == [], missing
     loaded = _load_env_files()
     assert all(isinstance(path, Path) for path in loaded)

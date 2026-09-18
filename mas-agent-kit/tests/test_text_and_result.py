@@ -28,6 +28,25 @@ def test_human_text_gate_accepts_prose_and_rejects_machine_tokens() -> None:
     assert human_text_problems("Оставить скважины как в исходном файле, пожалуйста.") == []
 
 
+def test_option_labels_need_russian_prose() -> None:
+    """CASE-6aaaeddc-9828bf: Builder asked GRUPTREE parent with label FIELD."""
+    from mas_agent_kit.text import option_problems
+
+    bare = option_problems([{"value": "FIELD", "label": "FIELD"}])
+    assert any("по-русски" in p for p in bare)
+    ok = option_problems([{"value": "FIELD", "label": "Корневая группа модели (FIELD)"}])
+    assert ok == []
+    with pytest.raises(ToolError) as exc:
+        engineer_request_from_args(
+            {
+                "question": "Какой группой-родителем должна быть DKS в дереве групп?",
+                "options": [{"value": "FIELD", "label": "FIELD"}, {"value": "CENTR", "label": "CENTR"}],
+            },
+            default_topic="parent",
+        )
+    assert exc.value.code == "question_not_human"
+
+
 def test_options_and_plural_helpers() -> None:
     assert options_for_human("Оставить; Убрать") == [{"value": "Оставить", "label": "Оставить"}, {"value": "Убрать", "label": "Убрать"}]
     assert options_for_human('[{"value":"keep","label":"Оставить","hint":"как в исходном файле"}]') == [

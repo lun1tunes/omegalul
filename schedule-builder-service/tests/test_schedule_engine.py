@@ -17,6 +17,19 @@ def test_fracture_specs_alias() -> None:
     assert keyword_object("WCONPROD")["details"]["kind"] == "schedule_keyword"
 
 
+def test_keywords_equal_rag_allowlist() -> None:
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(root / "n8n" / "templates"))
+    from mas_knowledge_spaces import KEYWORDS as RAG_KEYWORDS
+
+    from app.keywords import KEYWORDS as SERVICE_KEYWORDS
+
+    assert list(SERVICE_KEYWORDS) == list(RAG_KEYWORDS)
+
+
 def test_emit_block_terminator_and_blank_line() -> None:
     text = """DATES
   1 JAN 2026 /

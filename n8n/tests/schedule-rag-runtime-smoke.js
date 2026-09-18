@@ -9,18 +9,23 @@ const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
 const src=(wf,name)=>{const n=wf.nodes.find(x=>x.name===name);assert(n&&n.type==='n8n-nodes-base.code',`missing ${name}`);return n.parameters.jsCode};
 async function run(name,{json={},items=[],nodes={}}={}){const fn=new AsyncFunction('$json','$input','$',(src(workflow,name)));const result=await fn(json,{all:()=>items.map(json=>({json}))},name=>({first:()=>({json:nodes[name]||{}})}));assert(result?.[0]?.json);return result[0].json}
 async function ingest(json){const fn=new AsyncFunction('$json','$input',src(ingestion,'Normalize approved SCHEDULE knowledge'));const items=[{json}];const r=await fn(json,{all:()=>items,first:()=>items[0]});return r[0].json}
-const block=(over={})=>({schedule_knowledge_block:{contract:'schedule_knowledge_block',contract_version:'1.0',target_base:'schedule_mvp',knowledge_type:'keyword_instruction',knowledge_id:'wconprod-v1',revision:'1',title:'WCONPROD — прогноз',keywords:['WCONPROD'],topics:['Контроль по скважинам','Прогноз'],task_patterns:['задать лимит по воде'],status:'active',author:'expert',access_scope:'petroleum-engineering',text:'Полная инструкция по WCONPROD.',...over}});
+const block=(over={})=>({schedule_knowledge_block:{contract:'schedule_knowledge_block',contract_version:'1.0',target_base:'schedule_mvp',knowledge_type:'keyword_instruction',knowledge_id:'wconprod-v1',revision:'1',title:'WCONPROD — прогноз',keywords:['WCONPROD'],topics:['Контроль по скважинам','Прогноз'],task_patterns:['задать лимит по воде'],status:'active',author:'expert',access_scope:'petroleum-engineering',text:'Полная инструкция по WCONPROD.',summary:'Когда применять. FORECAST после cutover. Не путать с WCONHIST. WELTARG меняет цель без полного WCONPROD.',...over}});
 const meta=(over={})=>({target_base:'schedule_mvp',knowledge_type:'keyword_instruction',knowledge_id:'wconprod-v1',revision:'1',parent_key:'schedule_mvp:wconprod-v1:1',keyword_families:['WCONPROD'],access_scope:'petroleum-engineering',knowledge_status:'current',ingest_key:'chunk-1',...over});
 const query={contract:'schedule_retrieval_query',contract_version:'1.0',query:'WCONPROD лимит по воде',top_k:10,exact_keyword_terms:['WCONPROD'],filters:{target_base:'schedule_mvp',access_scope:'petroleum-engineering',knowledge_types:['keyword_instruction','worked_example'],keyword_families:['WCONPROD'],require_coverage:true,require_schema:true,knowledge_status:'current'}};
 const catalogue=()=>({contract:'schedule_schema_catalogue',contract_version:'1.0',catalogue_hash:`sha256:${'b'.repeat(64)}`,source_hash:`sha256:${'c'.repeat(64)}`,approved_by:'expert',simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2'},schemas:[{schema_id:'expert:WCONPROD',schema_revision:'1',keyword:'WCONPROD',fields:[{name:'WELL',position:1,type:'string',required:true}],semantics:{period:'FORECAST'}}]});
 (async()=>{
- const valid=await ingest(block());assert.equal(valid.status,'approved_for_ingestion');assert.equal(valid.metadata.target_base,'schedule_mvp');assert.equal(valid.metadata.knowledge_type,'keyword_instruction');assert.equal(valid.knowledge_block.text,'Полная инструкция по WCONPROD.');
+ const valid=await ingest(block());assert.equal(valid.status,'approved_for_ingestion');assert.equal(valid.metadata.target_base,'schedule_mvp');assert.equal(valid.metadata.knowledge_type,'keyword_instruction');assert.equal(valid.knowledge_block.text,'Полная инструкция по WCONPROD.');assert.ok(valid.knowledge_block.summary.includes('WELTARG'));
+ const noSummary=await ingest(block({summary:''}));assert(noSummary.findings.some(x=>x.code==='KEYWORD_SUMMARY_REQUIRED'));
+ const longSummary=await ingest(block({summary:'Когда применять. '+ 'x'.repeat(590)}));assert(longSummary.findings.some(x=>x.code==='KEYWORD_SUMMARY_TOO_LONG'));
  const endactioCat={contract:'schedule_schema_catalogue',contract_version:'1.0',catalogue_hash:`sha256:${'b'.repeat(64)}`,source_hash:`sha256:${'c'.repeat(64)}`,simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2'},schemas:[{schema_id:'expert:ENDACTIO:end',schema_revision:'1',keyword:'ENDACTIO',variant:'end',parser:{token_width:0},fields:[],layout:{record_terminator:'NONE',block_terminator:'NONE'},semantics:{period:'ANY',clock:{uses_current:true}}}]};
  const endactio=await ingest(block({knowledge_id:'endactio-action-close-v1',keywords:['ENDACTIO'],title:'ENDACTIO',text:'ENDACTIO закрывает ACTIONX без параметров.',schema_catalogue:endactioCat}));
  assert.equal(endactio.status,'approved_for_ingestion');
  const emptyFields=await ingest(block({schema_catalogue:{...endactioCat,schemas:[{schema_id:'expert:WCONPROD',schema_revision:'1',keyword:'WCONPROD',fields:[],semantics:{period:'FORECAST'}}]}}));
  assert(emptyFields.findings.some(x=>x.code==='SCHEMA_ENTRY_INVALID'&&x.keyword==='WCONPROD'));
  const example=await ingest(block({knowledge_type:'worked_example',knowledge_id:'water-limit-example',text:'',examples:[{task:'лимит воды',schedule_text:'WCONPROD ... /',explanation:'пример'}]}));assert.equal(example.status,'approved_for_ingestion');
+ const comments=await ingest(block({knowledge_id:'schedule-model-file-comments-v1',keywords:[],title:'Комментарии',text:'Комментарии -- не keyword SCHEDULE.',summary:'Когда применять. Комментарии -- не факты и не keyword.'}));
+ assert.equal(comments.status,'approved_for_ingestion');
+ assert.deepEqual(comments.knowledge_block.keywords,[]);
  const badBase=await ingest(block({target_base:'arbitrary_sql_table'}));assert(badBase.findings.some(x=>x.code==='TARGET_BASE_NOT_ALLOWLISTED'));
  const inactive=await ingest(block({status:'inactive'}));assert(inactive.findings.some(x=>x.code==='ACTIVE_KNOWLEDGE_REQUIRED'));
  const lookup={'Validate SCHEDULE retrieval request':query};
@@ -103,7 +108,7 @@ const catalogue=()=>({contract:'schedule_schema_catalogue',contract_version:'1.0
   return result[0].json;
  }
  const invOk=await summarize(
-  {expected_document_ids:['live-a'],rag_table_name:'tnavigator_schedule_knowledge_v1'},
+  {expected_document_ids:['live-a'],rag_table_name:'tnavigator_schedule_knowledge_v2'},
   [
    {document_id:'live-a',total_rows:10,distinct_documents:2,embedding_type:'vector'},
    {document_id:'old-packaged',total_rows:10,distinct_documents:2,embedding_type:'vector'},
@@ -113,7 +118,7 @@ const catalogue=()=>({contract:'schedule_schema_catalogue',contract_version:'1.0
  assert.equal(invOk.status,'rag_inventory_ok');
  assert.deepEqual(invOk.missing_document_ids,[]);
  const invMiss=await summarize(
-  {expected_document_ids:['live-a','live-b'],rag_table_name:'tnavigator_schedule_knowledge_v1'},
+  {expected_document_ids:['live-a','live-b'],rag_table_name:'tnavigator_schedule_knowledge_v2'},
   [{document_id:'live-a',total_rows:5,distinct_documents:1,embedding_type:'vector'}],
   {ingest_action:'insert',inserted:1}
  );
@@ -139,5 +144,32 @@ const catalogue=()=>({contract:'schedule_schema_catalogue',contract_version:'1.0
  const shapedSchema=await shape({status:'needs_input',findings:[{code:'SCHEMA_ENTRY_INVALID',severity:'error',keyword:'ENDACTIO',knowledge_id:'endactio-action-close-v1'}],vector_write_allowed:false},{ingest_action:'insert',status:'needs_input',inserted:1,skipped:1});
  assert.ok(String(shapedSchema.message).includes('endactio-action-close-v1'));
  assert.ok(String(shapedSchema.message).includes('ENDACTIO'));
- console.log('SCHEDULE RAG runtime smoke: 26 scenarios passed');
+ const ingestEmbed=ingestion.nodes.find(n=>n.name==='SCHEDULE Embeddings — configure same model in retrieval');
+ const retrievalEmbed=workflow.nodes.find(n=>n.name==='SCHEDULE Retrieval Embeddings — same model as ingestion');
+ const ingestPg=ingestion.nodes.find(n=>n.name==='PGVector — insert approved SCHEDULE knowledge');
+ const retrievalPg=workflow.nodes.find(n=>n.name==='PGVector semantic candidates');
+ assert.equal(ingestEmbed.parameters.model,'baai/bge-m3');
+ assert.equal(retrievalEmbed.parameters.model,'baai/bge-m3');
+ assert.equal(ingestEmbed.parameters.options?.timeout, -1);
+ assert.equal(retrievalEmbed.parameters.options?.timeout, -1);
+ assert.equal(ingestPg.parameters.tableName,'tnavigator_schedule_knowledge_v2');
+ assert.equal(retrievalPg.parameters.tableName,'tnavigator_schedule_knowledge_v2');
+ const lookupSql=ingestion.nodes.find(n=>n.name==='Lookup existing knowledge keys').parameters.query;
+ assert.ok(lookupSql.includes('in_vector'));
+ assert.ok(lookupSql.includes('tnavigator_schedule_knowledge_v2'));
+ async function selectNew(lookupRows, collected){
+  const fn=new AsyncFunction('$input','$', src(ingestion,'Select new MAS knowledge'));
+  return fn({all:()=>lookupRows.map(json=>({json}))}, (name)=>{
+   if(name==='Collect MAS knowledge blocks') return {all:()=>collected.map(json=>({json}))};
+   throw new Error(name);
+  });
+ }
+ const card={knowledge_id:'wconprod-v1',revision:'1',target_base:'schedule_mvp',text:'x'};
+ const parentOnly=await selectNew([{target_base:'schedule_mvp',knowledge_id:'wconprod-v1',revision:'1',in_vector:false}], [card]);
+ assert.equal(parentOnly[0].json.ingest_action,'insert');
+ const already=await selectNew([{target_base:'schedule_mvp',knowledge_id:'wconprod-v1',revision:'1',in_vector:true}], [card]);
+ assert.equal(already[0].json.ingest_action,'skip_all');
+ const pgTrue=await selectNew([{target_base:'schedule_mvp',knowledge_id:'wconprod-v1',revision:'1',in_vector:'t'}], [card]);
+ assert.equal(pgTrue[0].json.ingest_action,'skip_all');
+ console.log('SCHEDULE RAG runtime smoke: 31 scenarios passed');
 })().catch(e=>{console.error(e.stack||e);process.exit(1)});

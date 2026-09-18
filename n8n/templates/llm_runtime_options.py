@@ -24,7 +24,21 @@ LLM_HTTP_TIMEOUT_MS = 600_000
 # n8n 2.30.8 lmChatOpenAi only forwards reasoningEffort low|medium|high
 # (→ modelKwargs.reasoning_effort) and cannot send OpenRouter reasoning.enabled=false.
 # Setting reasoningEffort *enables* thinking and is what emptied Decision content.
-CHAT_THINKING_OFF = {"reasoning": {"enabled": False}, "enable_thinking": False}
+# Three independent off-switches: OpenRouter (`reasoning.enabled`), Model Studio
+# (`enable_thinking`), vLLM/SGLang (`chat_template_kwargs.enable_thinking`). Unknown
+# keys are ignored. Qwen3.6 has no `/no_think` soft switch (plan Q2).
+CHAT_THINKING_OFF = {
+    "reasoning": {"enabled": False},
+    "enable_thinking": False,
+    "chat_template_kwargs": {"enable_thinking": False},
+}
+
+# Per-role sampling (plan 7.4). Decision/Verify/Interpret stay low-T JSON.
+# Agent loop uses the model-card non-thinking profile. Revisit after `--live --repeat 3`.
+SAMPLING = {
+    "decision": {"temperature": 0.2, "top_p": 0.9},
+    "agent": {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "presence_penalty": 1.5},
+}
 
 STRUCTURED_FIX_PROMPT = """You are repairing structured JSON for an n8n output parser.
 
@@ -59,3 +73,64 @@ def structured_parser_params(schema_json: str) -> dict:
         "customizeRetryPrompt": True,
         "prompt": STRUCTURED_FIX_PROMPT,
     }
+
+
+# Inlined into n8n Code nodes (no require). Field Set `chat_extra_params` is a JSON object
+# string; it overlays SAMPLING / CHAT_THINKING_OFF (so a corp vLLM can add top_k etc.)
+# but cannot replace messages / tools / tool_choice.
+PARSE_CHAT_EXTRA_JS = r"""
+function parseChatExtra(cfg){
+  const raw=cfg&&cfg.chat_extra_params;
+  let parsed={};
+  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;
+  else {
+    const s=String(raw||'').trim();
+    if(s){
+      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}
+    }
+  }
+  const out={...parsed};
+  delete out.messages;
+  delete out.tools;
+  delete out.tool_choice;
+  return out;
+}
+""".strip()
+
+# Structured prompt_preview for trace.llm: role+clipped content, system once, later turns
+# are a delta from the previous send (fromIdx). Old string previews stay valid in the UI.
+PREVIEW_CHAT_MESSAGES_JS = r"""
+function previewChatMessages(msgs, fromIdx){
+  const CONTENT=600;
+  const KEEP=10;
+  const list=Array.isArray(msgs)?msgs:[];
+  const slim=(m)=>{
+    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};
+    const c=raw.content;
+    let text='';
+    if(typeof c==='string') text=c;
+    else if(c==null) text='';
+    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }
+    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';
+    const out={role:String(raw.role||''),content:text};
+    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);
+    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;
+    return out;
+  };
+  const all=list.map(slim);
+  const start=Math.max(0,Number(fromIdx)||0);
+  let picked=start>0?all.slice(start):all.slice();
+  let omitted=0;
+  if(start>0&&all[0]&&all[0].role==='system'){
+    omitted=Math.max(0,start-1);
+    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];
+  }
+  if(picked.length>KEEP){
+    omitted += picked.length-KEEP;
+    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];
+  }
+  const preview={messages:picked};
+  if(omitted) preview.omitted=omitted;
+  return preview;
+}
+""".strip()

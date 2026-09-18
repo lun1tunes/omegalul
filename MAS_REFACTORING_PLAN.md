@@ -1,10 +1,10 @@
-# NOVATEK RE MASter — план развития «от рабочей альфы к умной MAS» (ревизия 43: архитектурный аудит)
+# NOVATEK RE MASter — план развития «от рабочей альфы к умной MAS» (ревизия 53: корпус + bge-m3)
 
-Ревизия 43 — 2026-09-13. Статусы сверены с кодом и с живыми executions lab-n8n на эту дату; история ревизий — §7; закрытый долг ревизий 1–42 — Приложение A; критерии закрытых фаз 0–6 — Приложение B (не переписываются). Как работать по плану — `AGENTS.md` (карта, инварианты, цикл задачи), гейт — `python3 scripts/mas_gate.py [--live [--repeat N]]` (`--bundle` — полевой zip, не стадия офлайн-гейта). Полевой гайд для инженера — `docs.md`. Очередь простыми словами — §2.8, бриф на пункт — `/mas-brief` → `briefs/`.
+Ревизия 53 — 2026-09-18. 8.5/R6/R7/R8: корпус (worked_example ×3, Excel-дельты, `absent_agent`); эмбеддинги `baai/bge-m3` → таблица `tnavigator_schedule_knowledge_v2` (1024). История ревизий — §7; закрытый долг ревизий 1–42 — Приложение A; критерии закрытых фаз 0–6 — Приложение B (не переписываются). Как работать по плану — `AGENTS.md` (карта, инварианты, цикл задачи), гейт — `python3 scripts/mas_gate.py [--live [--repeat N]]` (`--bundle` — полевой zip, не стадия офлайн-гейта). Полевой гайд для инженера — `docs.md`. Очередь простыми словами — §2.8, бриф на пункт — `/mas-brief` → `briefs/`.
 
-**Синхрон.** Шапка, §3 «Состояние», §4 сводка и критерий *текущего* гейта, §2.7, «Ближайшие шаги» (конец §7) = код на дату ревизии. Номер шапки = последняя запись §7. Журнал §7 и Приложения A/B не переписывать. Счётчики pytest в шапке не фиксировать — плывут; писать «16 smokes, 5 pytest-наборов». `--live` сейчас **12 слотов**: шесть `run_live_five` + `demo_agent_long_job` + `three_agent_chain` + `excel_datasets` (extract + apply + дырка) + `agent_down_recovery` + `rework_round` + `step_limit_review`. `--repeat N` — шесть commissioning ×N в одном пуле, остальные сценарии один раз (не 12×N); стена ~25 мин. `--hot`, если lab здоров и JSON без дрейфа. **Требование заказчика: полный прогон (`--live`) ≤ 20 мин** — закрепляется как критерий гейта в Фазе 12 (T2), до этого — контроль по `LIVE_WALL_BUDGET_S`.
+**Синхрон.** Шапка, §3 «Состояние», §4 сводка и критерий *текущего* гейта, §2.7, «Ближайшие шаги» (конец §7) = код на дату ревизии. Номер шапки = последняя запись §7. Журнал §7 и Приложения A/B не переписывать. Счётчики pytest в шапке не фиксировать — плывут; писать «17 smokes, 5 pytest-наборов». `--live` сейчас **12 слотов**: шесть `run_live_five` + `demo_agent_long_job` + `three_agent_chain` + `excel_datasets` (extract + apply + дырка) + `agent_down_recovery` + `rework_round` + `step_limit_review`. `--repeat N` — шесть commissioning ×N в одном пуле, остальные сценарии один раз (не 12×N); стена ~25 мин. `--hot`, если lab здоров и JSON без дрейфа. **Требование заказчика: полный прогон (`--live`) ≤ 20 мин** — закрепляется как критерий гейта в Фазе 12 (T2), до этого — контроль по `LIVE_WALL_BUDGET_S`.
 
-**Где проект.** Фазы 0–6.1 и альфа α1–α5 закрыты (Приложение B): оркестратор без домена с планом, журналом и проверенным завершением; Excel и Schedule Builder — LLM-агенты с инструментами на общем ядре `mas-agent-kit` и спеках `AgentSpec`; исполняемый реестр; deliverables как артефакты; долгие агенты (`demo_agent`); лог разработчика; контур «таблица → схема → `.INC`» (6.0). Live-гейт 12/12 GREEN (ревизии 41–42, `CASE-6aa6b6fc-*`). Ревизия 43 — аудит без правок кода: пять глубоких ревизий (Excel, Builder, Activity + UI, kit/шаблон, RAG) плюс разбор оркестратора, retrieval-клиента, лога `CASE-6aa6b6fc-3280a9` и 30 последних executions `MAS — Knowledge Retrieval`. Вывод §0: **система стабильна, но «умной» ещё не является** — база знаний до Schedule Builder не доходит вообще, до оркестратора доходит одним и тем же набором из трёх карточек, лог не показывает ни RAG, ни LLM, thinking у агентов на поле не отключаем, kit без типов, добавить агента без правки десяти файлов вне его папки нельзя. Очередь — §7 «Ближайшие шаги», фазы 7–12 — §4.
+**Где проект.** Фазы 0–6.1 и альфа α1–α5 закрыты (Приложение B). Ревизия 53 — корпус 8.5 + эмбеддинги `baai/bge-m3`. Ревизия 52 — KB по требованию (8.4). Ревизия 51 — RAG-фильтры из инвентаря (8.3). Ревизия 50 — live 12/12 на коде 8.1+8.2. Ревизия 49 — retrieval без ложного `SCHEMA_KEYWORD_SCOPE_REQUIRED`. Ревизия 48 — лог и честный отказ цикла. Ревизия 47 — hotfix цикла. Ревизия 46 — пороги LLM/RAG и матрица секретов. Ревизия 45 — HTTP-цикл агента. Ревизия 44 — лог RAG/LLM оркестратора. Ревизия 43 (аудит) остаётся диагнозом оркестраторского среза (три routing-карточки) и kit без типов. Очередь — §7 «Ближайшие шаги» с 8.6, фазы 8–12 — §4.
 
 Ограничения, которые план не нарушает: n8n **2.30.8**, только UI (Import from File, Credentials, Set-ноды); FastAPI на Windows — только Python (`.venv` + `requirements.txt`, wheels для 3.11–3.13); БД — только через `MAS — Control Plane Proxy`; вся правка адресов и лимитов — в `MAS — Runtime Config`; секретов в JSON нет; модель — `qwen/qwen3.6-27b` (lab — OpenRouter, поле — корпоративный OpenAI-compatible endpoint).
 
@@ -65,7 +65,7 @@
 - **Excel Tools**: инвентарь книг (таблицы, колонки, образцы) → LLM выбирает → `extract_*` / `ask_engineer`; `extract_table` с `expected_output`; ошибки аргументов возвращаются модели с подсказками.
 - **Один контракт агента** и один kit (`AgentService`, `ToolRegistry`, `SessionStore`, `ActivityClient`, `CasePacket`), одна форма сервиса (`test_service_shape`), одна форма workflow из `AgentSpec` (оркестратор для `demo_agent` не правился).
 - **Русская лента + лог разработчика** как один поток событий; `trace.*` скрыт из чата; ссылки на executions; `human_text_problems` как гейт машинности.
-- **Гейт**: regen drift, 16 smokes, 5 pytest-наборов, офлайн combat, 12 live-слотов с порогами α2 и семантическим сравнением; отказные сценарии (`agent_down_recovery`, `rework_round`, `step_limit_review`).
+- **Гейт**: regen drift, 17 smokes, 5 pytest-наборов, офлайн combat, 12 live-слотов с порогами α2 (`rag_empty: 0`) и семантическим сравнением; отказные сценарии (`agent_down_recovery`, `rework_round`, `step_limit_review`).
 - **UI**: корпоративная палитра (`--brand-blue #0033A0`, `--brand-cyan #00B8F0`), три панели, план под постановкой, HITL как чат с вариантами, deliverables по производителям, режим разработчика → «Лог».
 
 ---
@@ -79,9 +79,9 @@
 | # | Где | Факт | Как закрыть | Готово, когда |
 |---|---|---|---|---|
 | O24 | `mas_retrieval_client.py` `SELECTORS.orchestrator` (top_k 12 → 20, max_cards 6, text_limit 700), `compactRetrievalCards` 105–143 (порог 45 % от лучшего RRF), `mas_state_utils.py` `buildRetrievalQuery` 394–408, `planRetrievalTopics` 895–910 | RAG-срез оркестратора статичен: на любой цели те же 3 карточки (executions #228559 … #228288); лексика не матчится (AND по 800 символам), тег-ветка на шаге 0 пуста | Запрос = цель + заголовки плана + открытые вопросы, **без** имён файлов и журнала; `topics` на шаге 0 = роли всех `enabled` агентов реестра; порог 45 % применять только к карточкам с ≥ 2 ветками; `text_limit` ≥ 1500 или поле `summary` карточки; RAG-блок в отдельной секции `planner_input` («Политика из базы знаний»), не JSON-хвост | На трёх разных целях (commissioning; rebind; свободная задача без файлов) `trace.rag` оркестратора содержит разные наборы `knowledge_id`; smoke на `compactRetrievalCards` с одной веткой |
-| O25 | `generate_mas_orchestrator.py` 1153–1158 (`...(unparsed?{llm_parse:…}:{})`) | Токены, `finish_reason`, длительность LLM пишутся в `orchestrator.decision` только при ошибке разбора | Всегда писать `llm{prompt_tokens, completion_tokens, finish_reason, duration_ms, model}` и `rag{query, status, cards[{knowledge_id, rrf_score, branches}]}` в payload решения; промпт — только в `trace.llm` (Фаза 7) | `test_case_log`: заголовок успешного `call_agent` содержит «N tok»; `mas_trace_case.py` печатает `finish_reason` каждого шага |
+| O25 | `generate_mas_orchestrator.py` PARSE_DECISION | ✅ ревизия 44: у каждого `orchestrator.decision` всегда `payload.llm` + `payload.rag`; промпт только в `trace.llm` | — | live `CASE-6aa95bf0-c2a4a1`: «stop · 5414 tok», rag 3 карточки; `test_case_log` |
 | O26 | `mas_state_utils.py` `isUnlistedWellsGate` 318–322, `readUnlistedWellsPolicy` 380–390; `agentTask.inputs.unlisted_wells_policy` | Доменное понятие «лишние скважины» живёт в оркестраторе (regex по тексту вопроса `unlisted|не из excel|лишн`) | Убрать из оркестратора: ответы HITL уже едут в `context.hitl.answers`; Builder читает `choice` через kit `engineer_answers` (ключ `unlisted_wells_policy` там уже есть). Оркестратор не знает, о чём вопрос | grep `unlisted` по `n8n/templates/` пуст; live `run_live_five` кейсы с вопросом про лишние скважины `mismatch_count: 0` |
-| O27 | `generate_mas_orchestrator.py` 802 (`orchestrator.resume` пишется в Postgres напрямую), `contracts.py` `EVENT_KINDS` | Вид события отсутствует в Activity (`POST /events` → 422), payload без `execRef` → строка лога без ссылки на execution | Добавить в `EVENT_KINDS` (Activity + kit-таблица K15), payload через `execRef()`; в чате скрывать как echo (`orchestrator.status`-класс) | Лог `resume` имеет ссылку на execution; чат без строки «Продолжение по событию…» |
+| O27 | `generate_mas_orchestrator.py` resume persist, `contracts.py` `EVENT_KINDS` | ✅ ревизия 44: вид в Activity, payload `execRef()`, скрыт из чата (`is_chat_hidden_kind`) | Kit не содержит `orchestrator.resume` (оркестраторный kind) | live `CASE-6aa95cf3-ce2d5d`: `execution_url` …/executions/231293; лента `GET /cases` без resume |
 | O28 | `PREPARE_VERIFY` 302–316 читает `Prepare decision context` до Attach | `Verify completion` не видит RAG-политику завершения (карточка `route-hitl-required-evidence` и будущие «критерии готовности») | Дать Verify тот же `rag` срез (только `knowledge_type=routing_card` с `topics: completion`) — как политика, не как факты | Smoke: `verify_input` содержит блок политики; live без изменений `.INC` |
 | O29 | `BUILD_DECISION_CHAT` 263–265 | Весь контекст (компакт state + план + журнал + RAG JSON) — одним user-сообщением; система не различает «факты», «политику», «историю» | Секции с заголовками в фиксированном порядке: Цель → План → Журнал → Данные агентов → Открытые вопросы → Политика (RAG). Порядок и заголовки — константы генератора, smoke проверяет | Smoke на порядок секций; live steps ≤ 6 сохраняется |
 | O30 | SYSTEM 113–164 | Промпт говорит «есть срез знаний», но не говорит, как им пользоваться при декомпозиции (какие пункты плана, когда HITL обязателен) | Добавить общий (бездоменный) абзац: «политика из базы знаний имеет приоритет над догадкой; если политика требует уточнения — `ask_user`; план — по пунктам политики, если она их даёт» | На `three_agent_chain` и commissioning `state.plan` совпадает с политикой карточек (проверка в live-харнессе по `trace.rag` + `plan`) |
@@ -90,20 +90,20 @@
 
 | # | Где | Факт | Как закрыть | Готово, когда |
 |---|---|---|---|---|
-| R1 | `schedule_rag_workflows.py` `ATTACH_SCHEMA_CATALOGUE` (≈ 247 `SCHEMA_KEYWORD_SCOPE_REQUIRED`), `NAMESPACES.schedule_mvp.requireSchema` | `schedule_mvp` без `keyword_families` → `abstain`, результаты стёрты. Builder получает 0 карточек на всех commissioning (executions выше) | Схему требовать только когда keyword'ы **запрошены**; без них — обычный retrieval (`requireCoverage` не трогать). `schema_catalogue` Builder и так берёт локально | Smoke: запрос «даты ввода скважин», `schedule_mvp`, без семей → `succeeded`, ≥ 1 карточка; live: `trace.rag` Builder `status=ready` на 6/6 commissioning |
-| R2 | `TAG_SQL` 184–185 | Тег-ветка матчит только массивы фильтров вызывающего, текст запроса по тегам не ищется | Вторая часть тег-ветки: токены запроса (≥ 4 символов, без стоп-слов) vs `keyword_families ∪ topics ∪ task_patterns` (`ILIKE '%tok%'` по трём полям); фильтры вызывающего — как `exact_hit` boost | Smoke: «коэффициент эксплуатации» без семей → карточка WEFAC в `branches: [tag]` |
-| R3 | `LEXICAL_SQL` 182–183, `FINALIZE_INGEST_SQL` GIN `to_tsvector('simple', text)` | `websearch_to_tsquery('simple', $1)` — AND по всем токенам 800-символьного запроса, без русского стемминга | `plainto_tsquery('russian', left(query, 300))` OR `to_tsquery` по ключевым токенам; индекс `to_tsvector('russian', text)` + `simple` для ALLCAPS; `ts_rank_cd` остаётся | Smoke: запрос из 3 предложений возвращает ≥ 3 лексических кандидата; `WCONPROD` в запросе — `exact_hit` |
-| R4 | `build_retrieval` PGVector `metadataValues` (≈ 639) | Семантика фильтруется только по `target_base`/`access_scope`/`status`; `knowledge_type` отбрасывается после — слоты теряются | Добавить `knowledge_type` в фильтр (или один вызов на тип) | В `WRAP_SEMANTIC` кандидаты только запрошенных типов (smoke) |
-| R5 | `compactRetrievalCards` (45 %, `text_limit` 700/800/1200), корпус: медиана 2508 символов | Карточка обрезается на «Назначении», pitfalls не доходят; одноветочные карточки отсекаются | Порог только при ≥ 2 ветках; `text_limit` ≥ 2000 **или** поле `summary` в карточке (обязательное для `keyword_instruction`) — инъекция summary + ссылка на полный текст через инструмент (R10) | `rag.cards[].text` для `wconprod-forecast-control-v1` содержит фразу про WELTARG/pitfalls |
-| R6 | корпус: `worked_example` 0, `SELECTORS.schedule` запрашивает тип | Нет примеров решений для двух живых глаголов | 3 карточки `worked_example`: сдвиг дат ввода; group rebind; `extract_table` → `apply_dataset` (WEFAC). Теги = `task_patterns` харнесса | Retrieval на «сдвинь даты ввода» возвращает пример; `requireCoverage` удовлетворён `keyword_instruction` |
-| R7 | `excel-agent-operating-guide.documents.json` (5 карточек `excel_protocol`), `test_workflow_contracts.py` 840–891 | Три карточки описывают снятый протокол (`clr_`, `continuation_state`, `preflight`, `X-Excel-Webhook-Key`), тесты их **замораживают**; `topics` вызывающего всегда `протокол`+`clarification` → весь срез каждый раз | Переписать как дельты к SYSTEM (untrusted cells, unpivot, NA vs n/a, `expected_output`, `ask_engineer`); удалить ops-карточку; разморозить тесты на новые якоря | Live: карточки Excel упоминают `ask_engineer`/`expected_output`, не `clr_`; `excel_datasets` GREEN |
-| R8 | routing-карточки `route-cluster-calculation`, `route-binary-results`, `route-presentation` («агента нет»), `route-calculation` (несуществующий geometry-агент), `specialist-template-bounded-work` (`specialist_packet`) | Заглушки конкурируют за семантические слоты на шаге 0; упоминание снятого контракта | Теги `topics: [absent_agent]`, убрать `маршрутизация`; вычистить `specialist_packet`; при появлении кластерного агента заменить заглушку реальной политикой | `trace.rag` шага 0 на commissioning ⊆ {thin-orchestrator, excel, schedule, hitl-required-evidence} |
-| R9 | `mas_retrieval_client.py` `attach_retrieval_js` 148–205; `contracts.py`/kit `EVENT_KINDS` | Запрос, фильтры, `status`, `findings`, id/score карточек не пишутся ни в одно событие | Событие `trace.rag {caller, query, filters, status, findings[].code, cards[{knowledge_id, revision, rrf_score, branches}]}` из Attach (orchestrator/агенты) через Activity `POST /events`; `case_log` заголовок «База знаний: N карточек · статус»; UI — чипы карточек | Лог каждого live-кейса: ≥ 3 `trace.rag` (оркестратор, Excel, Builder); `mas_trace_case.py` печатает их |
-| R10 | Builder `search_keywords` (`keywords.py` 276–306) — локальная лексика; retrieval один раз до первого хода | Модель не может спросить базу знаний в середине работы (выбрала WEFAC — карточку WEFAC не видит) | Виртуальный инструмент `retrieve_knowledge {query, keywords?}` в цикле агента (Фаза 7.3): обрабатывается самим workflow через Execute Workflow → `MAS — Knowledge Retrieval` (без n8n-webhook и без сети с Windows); ответ — полные карточки; `trace.rag` пишется как для любого retrieval | Live `excel_datasets`: `trace.rag` с `wefac-*` **до** `apply_dataset`; `tool_calls ≤ 4` сохраняется (retrieve не считается инструментом агента в порогах α2 — отдельный счётчик `kb_calls`) |
+| R1 | `schedule_rag_workflows.py` `ATTACH_SCHEMA_CATALOGUE`, `NAMESPACES.schedule_mvp.requireSchema` | `schedule_mvp` без `keyword_families` → `abstain`, результаты стёрты. Builder получает 0 карточек на всех commissioning (executions выше) | ✅ ревизия 49: схему требовать только когда keyword'ы **запрошены**; без них — обычный retrieval (`requireCoverage` не трогать) | Smoke `knowledge-retrieval-smoke.js`; live Builder `trace.rag` `ready` · 6 карточек (`CASE-6aaaeddc-c99433` DATES) |
+| R2 | `TAG_SQL` | Тег-ветка матчит только массивы фильтров вызывающего, текст запроса по тегам не ищется | ✅ ревизия 49: токены запроса ≥4 vs `keyword_families`/`topics`/`task_patterns` (`ILIKE`) | Smoke: «коэффициент эксплуатации» → `query_tokens`; live tag-ветка на DATES/GRUPTREE |
+| R3 | `LEXICAL_SQL`, `FINALIZE_INGEST_SQL` GIN | `websearch_to_tsquery('simple')` AND без русского стемминга | ✅ ревизия 49: `plainto_tsquery('russian', left($1,300))` + `simple` ALLCAPS + GIN russian | Smoke: 3 предложения ≥3 кандидата; `WCONPROD` `exact_hit` |
+| R4 | `WRAP_SEMANTIC` | Семантика не фильтрует `knowledge_type` | ✅ ревизия 49: drop чужих типов | Smoke: routing_card отброшен при `schedule_mvp` |
+| R5 | `compactRetrievalCards`, корпус | 45 % режет одноветочные; полный text обрезается | ✅ ревизия 49: 45 % только при ≥2 ветках; `keyword_instruction.summary` ≤600; оркестратор `text_limit` 1500 | Smoke WELTARG в summary; 45 keyword-карточек |
+| R6 | корпус: `worked_example` 0, `SELECTORS.schedule` запрашивает тип | Нет примеров решений для двух живых глаголов | ✅ ревизия 53: 3 `worked_example` (сдвиг дат; rebind; extract_table→apply_dataset WEFAC) | Тест корпуса; live commissioning `rag_empty: 0` |
+| R7 | `excel-agent-operating-guide.documents.json` (5 карточек `excel_protocol`), `test_workflow_contracts.py` 840–891 | Три карточки описывают снятый протокол (`clr_`, `continuation_state`, `preflight`, `X-Excel-Webhook-Key`), тесты их **замораживают**; `topics` вызывающего всегда `протокол`+`clarification` → весь срез каждый раз | ✅ ревизия 53: 4 карточки-дельты; ops удалена; тесты на `ask_engineer`/`expected_output`; `SELECTORS.excel` topics `["протокол"]` | Live extract `CASE-6aac4b77-df4a1f`; нет `clr_`/`continuation_state` |
+| R8 | routing-карточки `route-cluster-calculation`, `route-binary-results`, `route-presentation` («агента нет»), `route-calculation` (несуществующий geometry-агент), `specialist-template-bounded-work` (`specialist_packet`) | Заглушки конкурируют за семантические слоты на шаге 0; упоминание снятого контракта | ✅ ревизия 53: `topics: [absent_agent]`; RRF не отдаёт их без фильтра; `specialist_packet` вычищен | commissioning шаг 0 ⊆ {thin-orchestrator, excel, schedule, hitl-required-evidence} |
+| R9 | `mas_retrieval_client.py` `attach_retrieval_js`; kit/Activity `EVENT_KINDS` | ✅ ревизия 44: `trace.rag` из Attach оркестратора (persist) и агентов (`POST /events` после Attach) | Ранжирование/45 % не трогали (Фаза 8) | live `CASE-6aa95bf0-c2a4a1`: orch 3 карточки, Excel 5, Builder `unavailable` + `SCHEMA_KEYWORD_SCOPE_REQUIRED`; `mas_trace_case.py` печатает query/cards |
+| R10 | Builder `search_keywords` (`keywords.py` 276–306) — локальная лексика; retrieval один раз до первого хода | Модель не может спросить базу знаний в середине работы (выбрала WEFAC — карточку WEFAC не видит) | ✅ ревизия 52: `retrieve_knowledge` в HTTP-цикле, полный текст on-demand, `knowledge_required` на `apply_dataset` без retrieve; commissioning без обязательного `kb_calls` | Live `CASE-6aac2e92-d1ad07`: `trace.rag` `wefac-well-efficiency-v1` **до** `apply_dataset`; `kb_calls: 1`; Builder `tool_calls: 4` |
 | R11 | `SELECT_NEW_KNOWLEDGE_JS` 358–396, `LOOKUP_EXISTING_SQL` 140–142, `FINALIZE_INGEST_SQL` | Skip по тройке `(base, id, revision)` игнорирует `content_hash`; ручная правка JSON без bump ревизии молча не попадает в PG; `superseded` чанки не удаляются | Сравнивать `content_hash`: отличается → finding «bump revision» или авто-bump; опция `purge_superseded` в форме ingestion | Smoke: тот же id/rev, другой текст → `needs_input`/insert; UI путь без изменений |
 | R12 | `knowledge.py` `list_documents`/`list_namespaces` 90–105, `knowledge.js` | Поиск — подстрока по 160-символьному превью на клиенте; `document_count` не отдаётся; нет истории ревизий, per-card ingest, смены типа/статуса, просмотра `schema_catalogue` | `GET /v1/knowledge/{base}?q=&tag=` (сервер, по полному тексту и тегам), `document_count`, `GET …/revisions` через прокси, ingest одной карточки, просмотр (read-only) схемы и примеров | Вкладки показывают счётчики; клик по тегу фильтрует; ревизии видны |
-| R13 | `excel_extractor.py` 168–172, `schedule_builder.py` 181–184 (`retrieval_filters_js`) | Фильтры RAG — regex по стемам русского текста задачи | Excel: `task_patterns` из `inspect.tables[].kind` и `expected_output.datasets[].name`; Schedule: `keyword_families` из `inspect.keywords_present` ∪ keyword'ов `expected_output`/наборов; текст задачи — только в `query` | Smoke Prepare: фильтры выводятся из инвентаря; regex-констант в спеках нет |
-| R14 | `schedule_rag_workflows.KEYWORDS` 15–21 ≡ `keywords.py` 8–53 (44); `NAMESPACES`/`SELECTORS`/спеки | Allowlist и пространства знаний живут в 2–4 копиях (Python сервиса, Python шаблона, JS, спека) | Один модуль `n8n/templates/mas_knowledge_spaces.py` (namespaces + selectors + KEYWORDS), Builder импортирует через тот же путь, что kit (`sys.path`), или получает копию с тестом равенства | Тест равенства списков; regen drift 0 |
+| R13 | `excel_extractor.py`, `schedule_builder.py` (`retrieval_filters_js`); `compact_inspect.tables[].kind` | ✅ ревизия 51: Excel `task_patterns` из `kind` + `expected_output.datasets[].name`; Schedule `keyword_families` из `keywords_present` ∪ allowlist-имён наборов; query — текст задачи | Smoke Prepare: WCONPROD в тексте без инвентаря → семьи пустые; `test_agent_retrieval_filters_js_does_not_regex_the_task_text` | live `CASE-6aac0f0d-9b70a2` Builder `ready` · 6 (INCLUDE/DATES с инвентаря) |
+| R14 | `mas_knowledge_spaces.py` KEYWORDS/NAMESPACES/SELECTORS ≡ Builder `keywords.py` (тест) | Allowlist и пространства знаний жили в 2–4 копиях | ✅ ревизия 49: один модуль шаблонов; Builder — полевая копия + `test_keywords_equal_rag_allowlist` | Тест равенства; regen drift 0 |
 
 ### 2.3 Агенты: Excel (X) и Schedule Builder (S)
 
@@ -115,10 +115,10 @@
 | X4 | `agent.py` `compact_inspect` 408–450 (12 таблиц, 24 колонки, 2 образца, 40 листов) | Книга с > 12 таблицами: инвентарь молча усечён | `tables_truncated: true` + счётчики по листам → модель зовёт `detect_tables(sheet)` | Pytest на 15 таблиц; в promt-заметке спеки — «если усечено — уточни лист» |
 | X5 | `agent.py` `_download_cards`, `_load_excel`; `open_session` = `new_id`+`save` (не `create()`) | Нет лимита размера при скачивании из Activity; sweep TTL не запускается | Лимит `MAX_FILE_SIZE_MB` на download; `STORE.cleanup()` в `open_session` | > лимита → `failed` с issue; устаревшие `sess_*` удаляются при следующем открытии |
 | X6 | `excel_tools.py` raises `INVALID_ARGUMENTS`/`TABLE_NOT_FOUND` vs `column_not_found` | Два диалекта кодов для модели | snake_case везде; kit `ToolError` | Pytest: envelope без UPPER_SNAKE |
-| X7 | `mas_agent_workflow.py` 307–314 `hasResult` по префиксу `extract_`/`ask_engineer` | Решение «есть ли результат» — по имени инструмента; `query_table` один → ложный HITL | Признак результата — `state.result` сессии (`GET /sessions/{id}/result` всегда), не имя; при пустом результате — русский `needs_input` с текстом модели, если он человеческий | Smoke: сценарий «только `query_table`» → результат сервиса, не стоковый вопрос |
+| X7 | `mas_agent_workflow.py` `js_format_result` / `Fetch {slug} result` | ✅ ревизия 45: `GET /sessions/{id}/result` всегда (нет `hasResult` по префиксу инструмента); пустая сессия + человеческий `llm_final_text` → `needs_input` этим текстом | — | excel-smoke: stop без сессии → вопрос модели; generic `no_extract` заменяется человеческим текстом |
 | X8 | `agent.py` `normalize_args` 125–194 vs kit `coerce_args` 156–176 | Дублирование транспортных нормализаций; аргументы без моделей | После K8: `args_model` на инструментах Excel; в `normalize_args` — только документированные алиасы | Pytest на алиасы; kit-тест на `{0:…}`-массивы один |
 | X9 | `.cursor/rules/excel-agent-tools.mdc` 16, `app/tools.py` 7–8 | Документация описывает `{ok:false, error:{code}}` — противоречит kit (`code`) | Исправить | grep `"error"` в правилах/докстрингах Excel пуст |
-| S1 | Builder SYSTEM (`schedule_builder.py` 39, `rag_ready_note` 170–174), Attach strip `schema_catalogue` | Модель не получает знаний: RAG пуст (R1), а если бы был — обрезан до 800 символов и «не для layout» | После R1/R5/R10: карточка = когда применять + pitfalls + ссылка на `get_keyword`; промпт: «перед первым `apply_*` по новому keyword — `retrieve_knowledge`/`get_keyword`» | Live `excel_datasets`: `trace.rag`/`get_keyword` WEFAC до `apply_dataset` |
+| S1 | Builder SYSTEM (`schedule_builder.py` 39, `rag_ready_note` 170–174), Attach strip `schema_catalogue` | Модель не получает знаний: RAG пуст (R1), а если бы был — обрезан до 800 символов и «не для layout» | ✅ ревизия 52: on-demand полный when-to-use; SYSTEM dataset: retrieve → get_keyword → apply_dataset; commissioning без retrieve | Live `CASE-6aac2e92-d1ad07`: `get_keyword` WEFAC и `wefac-*` до `apply_dataset` |
 | S2 | `apply.py` 182–196 `_tokens_from_fields`; `render_ir` не используется apply-путями | `apply_operations` пишет WELTARG/WCONINJE/GCONPROD фиксированным порядком полей, игнорируя каталог схем | Все записи — через `schema_renderer.render_record_tokens` по `get_keyword.details.parameters`; `_tokens_from_fields` удалить | Pytest: токены WELTARG/WCONINJE/WEFAC/GCONPROD = каталогу; goldens `mismatch_count: 0` |
 | S3 | `io.py` 96–108 `load_source` (один root) | INCLUDE не раскрывается, `schedule_source_N` не скачиваются; правки не видят включённые контроли | Expander: граф INCLUDE по карточкам `schedule_include`/`schedule_source_N`; отсутствующее тело → KEEP + warning; `inspect_schedule` показывает включённые ключевые слова | Кейс с `schedule_source` + `_2`: включённый WCONPROD виден в inspect; live-кейс `REVISE` с INCLUDE (Фаза 12) |
 | S4 | `agent.py` `compact_inspect` (`well_objects[:200]`) → `planner_input` ≈ 40 K (#228529) | Инвентарь целиком в каждом LLM-ходе | В planner — счётчики, `keywords_present`, `dates_preview`, `wells[:50]` имён; события скважины — через `inspect_well` | `planner_input` ≤ 8 K символов на golden-моделях; `tool_calls` без роста |
@@ -139,11 +139,11 @@
 | B2 | `cases_api.py` `_last_activity_at` 100–115 (любое событие) | Часы «зависания» сбрасывает любой `trace.tool`/`agent.progress` → «Продолжить» не появляется при болтливом агенте и мёртвом оркестраторе | Считать от последнего события оркестратора/системы (не `trace.*`, не `agent.progress`) | `test_resume_system_stale_then_fresh`: 3 минуты `trace.tool` при `running` → `resume_stale=true` |
 | B3 | `control_plane.py` 28, 133–151, 342–347 (TTL 0.4 с, `_read_gen` только на своих записях) | Записи n8n через прокси не инвалидируют кэш → `GET /cases/{id}`/SSE/лог могут не увидеть событие до 400 мс | Ключ генерации из `max(event_id)`/`updated_at` прокси (дешёвый `snapshot` head) или TTL только для списка | Тест с мок-прокси: событие извне видно следующим чтением |
 | B4 | `POST /run cancel/retry` ≈ 1073–1191; оркестратор `Merge` | Отмена/перезапуск не отгораживают старый execution: поздний `case.finished` перепишет статус | `state.run_generation` инкремент на cancel/retry; оркестратор пишет `generation` в события, прокси/Activity игнорируют события со старой генерацией | Тест: cancel → поздний `case.finished` старой генерации не меняет статус |
-| B5 | = O27 | `orchestrator.resume` вне `EVENT_KINDS`, без execRef | см. O27 | см. O27 |
-| B6 | `contracts.py` `EVENT_KINDS`, `case_log.py`, `app.js` 1310 (`duration_label` никогда не задаётся) | Нет видов `trace.rag`, `trace.llm`; длительности только у инструментов | Новые виды (R9, Q4); `case_log` считает `gap_ms` до предыдущего события и `llm_ms`/`tool_ms` по шагу; UI показывает | Лог: у каждой строки «+N с» от предыдущей; сводка шага: LLM N с · инструменты M с · ожидание K с |
+| B5 | = O27 | ✅ ревизия 44 (см. O27) | — | — |
+| B6 | `contracts.py` `EVENT_KINDS`, `case_log.py`, `app.js` 1310 (`duration_label` никогда не задаётся) | 🟡 ревизия 46: виды `trace.rag`/`trace.llm`, `gap_ms`, сводка `llm_truncated`/`rag_empty`/`kb_calls`. Нет `llm_ms`/`tool_ms` по шагу и `duration_label` в чате | Сводка шага LLM/инструменты/ожидание — фаза 11 | `gap_ms` на записях live-лога; сводка шага — не этот бриф |
 | B7 | `control_plane.py` 480–512, прокси `append_event` (ключ по kind/actor/agent/status/message/task_id) | Идемпотентность «по последней строке» глотает разные результаты с одинаковым текстом | Ключ = хэш `payload` (bounded) + kind; или явный `event_key` от писателя | Тест: два `trace.tool` с одинаковым `message`, разным `result` → две строки |
 | B8 (позже, не в очереди) | `main.py` CORS `*`, `post_event` actor no-op, 413 только `/v1/*` | Безопасность вне текущего объёма (решение заказчика) | Заметка в §6 «Риски» | — |
-| B9 | `settings.py` 88 (`MAS_ACTIVITY_HOST=127.0.0.1`), `mas-activity.env.example` | На поле n8n ходит к рабочей станции по LAN — 127.0.0.1 не подойдёт; в `.env.example` нет `N8N_PUBLIC_URL`, `KNOWLEDGE_INGEST_URL`, `ACTIVITY_CA_BUNDLE`, `ORCHESTRATOR_INVOKE_TIMEOUT_S`, `RESUME_STALE_S` | `.env.example` всех сервисов — полный список с комментариями «поле/lab»; `docs.md` матрица (T3) | `test_settings`: каждая переменная `Settings` есть в `.env.example` |
+| B9 | `settings.py` 88 (`MAS_ACTIVITY_HOST=127.0.0.1`), `mas-activity.env.example` | ✅ ревизия 46: все aliases `Settings` в `mas-activity.env.example` (`test_settings`); Excel/Schedule/Math/Demo `.env.example` полные. Дефолт хоста Activity всё ещё `127.0.0.1` — на поле ставят `0.0.0.0` (в example и матрице) | — | `test_settings`: каждая переменная `Settings` есть в `.env.example` |
 | B10 | `case_log.py` 432–450 `metrics_for_cases` | Снимок каждого кейса на каждый запрос метрик — шторм в прокси | Агрегат по `summarize` с кэшем `since`/TTL или предрасчёт в `GET /cases` | Страница метрик (U10) держит 200 кейсов < 2 с |
 | B11 | `contracts.py` (`CaseState`, `Decision`, `AgentTask`, `AgentResult` не на HTTP-границе; `AgentRequest.options: list[str]` vs живой `{value,label}`; `retryable_error` вне `CASE_STATUSES`) | Pydantic-модели Activity описывают не тот контракт, что летает | После K8: Activity импортирует модели kit'а (`sys.path`, как агенты) и валидирует `POST /run source=agent` и `POST /events`; мёртвые статусы удалить | `AgentResult` один на репозиторий; `test_cases_api` валидирует `finish_task` моделью |
 | B12 | `schema_view.py` 28–32 (три агента руками) vs `schema.js` (реестр) | Python-двойник схемы отстал | Удалить `feed.schema` из Python (UI рисует по реестру) или генерировать из реестра | `demo_agent`/кластер появляются на схеме без правки Python |
@@ -158,7 +158,7 @@
 | U4 | `app.js` 424 (`CASE-…` в шапке), `n8n ↗`, «Загрузить в RAG», `Excel Extractor`/`Schedule Builder` из seed, строка `orchestrator.resume` в чате | Технические подписи инженеру | `CASE-…` только в режиме разработчика; `title` агентов в seed — RU; «Загрузить в базу знаний»; `orchestrator.resume` — только лог | Снимок UI без английских подписей вне dev-mode |
 | U5 | `app.js` 94–104, 1789–1804 (`applyResumeWaitHint`) | «Ответ принят, ждём оркестратор…» не гаснет при таймауте/ошибке | Гасить по `orchestrator.status timeout`, `case.failed`, `cancelled`; показывать «Продолжить»/ошибку | Тест на состояние подсказки по ленте |
 | U6 | `agents.html`/`agents.js` (JSON-схемы, id-regex UI ≠ API, EN-подпись при переключении) | Страница «Агенты» перегружена для задачи «привязать workflow id» | Карточка: название, «когда звать», одно поле id/URL, включатель; JSON — за «Дополнительно»; один regex id | Инженер привязывает агента без чтения JSON |
-| U7 | `log.js` | Лог не умеет показывать RAG (карточки/статус), LLM-ходы (токены, `finish_reason`, промпт за раскрывашкой), цепь «решение → handoff → инструменты → результат» по `task_id`, длительности | Рендер новых видов (R9/Q4/B6): чипы карточек `knowledge_id · score · ветки`, строка LLM «N tok · stop · 3.2 с», группировка по `task_id`, фильтр по агенту | Разработчик отвечает на «что видел Qwen» и «что нашла база» из UI, без n8n |
+| U7 | `log.js` | 🟡 ревизия 46: чипы карточек, заголовок LLM, `gap_ms`, счётчики `kb_calls`/`rag_empty`/`llm_truncated` в шапке. Нет группировки цепи по `task_id` и отдельного фильтра агента | Остаток — фаза 11 | Live-лог: карточки и токены без n8n; цепь/фильтр агента — не этот бриф |
 | U8 | `app.css` (< 390 px, `.brand-sub` 11.5 px, нет skip-to-content) | Мелочи доступности | Точечно | Ручной чек на 390 px; skip-link |
 | U9 | = R12 | Знания: поиск/теги/ревизии/ingest карточки | см. R12 | см. R12 |
 | U10 | 6.3 (Приложение B) | Страницы «Метрики» нет | Поверх `GET /metrics/cases` (B10): шаги, HITL, инструменты, `warnings`/`guard`, `rag_empty`, `llm_truncated`, длительности — по агентам и во времени | Регресс `warnings`/`steps`/`rag_empty` виден раньше красного гейта |
@@ -179,33 +179,33 @@
 | K17 | `agents/demo_agent.py` 70 (`rag_selector="excel"`) | Демо читает чужой срез знаний | `rag_selector="specialist"` (пустой срез допустим) | Smoke demo |
 | K18 (= K11 частично) | `import-manifest.json` `health_check.live_probes` | Три агента руками | Генерировать манифест из спек (`generate_import_manifest.py`) | Manifest в regen drift |
 
-### 2.7 Сводка пробелов: что мешает «умной» системе и масштабированию (ревизия 43)
+### 2.7 Сводка пробелов: что мешает «умной» системе и масштабированию (ревизия 53)
 
 LLM-транспорт Qwen (Q) и гейт/документация (T) — здесь же, как сквозные.
 
 | # | Где | Что | Статус / как закрыть |
 |---|---|---|---|
-| 🆕 Q1 | Excel/Schedule workflow: `@n8n/n8n-nodes-langchain.agent` 3.1 + `lmChatOpenAi` 1.3 (`mas_agent_workflow.py` 445–464, `llm_runtime_options.chat_model_options`) | Chat Model не умеет выключить thinking (нет `reasoning.enabled`, `enable_thinking`, `chat_template_kwargs`) — на поле агенты думают, `timeout`/пустой `content` (тот же класс отказа, что α4 у Decision) | ⬜ **Фаза 7.3**: цикл агента на HTTP `/chat/completions` (тот же транспорт, что Decision): Code «собрать messages+tools из спеки» → HTTP chat → Code «tool_calls?» → HTTP `POST {service}/agent-tools/{name}` → loop ≤ `max_iterations`; один генератор для всех агентов; спека без изменений (TOOLS → OpenAI `tools`) |
-| 🆕 Q2 | `llm_runtime_options.CHAT_THINKING_OFF` = `{reasoning:{enabled:false}, enable_thinking:false}` | Нет `chat_template_kwargs.enable_thinking=false` — единственный надёжный выключатель vLLM/SGLang (model card Qwen3.6); OpenRouter — `reasoning.enabled`; Model Studio — `enable_thinking`. Qwen3.6 soft switch `/no_think` **не поддерживает** | ⬜ Фаза 7.4: слать все три; неизвестные поля vLLM/OpenRouter игнорируют; smoke на тело запроса |
-| 🆕 Q3 | Chat Model агентов `temperature=0`; Decision — по умолчанию провайдера | Model card non-thinking: `temperature 0.7, top_p 0.8, top_k 20, presence_penalty 1.5`; greedy → зацикливание/повторы. Для JSON-решений низкая температура оправдана, для агентного цикла — спорна | ⬜ Фаза 7.3: профиль сэмплинга per роль в `llm_runtime_options` (`decision`: T 0.2; `agent`: T 0.7/top_p 0.8/presence 1.5), измерить на `--repeat 3`: `steps`, `tool_calls`, повторы; выбрать по данным, зафиксировать в §7 |
-| 🆕 Q4 | лог | Нет `trace.llm`: промпт (bounded), `prompt_tokens`/`completion_tokens`, `finish_reason`, `duration_ms`, `tool_calls[]`, финальный текст | ⬜ Фаза 7.1/7.3: вид события `trace.llm` (kit + Activity), пишется циклом агента и Decision/Verify/Interpret; `finish_reason=length` → warning `llm_truncated` |
+| 🆕 Q1 | Excel/Schedule/Demo JSON | ✅ ревизия 45: `http_loop`; 🟡 двойной граф `n8n_agent` ещё в генераторе | ⬜ ревизия 54: удалить `llm_transport=n8n_agent` |
+| 🆕 Q2 | `llm_runtime_options.CHAT_THINKING_OFF` | ✅ ревизия 45: три выключателя, включая `chat_template_kwargs.enable_thinking=false`. Qwen3.6 soft switch `/no_think` **не поддерживает** | smoke Decision/Agent chat |
+| 🆕 Q3 | профили `SAMPLING` | ✅ ревизия 45: `decision` T=0.2/top_p=0.9; `agent` T=0.7/top_p=0.8/top_k=20/presence=1.5. `--repeat 3` GREEN на стартовых значениях — не меняли | таблица в §7 ревизия 45 |
+| 🆕 Q4 | лог | ✅ ревизия 48: `trace.rag`/`trace.llm` **до** decision/handoff/finished; `prompt_preview.messages[{role,content}]`; `log.js` блоки промпта | — |
 | 🆕 Q5 | `LLM_HTTP_TIMEOUT_MS` 600 с, `executionTimeout` 1800 с, Activity `ORCHESTRATOR_INVOKE_TIMEOUT_S` 1800 | Таймауты подобраны под thinking; после Фазы 7 пересмотреть вниз (латентность non-thinking 3–5× ниже) | ⬜ Фаза 12: по метрикам `llm_ms` из лога |
 | 🆕 T2 | `mas_gate.py` `stage_live`, `LIVE_WALL_BUDGET_S`; 6 commissioning 63–115 с параллельно, `--repeat 3` = 1219 с | Требование ≤ 20 мин на полный прогон не закреплено как критерий | ⬜ Фаза 12: `--live` падает при стене > 1200 с; recovery-слоты последовательно, но после параллельных; `--repeat 3` — ночной режим вне «полного прогона» |
-| 🆕 T3 | `docs.md` §3 «Ключи доступа» (credential-таблица + переменные по сервисам, но нет сводной матрицы) | Заказчику нужна одна матрица «секрет/связь → где задаётся → кто читает → как проверить» | ⬜ Фаза 7.6 (док): раздел «Матрица секретов и связей»: credentials n8n (модель, embeddings, Postgres, Header Auth прокси/Activity) → ноды; Runtime Config поля → потребители; `.env` каждого сервиса (полный список из `Settings`/`getenv`, B9) → назначение/поле-или-lab; проверка — `field_check.py` + Health Check |
+| 🆕 T3 | `docs.md` §3 «Матрица секретов и связей» | ✅ ревизия 48: credentials → ноды (+ function calling / thinking-off проба); Runtime Config → потребители (`chat_extra_params`); `.env` сервисов поле/lab | — |
 | 🆕 T4 | `.cursor/rules/excel-agent-tools.mdc`, `AGENTS.md` §6 «Новый агент» | Правило описывает старый конверт ошибки; рецепт нового агента не перечисляет правки вне папки (K11) | ⬜ Фаза 9 по факту закрытия K11: рецепт = три файла + список «что ещё» |
-| 🆕 T5 | live-харнессы (`run_live_five.py`, `run_live_excel_datasets.py`), `case_log.threshold_violations` | Пороги не смотрят на знания и LLM: пустой RAG у Builder и `finish_reason=length` проходят гейт | ⬜ Фаза 7/8: пороги `rag_empty: 0` для агентов с непустым срезом, `llm_truncated: 0`, `kb_calls ≥ 1` у Builder на задачах с новым keyword |
+| 🆕 T5 | live-харнессы (`run_live_five.py`, `run_live_excel_datasets.py`), `case_log.threshold_violations` | ✅ ревизия 52: `max_rag_empty=0` на commissioning/datasets; `excel_apply_dataset` `min_kb_calls=1`. ✅ ревизия 53: commissioning шаг 0 `trace.rag` ⊆ четырёх policy-карточек | — |
 | F2 (из Приложения A) | `run_live_five.specs()` | Golden-набор — commissioning-формы; нет: два HITL от разных агентов, `review_scope: agent`, rebind + commissioning в одной задаче, `REVISE` с INCLUDE/`.dev` | 🟡 Фаза 12 (6.5) |
 | F4/F5/F6 (из Приложения A) | метрики, Health Check по живому реестру, боевой агент | 🟡/⬜ | Фазы 12, 9, 10 соответственно |
 
 ### 2.8 Очередь и хвосты — простыми словами
 
-**Что закрыто (фазы и альфа).** Стабильный контур «Excel → вопросы инженеру → новый `.INC`» на поле; оркестратор с планом и проверкой; долгие агенты; реестр; deliverables; лог; таблица → схема → `.INC`; live-гейт 12/12 (Приложение B, журнал §7 ревизии 2–42).
+**Что закрыто (фазы и альфа).** Стабильный контур «Excel → вопросы инженеру → новый `.INC`» на поле; оркестратор с планом и проверкой; долгие агенты; реестр; deliverables; лог; таблица → схема → `.INC`; live-гейт 12/12 (Приложение B, журнал §7 ревизии 2–42). **7.1+7.2 (ревизия 44):** `trace.rag`/`trace.llm`, payload решения с RAG/токенами, `orchestrator.resume` с execRef, рендер в логе. **7.3+7.4 (ревизия 45):** HTTP-цикл агента, thinking off, `SAMPLING`, `retrieve_knowledge` в графе, X7 из сессии, `trace.llm` `role=agent`. **7.5+7.6 (ревизия 46):** порог `llm_truncated: 0`, счётчики `rag_empty`/`kb_calls` в `report.json`, матрица секретов, полные `.env.example`. **7.7 (ревизия 47):** hotfix цикла (валидный JSON инструмента, человеческий `agent.progress`, `failed`≠`abstain`, `kb_calls` on-demand, status в `/log`). **7.8 (ревизия 48):** порядок RAG/LLM до decision, `prompt_preview` блоками, `llm_unavailable` / mid-loop `service_unreachable`, `chat_extra_params`, матрица function calling. **8.1+8.2 (ревизия 49):** retrieval без ложного schema-abstain, теги/русский FTS/`summary`, `rag_empty: 0`. **8.3 (ревизия 51):** фильтры RAG из инвентаря. **8.4 (ревизия 52):** `retrieve_knowledge` в цикле, `kb_calls ≥ 1` на apply. **8.5 (ревизия 53):** корпус R6–R8; эмбеддинги `baai/bge-m3` / `tnavigator_schedule_knowledge_v2`.
 
 **Делать, в этом порядке (почему так).**
 
-1. **Сначала видеть.** Пока лог не показывает запрос в базу знаний, найденные карточки, ходы модели и токены — любое «улучшили RAG/промпт» недоказуемо. Фаза 7.1–7.2 дешёвая (виды событий, payload решения, рендер лога) и сразу вскрывает факты 1–3 из §0.3 на каждом кейсе.
-2. **Затем убрать thinking у агентов и получить управляемый транспорт.** Фаза 7.3–7.4: цикл агента на HTTP — это одновременно полевой фикс (Q1), полный лог LLM-ходов (Q4), выбор сэмплинга (Q3) и место для инструмента `retrieve_knowledge` (R10). Спеки агентов и FastAPI не меняются.
-3. **Потом оживить базу знаний.** Фаза 8: Builder начинает получать карточки (R1), поиск по тегам и русской лексике (R2–R3), полные тексты (R5), примеры (R6), чистый корпус (R7–R8), фильтры из инвентаря (R13), KB по требованию из цикла (R10), знания в UI с поиском (R12). Оркестратор получает разные политики на разные цели (O24, O29–O30).
+1. **Сначала видеть — ✅ ревизия 44.** Лог показывает запрос в базу, карточки, ходы Decision/Verify/Interpret и токены. Факты 1–3 из §0.3 читаются с каждого кейса (`CASE-6aa95bf0-c2a4a1`). Дальше правки RAG/промпта опираются на этот лог.
+2. **Затем убрать thinking у агентов — ✅ ревизия 45.** HTTP-цикл (Q1), `role=agent` (Q4 часть), `SAMPLING` (Q3), место для `retrieve_knowledge` (R10 часть). Спеки агентов и FastAPI не менялись.
+3. **Потом пороги и матрица секретов — ✅ ревизия 46.** `llm_truncated: 0` в гейте; `rag_empty`/`kb_calls` считаются. **Hotfix цикла — ✅ ревизия 47.** **Лог и честный отказ — ✅ ревизия 48.** **Оживить базу — ✅ ревизия 49 (8.1+8.2).** **Live 12/12 — ✅ ревизия 50.** **Фильтры RAG из инвентаря — ✅ ревизия 51 (8.3).** **KB по требованию — ✅ ревизия 52 (8.4).** **Корпус + bge-m3 — ✅ ревизия 53 (8.5).** Дальше Фаза 8: оркестратор с политикой под цель (O24, O29–O30), знания в UI (R12).
 4. **Затем kit v2.** Фаза 9: pydantic-контракты (K8–K9), «чеклист нового агента» как тест (K10), discovery спек и производные манифест/гейт/zip (K11), `LongJob` и потоковые бинари (K12–K13), одна форма `/health` и событий (K14–K15). Без этого кластерный агент снова пройдёт «по README с секундомером» и упрётся в kit.
 5. **Кластерный агент** (Фаза 10) — первый боевой агент на новых рельсах, по спеке заказчика: найти SCHEDULE по `.DATA`, собрать версию модели с новым `.INC`, запустить tNavigator CLI, следить, отдать результат дальше. В lab — заглушка CLI; на поле — реальный.
 6. **Activity до production** (Фаза 11): надёжность краёв (B1–B4, B7), UI-мелочи (U1–U8), страница «Агенты» для инженера.
@@ -234,41 +234,45 @@ LLM-транспорт Qwen (Q) и гейт/документация (T) — з�
 15. 🆕 **Kit типизирован и порождает двойники.** Контракты — pydantic v2 модели в `mas-agent-kit/models.py`; JS-allowlist, Activity-модели, таблицы видов событий и ролей артефактов — генерируются/сверяются из них тестами. Агент = `agents/<id>.py` (спека) + папка сервиса; всё остальное (workflow, Runtime Config, реестр, Health, манифест, гейт, zip) — производные.
 16. 🆕 **Долгое задание — на диске, не в потоке.** `JobStore` рядом с сессией, heartbeat в ленту, cancel по статусу кейса, recover на старте процесса, `finish_task` идемпотентен по `result_id`, бинарные артефакты — потоково или по пути на общем диске.
 
-**Состояние (ревизия 43).** Принципы 1–11 реализованы и подтверждены live 12/12 (Приложение B). Принципы 12–16 — цель фаз 7–12: 12 — нарушается на каждом commissioning (Builder без карточек); 13 — лог без RAG/LLM; 14 — агенты на `lmChatOpenAi`; 15 — kit без моделей, ≥ 10 внешних правок на агента; 16 — только `threading.Thread` в demo.
+**Состояние (ревизия 53).** Принципы 1–11 и live 12/12 подтверждены. Принцип 12 частично: Builder на commissioning получает карточки (`trace.rag` `ready`, `rag_empty: 0`); фильтры среза — из инвентаря (8.3); `retrieve_knowledge` в цикле — live `kb_calls ≥ 1` на apply (8.4); корпус без снятых контрактов, эмбеддинги `baai/bge-m3` на `tnavigator_schedule_knowledge_v2` (8.5); политика оркестратора под цель — 8.6. Принцип 13: лог RAG/LLM перед решением. Принцип 14: HTTP-чат, thinking off. Принципы 15–16 — фазы 9–12.
 
 ---
 
-## 4. План по фазам (ревизия 43)
+## 4. План по фазам (ревизия 53)
 
-**Сводка.** Фазы 0–6.1 и α1–α5 закрыты — критерии в Приложении B. Новые фазы 7–12 идут в порядке §2.8; каждый deliverable — отдельный бриф (`/mas-brief` → `briefs/`), одна сессия, гейт до и после. Оценка объёма — в «сессиях» (одна сессия = один бриф до зелёного гейта).
+**Сводка.** Фазы 0–6.1 и α1–α5 закрыты — критерии в Приложении B. Фаза 7 закрыта (ревизии 44–48). 8.1+8.2 закрыты (ревизия 49), live 12/12 — ревизия 50, 8.3 — ревизия 51, 8.4 — ревизия 52, 8.5 — ревизия 53. Остаток Фазы 8 — 8.6–8.7. Остаток B6 (`llm_ms`/`tool_ms`) и U7 — фаза 11. **Текущий гейт:** `mas_gate.py` (17 smokes, 5 pytest-наборов, combat) + `--live` 12/12, `mismatch_count: 0`, α2 (`warnings: 0`, `steps ≤ 6`, `tool_calls ≤ 4`), `llm_truncated: 0`, `rag_empty: 0`; commissioning-лог: `trace.rag`/`trace.llm` **перед** `orchestrator.decision`, Builder `trace.rag` `ready`; шаг 0 ⊆ четырёх policy-карточек; `prompt_preview.messages`; отказ чата не маскируется под «не вернул факты»; в JSON агентов нет `lmChatOpenAi`; `excel_apply_dataset` `kb_calls ≥ 1`. Оценка объёма — в «сессиях» (одна сессия = один бриф до зелёного гейта).
 
 | Фаза | Цель | Закрывает | Сессий |
 |---|---|---|---|
-| 7 Прозрачность и транспорт LLM | лог показывает RAG/LLM; агенты без thinking на поле | O25, O27, R9, Q1–Q4, B5–B6, U7, T3, T5 (часть) | 6–7 |
+| 7 Прозрачность и транспорт LLM | лог показывает RAG/LLM; агенты без thinking на поле | O25, O27, R9, Q1–Q4, B5–B6, U7, T3, T5 (часть) | ✅ 44–48 |
 | 8 Живая база знаний | Builder и оркестратор получают нужные карточки; KB по требованию; чистый корпус; знания в UI | R1–R8, R10–R14, O24, O28–O30, S1, X-карточки | 7–8 |
 | 9 Kit v2 | pydantic, чеклист-тест, discovery, LongJob, бинари, одна форма | K8–K18, X1, X3, X6–X9, S5–S6, S9–S11, B11–B12, T4 | 7–9 |
 | 10 Кластерный агент | первый боевой агент по спеке заказчика на новых рельсах | F6, R8 (замена заглушки), новый live-слот | 4–6 |
-| 11 Activity production | надёжность краёв, UI-мелочи, «Агенты» для инженера | B1–B4, B7, B9–B10, U1–U6, U8 | 5–6 |
+| 11 Activity production | надёжность краёв, UI-мелочи, «Агенты» для инженера | B1–B4, B7, B10, U1–U6, U8 | 5–6 |
 | 12 Гейт ≤ 20 мин, метрики, golden-2 | закреплённый бюджет, пороги знаний/LLM, страница метрик, новые кейсы | T2, T5, Q5, U10, F2, F4, S3/S7 live | 5–6 |
 
-### Фаза 7 — Прозрачность и транспорт LLM ⬜
+### Фаза 7 — Прозрачность и транспорт LLM ✅
 
 **Зачем.** Доказуемость всех последующих изменений и полевой блокер thinking у агентов.
 
 **Deliverables:**
 
-1. **7.1 Виды событий `trace.rag` и `trace.llm`** — kit `activity.py` `EVENT_KINDS`, Activity `contracts.py`, `case_log.py` (заголовки, уровни, `gap_ms`), `mas_trace_case.py`, `log.js` (U7). `trace.rag`: `{caller, query, filters, status, findings[].code, cards[{knowledge_id, revision, rrf_score, branches}], duration_ms}`; `trace.llm`: `{role: decision|verify|interpret|agent, model, prompt_tokens, completion_tokens, finish_reason, duration_ms, tool_calls[{name, args_preview}], prompt_preview (bounded 4 K), content_preview (bounded 2 K)}`. Оба скрыты из чата (`is_trace_kind`).
-   *Готово:* `POST /events` принимает оба; лог рендерит чипы карточек и строку LLM; `test_case_log` на уровни/заголовки; `compact_for_log`/`boundedForLog` ограничивают размеры.
-2. **7.2 Payload решения и resume** — O25, O27: `orchestrator.decision.payload.llm` и `.rag` всегда; `orchestrator.resume` через `execRef()` и в `EVENT_KINDS`; Attach оркестратора пишет `trace.rag` через прокси `append_event` (тот же путь, что `orchestrator.decision`).
-   *Готово:* live-кейс: у каждого шага «N tok · finish_reason», `trace.rag` с id карточек; ссылка на execution у `resume`.
-3. **7.3 Цикл агента на HTTP `/chat/completions`** — `mas_agent_workflow.py`: узлы `Build chat request` (Code: `messages` из SYSTEM + `planner_input` + история; `tools` из `spec.tools` → OpenAI function schema, тот же источник, что `$fromAI`-поля), `Agent chat` (HTTP Request на `chat_base_url + /chat/completions`, credential модели, `CHAT_THINKING_OFF` + профиль `agent`, без `max_tokens`), `Route tool calls` (Code: `finish_reason`/`tool_calls` → ветка), `Call agent tool` (HTTP Request `POST {service_url}/agent-tools/{{name}}` с `session_id` + аргументами), `Append tool result` → назад в `Build chat request`; выход по `stop` или `max_iterations` → `Summarize` (X7: результат — из сессии). Виртуальный инструмент `retrieve_knowledge` (R10) — Execute Workflow → `MAS — Knowledge Retrieval` внутри цикла. Каждый ход — `trace.llm`, каждый вызов инструмента — как сейчас `trace.tool` (kit). `AgentSpec` без изменений; флаг `llm_transport` (`http_loop` по умолчанию, `n8n_agent` на одну ревизию как откат).
-   *Готово:* smoke на граф цикла (лимит итераций, ветка `stop`, ветка `tool_calls`, `retrieve_knowledge`, отсутствие `lmChatOpenAi`/`langchain.agent` в JSON при `http_loop`); `test_workflow_contracts` на OpenAI-схему инструментов = `TOOLS` спеки; `--live` 12/12, `mismatch_count: 0`, `steps ≤ 6`, `tool_calls ≤ 4`, в `trace.llm` `content` без `<think>`; `--repeat 3` GREEN.
-4. **7.4 Выключатели thinking и профили сэмплинга** — `llm_runtime_options.py`: `CHAT_THINKING_OFF` += `chat_template_kwargs: {enable_thinking: false}`; `SAMPLING = {decision: {temperature: 0.2, top_p: 0.9}, agent: {temperature: 0.7, top_p: 0.8, top_k: 20, presence_penalty: 1.5}}` (стартовые значения; итог — по 7.3 `--repeat 3`, зафиксировать в §7); `finish_reason=length` → `trace.llm` уровень `warn` + `llm_truncated` в порогах (T5).
-   *Готово:* smoke на тело запроса Decision и Agent chat; таблица сравнения профилей в §7.
-5. **7.5 Пороги гейта на знания и LLM (T5, часть)** — `case_log.threshold_violations` + харнессы: `llm_truncated: 0`; `rag_empty` считается (порог включается в Фазе 8 после R1).
+1. **7.1 Виды событий `trace.rag` и `trace.llm`** — ✅ ревизия 44. kit `activity.py` `EVENT_KINDS`, Activity `contracts.py`, `case_log.py` (заголовки, уровни, `gap_ms`), `mas_trace_case.py` (лента из `/log`), `log.js` (чипы U7). `role=agent` — ✅ ревизия 45. Оба скрыты из чата (`is_trace_kind`).
+   *Готово:* `POST /events` принимает оба; лог рендерит чипы карточек и строку LLM; `test_case_log` на уровни/заголовки; `compact_for_log`/`boundedForLog` ограничивают размеры. Live `CASE-6aa95bf0-c2a4a1`; agent `CASE-6aa97921-7adbe1`.
+2. **7.2 Payload решения и resume** — ✅ ревизия 44. O25, O27: `orchestrator.decision.payload.llm` и `.rag` всегда; `orchestrator.resume` через `execRef()` и в `EVENT_KINDS`; Attach оркестратора пишет `trace.rag` через persist; агенты — `POST /events` после Attach.
+   *Готово:* live `CASE-6aa95bf0-c2a4a1`: «N tok · stop», `trace.rag` с id карточек; resume `CASE-6aa95cf3-ce2d5d` `execution_url` …/231293.
+3. **7.3 Цикл агента на HTTP `/chat/completions`** — ✅ ревизия 45. `mas_agent_workflow.py`: `Build chat request` → `{Title} Agent chat` → `Parse agent chat` → Switch `loop_route` (`chat`/`tool`/`retrieve`/`done`); `Call agent tool` `POST {service}/agent-tools/{name}`; `retrieve_knowledge` → Knowledge Retrieval; Fetch `/sessions/{id}/result` всегда (X7). Флаг `llm_transport` (`http_loop` по умолчанию, `n8n_agent` откат).
+   *Готово:* smoke на граф цикла; `test_workflow_contracts` OpenAI tools = `TOOLS` + `retrieve_knowledge`; `--live` 12/12 + `--repeat 3` GREEN, `mismatch_count: 0`, α2, `trace.llm` без `<think>`.
+4. **7.4 Выключатели thinking и профили сэмплинга** — ✅ ревизия 45. `CHAT_THINKING_OFF` += `chat_template_kwargs.enable_thinking=false`; `SAMPLING.decision` T=0.2 / `SAMPLING.agent` T=0.7. Стартовые значения оставлены (`--repeat 3` GREEN).
+   *Готово:* smoke на тело Decision/Verify/Interpret и Agent chat; таблица профилей в §7 ревизия 45.
+5. **7.5 Пороги гейта на знания и LLM (T5, часть)** — ✅ ревизия 46. `case_log.threshold_violations` + харнессы: `llm_truncated: 0`; `rag_empty`/`kb_calls` в `summarize` и `report.json` (порог `rag_empty: 0` — Фаза 8 после R1).
    *Готово:* `report.json` несёт `llm_truncated`, `rag_empty`, `kb_calls`.
-6. **7.6 Документация** — `docs.md`: «Матрица секретов и связей» (T3), раздел «Что видно в логе» (виды событий и как читать), обновлённый абзац про thinking (агенты на HTTP); `AGENTS.md` §4 «События», §7 ловушки (thinking агентов); `.env.example` всех сервисов полные (B9).
-   *Готово:* `test_settings`: переменные `Settings` ⊆ `.env.example`; docs без упоминания Chat Model у агентов.
+6. **7.6 Документация** — ✅ ревизия 46. `docs.md`: «Матрица секретов и связей» (T3), «Что видно в логе»; `AGENTS.md` §4/§7; `.env.example` всех сервисов полные (B9).
+   *Готово:* `test_settings`: переменные `Settings` ⊆ `.env.example`; docs без Chat Model у агентов.
+7. **7.7 Hotfix цикла** — ✅ ревизия 47. `tool_view` (kit) вместо `clip(body,8000)`; Summarize `looksMachine` на `agent.progress` (+ харнесс); Attach `failed`≠`abstain`; `kb_calls` = `phase=on_demand`; `log_record.status`/`actor` для `mas_trace_case.py`.
+   *Готово:* live 12/12: Builder `kb_calls: 0` без `retrieve_knowledge`; `trace.rag` `abstain`+`SCHEMA_KEYWORD_SCOPE_REQUIRED`; apply `CASE-6aa999bb-fba295` progress «Агент завершил шаг.» вместо snake_case.
+8. **7.8 Лог и честный отказ цикла** — ✅ ревизия 48. Порядок persist: RAG/LLM → decision → handoff/finished; `prompt_preview.messages`; `llm_unavailable`; mid-loop `service_unreachable`; Runtime Config `chat_extra_params`; docs function calling / thinking-off.
+   *Готово:* smoke порядка событий и конвертов отказа; live `CASE-6aa99f94-439404` (`trace.rag` → `trace.llm` → `orchestrator.decision` → `agent.handoff`, last `case.finished`, `prompt_preview.messages` `system`/`user`).
 
 **Критерий фазы:** `mas_gate.py --live` 12/12 на `http_loop`; в логе каждого кейса — `trace.rag` (≥ 3) и `trace.llm` (по числу ходов) с токенами; `llm_truncated: 0`; ни одного `lmChatOpenAi` в core-JSON; docs с матрицей.
 
@@ -280,15 +284,12 @@ LLM-транспорт Qwen (Q) и гейт/документация (T) — з�
 
 **Deliverables:**
 
-1. **8.1 Retrieval без ложного воздержания и с поиском по тегам** — R1, R2, R3, R4, R5 (порог), R14. Файл `schedule_rag_workflows.py`; регенерация двух RAG-workflow; `schedule-rag-runtime-smoke.js` + новый `knowledge-retrieval-smoke.js` (запросы: «даты ввода скважин»/schedule_mvp; «коэффициент эксплуатации»; `WCONPROD`; 3-предложенческий русский запрос).
-   *Готово:* smoke зелёный; live: `trace.rag` Builder `status=ready`, ≥ 2 карточки на 6/6 commissioning; `rag_empty: 0` включён в пороги.
-2. **8.2 Полный текст для модели** — R5: поле `summary` у `keyword_instruction` (≤ 600 символов: когда применять + главные pitfalls) в корпусе и нормализаторе ingest; Attach инжектит `summary`, полный текст — по `retrieve_knowledge`/`get_keyword`; `text_limit` оркестратора ≥ 1500.
-   *Готово:* все 45 keyword-карточек с `summary` (тест корпуса); Attach smoke.
-3. **8.3 Фильтры из инвентаря, не из regex** — R13 (`excel_extractor.py`, `schedule_builder.py` `retrieval_filters_js` → из `inspect`/`expected_output`).
-   *Готово:* Prepare smoke; regex-констант нет.
-4. **8.4 KB по требованию** — R10, S1: `retrieve_knowledge` в цикле 7.3 для Builder (и Excel); промпт Builder'а: «перед первым `apply_*` по keyword, которого нет в `keywords_present`, — `retrieve_knowledge`/`get_keyword`».
-   *Готово:* live `excel_datasets`: `trace.rag` WEFAC до `apply_dataset`; `kb_calls ≥ 1`; `tool_calls ≤ 4`.
-5. **8.5 Корпус** — R6 (`worked_example` ×3), R7 (Excel-карточки как дельты; разморозить тесты), R8 (заглушки в `absent_agent`, `specialist_packet` убрать), проверка `summary` (8.2), карточка комментариев без чужих тегов.
+1. **8.1 Retrieval без ложного воздержания и с поиском по тегам** — ✅ ревизия 49. R1, R2, R3, R4, R5 (порог), R14. `knowledge-retrieval-smoke.js`. Live: Builder `trace.rag` `ready` · 6 карточек, `rag_empty: 0`.
+2. **8.2 Полный текст для модели** — ✅ ревизия 49. `summary` ≤ 600 у всех `keyword_instruction`; ingest `KEYWORD_SUMMARY_REQUIRED`; Attach инжектит `summary`; `text_limit` оркестратора 1500.
+3. **8.3 Фильтры из инвентаря, не из regex** — ✅ ревизия 51. R13. Prepare smoke; `compact_inspect.tables[].kind`. Live 12/12 `rag_empty: 0`.
+4. **8.4 KB по требованию** — ✅ ревизия 52. R10, S1: `retrieve_knowledge` в цикле 7.3 для Builder (и Excel); промпт Builder'а: retrieve → get_keyword → apply_dataset; on-demand полный текст; `knowledge_required` если `apply_dataset` без retrieve.
+   *Готово:* live `CASE-6aac2e92-d1ad07`: `trace.rag` `wefac-well-efficiency-v1` до `apply_dataset`; `kb_calls: 1`; Builder `tool_calls: 4`.
+5. **8.5 Корпус** — ✅ ревизия 53. R6 (`worked_example` ×3), R7 (Excel-карточки как дельты; разморозить тесты), R8 (заглушки в `absent_agent`, `specialist_packet` убрать), комментарии без чужих тегов. Эмбеддинги поля: `baai/bge-m3`, таблица `tnavigator_schedule_knowledge_v2` (1024; v1 1536 не смешивать). Skip ingest только если чанки уже в v2.
    *Готово:* тест корпуса: типы/теги/`summary`/нет снятых токенов (`clr_`, `continuation_state`, `specialist_packet`); live `trace.rag` шага 0 ⊆ четырёх policy-карточек.
 6. **8.6 Оркестратор и знания** — O24, O28, O29, O30: запрос без файлов/журнала, `topics` шага 0 из реестра, секции `planner_input`, абзац SYSTEM про политику, RAG для Verify (только политика завершения).
    *Готово:* три разных цели → разные наборы карточек (live-проверка в харнессе); `steps ≤ 6`; `warnings: 0`.
@@ -353,7 +354,7 @@ LLM-транспорт Qwen (Q) и гейт/документация (T) — з�
 
 **Критерий фазы:** `--live` GREEN ≤ 20 мин при ≥ 15 слотах; страница метрик показывает тренды `steps`/`warnings`/`rag_empty`/`llm_ms`; F2 закрыт.
 
-**Критерий текущего гейта (ревизия 43, до Фазы 7).** Офлайн: regen drift 0, 16 smokes, 5 pytest-наборов, combat; live: 12/12, `mismatch_count: 0`, `warnings: 0`, `steps ≤ 6`, `tool_calls ≤ 4`, без повторных HITL и `completion_review`; стена одиночного `--live` ≤ 20 мин (контроль, не критерий — T2). После Фазы 7 добавляются `llm_truncated: 0` и наличие `trace.rag`/`trace.llm`; после Фазы 8 — `rag_empty: 0`, `kb_calls`.
+**Критерий текущего гейта (ревизия 53).** Офлайн: regen drift 0, 17 smokes, 5 pytest-наборов, combat; live: 12/12, `mismatch_count: 0`, `warnings: 0`, `steps ≤ 6`, `tool_calls ≤ 4`, `llm_truncated: 0`, `rag_empty: 0`, без повторных HITL и `completion_review`; `excel_apply_dataset` `kb_calls ≥ 1`; commissioning шаг 0 ⊆ четырёх policy; стена одиночного `--live` ≤ 20 мин (контроль, не критерий — T2). Prepare RAG без regex по постановке. Embeddings `baai/bge-m3` / v2.
 
 ---
 
@@ -806,20 +807,143 @@ Live-доказательства (lab, 2026-09-13 14:50–14:54):
 
 Не сделано: код, тесты, docs.md не менялись (аудит). Матрица секретов — deliverable 7.6.
 
+### Ревизия 44 (2026-09-15) — лог RAG/LLM (7.1 + 7.2)
+
+Сделано: виды `trace.rag`/`trace.llm` (kit + Activity); `orchestrator.resume` в `EVENT_KINDS`; payload решения всегда `llm`+`rag`; persist `trace.rag`/`trace.llm` (decision/verify) и агентский POST после Attach; `case_log` заголовки/уровни/`gap_ms`; `log.js` чипы карточек (`?v=2`); `mas_trace_case.py` читает `/log`; `_quality_warning` не считает пустой/unavailable RAG (кроме `failed`). α2 не ослабляли.
+
+Live (lab, полный import без `--hot`, затем `--only live` 749 с):
+
+- `CASE-6aa95bf0-c2a4a1` (golden_case_1): 5× `trace.rag` (orch 3 карточки `route-mas-thin-orchestrator`/`route-excel-extractor`/`route-schedule-builder`; Excel 5 `excel-agent-*`; Builder `unavailable` + `SCHEMA_KEYWORD_SCOPE_REQUIRED`); 3 decision «stop · 5414/5903/6263 tok»; `trace.llm` decision + verify; чат 11 событий, 0 `trace.*`.
+- `CASE-6aa95cf3-ce2d5d` (demo_agent_long_job): `orchestrator.resume` source=agent, `execution_url` …/executions/231293.
+- `CASE-6aa95bf0-735103` (combat_case3): `trace.llm` role=interpret, 389 tok, stop.
+
+Гейт: офлайн GREEN (regen 1 с, 16 smokes, 5 pytest-наборов, combat); live 12/12 GREEN, `mismatch_count: 0`, `warnings: 0`, `steps` 2–4, `tool_calls` ≤ 4.
+
+Не сделано: 7.3–7.4 (`role=agent`, thinking off, HTTP-цикл); 7.5 пороги `rag_empty`/`llm_truncated`; 7.6 матрица секретов; R1 пустой Builder RAG; B6 сводка `llm_ms`/`tool_ms`; U7 группировка по `task_id`. HITL-ответ инженера по-прежнему не пишет `orchestrator.resume` (только `source=agent|system`).
+
+### Ревизия 45 (2026-09-15) — HTTP-цикл агента (7.3 + 7.4)
+
+Сделано: `CHAT_THINKING_OFF` += `chat_template_kwargs`; `SAMPLING.decision` / `SAMPLING.agent`; Decision/Verify/Interpret тела без `max_tokens`; `mas_agent_workflow.py` `http_loop` (Build → Agent chat HTTP → Parse → Switch chat/tool/retrieve/done; один `Call agent tool`; `retrieve_knowledge`; Fetch всегда / X7); `llm_transport` на спеке; lab_soft_redeploy патчит Qwen на HTTP `openAiApi`; smokes/contracts/error-traces; `AGENTS.md`/`docs.md` credential **Agent chat**. FastAPI агентов не трогали. α2 не ослабляли. Стартовые SAMPLING не меняли.
+
+Live (полный import без `--hot`, затем `--only live --repeat 3`, 694 с; `llm_truncated: 0` как факт лога, порог харнесса — 7.5):
+
+`CASE-6aa97921-7adbe1` (combat_case0): `trace.llm` `role=agent` `tool_calls`/`stop`, без `<think>`, `finish_reason=length` нет. `CASE-6aa97921-193690` (golden_case_2). `CASE-6aa979cf-e0d741` (combat_case3). `CASE-6aa97a66-5e97ba` (demo).
+
+`--repeat 3` (decision T=0.2, agent T=0.7):
+
+| id | ok | steps | tool_calls (посл.) | ms |
+|---|---|---|---|---|
+| combat_case0 | 3/3 | 3,3,3 | 2 | 110496,111499,105325 |
+| golden_case_1 | 3/3 | 3,3,3 | 2 | 111465,139936,86668 |
+| combat_case1 | 3/3 | 3,3,3 | 2 | 136004,103083,82358 |
+| golden_case_2 | 3/3 | 2,2,3 | 2,1,1 | 149734,152073,175428 |
+| combat_case2 | 3/3 | 4,4,4 | 3 | 150451,132840,189226 |
+| combat_case3 | 3/3 | 4,4,4 | 4 | 174037,180341,149461 |
+
+demo `CASE-6aa97a66-5e97ba`; chain `CASE-6aa97a65-e474e3`; excel_datasets `CASE-6aa97a65-1b7600` + apply `CASE-6aa97a8f-4f4e79` + gap HITL `CASE-6aa97ae1-1be774`; recovery `CASE-6aa97b12-d651ca` / `CASE-6aa97b6b-a6800b` / `CASE-6aa97b6b-42c69a`. `mismatch_count: 0`. golden_case_2 pass 3: план `p1` dropped — INC совпал, не дефект гейта.
+
+Гейт: офлайн GREEN (16 smokes, 5 pytest-наборов, combat); live 12/12 + repeat 3 GREEN.
+
+Не сделано: 7.5 пороги `rag_empty`/`llm_truncated` в `report.json`; 7.6 матрица секретов и полные `.env.example`; R1 пустой Builder RAG на commissioning; живые wefac-карточки (R10 остаток).
+
+### Ревизия 46 (2026-09-15) — пороги LLM/RAG и матрица секретов (7.5 + 7.6)
+
+Сделано: `case_log.summarize` / `threshold_violations` — `llm_truncated`, `rag_empty`, `kb_calls` (+ by_agent); гейт красный при `llm_truncated > 0`; `max_rag_empty`/`min_kb_calls` выключены (R1). Харнесс пишет ключи в `report.json`. `docs.md` матрица секретов и «Что видно в логе»; `AGENTS.md` §4/§5/§7; полные `*.env.example`; `test_settings` aliases ⊆ example. Счётчики в шапке лога (`log.js?v=3`).
+
+Live (`--only live`, hot, 584 с; `mismatch_count: 0`, `llm_truncated: 0`; commissioning `rag_empty` 1–2 / `kb_calls` 1–3):
+commissioning `CASE-6aa989bf-572479` `CASE-6aa989bf-fb6256` `CASE-6aa989bf-df13b3` `CASE-6aa989bf-35f4c0` `CASE-6aa989bf-3e3793` `CASE-6aa989bf-c78e32`; demo `CASE-6aa98a66-b3431e`; chain `CASE-6aa98a66-27a94b`; excel_datasets `CASE-6aa98a66-6edd38` + apply `CASE-6aa98a9e-c3b3a9` + gap `CASE-6aa98b04-5f740a`; recovery `CASE-6aa98b34-8c4ce6` / `CASE-6aa98b95-bb3395` / `CASE-6aa98b95-0b3ce9`.
+
+Гейт: офлайн GREEN (16 smokes, 5 pytest-наборов, combat); live 12/12 GREEN.
+
+Не сделано: R1 пустой Builder RAG (`rag_empty` на commissioning); порог `rag_empty: 0` / `kb_calls ≥ 1` (Фаза 8); B6 `llm_ms`/`tool_ms`; U7 группировка по `task_id`.
+
+### Ревизия 47 (2026-09-15) — hotfix цикла агента (7.7)
+
+Сделано: kit `tool_view` / `tool_model_view` — валидный JSON ответа инструмента (без `clip(body,8000)` в n8n); Summarize AI steps гейтит `looksMachine` (`CASE-6aa98a9e-c3b3a9`); Attach `retrievalOutage`: `failed` vs `abstain`; `trace.rag.phase` `initial|on_demand`; `kb_calls` только on-demand; `log_record.actor`/`status`; харнесс проверяет `agent.progress`. Бриф `briefs/2026-09-15-7.7-hotfix.md`.
+
+Live (полный import 133 с + `--only live` hot 893 с; `mismatch_count: 0`, `llm_truncated: 0`; commissioning `kb_calls: 0`, Builder `trace.rag` `abstain`):
+commissioning `CASE-6aa99872-5f4746` `CASE-6aa99873-fda024` `CASE-6aa99873-9ea6a1` `CASE-6aa99872-a18246` `CASE-6aa99872-d4458b` `CASE-6aa99873-94062d`; demo `CASE-6aa99977-f24948`; chain `CASE-6aa99977-aaad4a`; excel_datasets `CASE-6aa99977-525c05` + apply `CASE-6aa999bb-fba295` + gap `CASE-6aa99a66-b6b002`; recovery `CASE-6aa99aba-3b6bf8` / `CASE-6aa99b2c-f51815` / `CASE-6aa99b2c-7c497c`.
+
+Гейт: офлайн GREEN (16 smokes, 5 pytest-наборов, combat); live 12/12 GREEN.
+
+Не сделано: 8.1 R1; порядок событий RAG/LLM vs decision; `prompt_preview`; `presence_penalty`; `llm_unavailable`; `chat_extra_params`; mid-loop `service_unreachable`; удаление `n8n_agent` (ревизия 48); трекинг `run_live_*.py` вне gitignore.
+
+### Ревизия 48 (2026-09-16) — лог и честный отказ цикла (7.8)
+
+Сделано: persist оркестратора пишет `trace.rag`/`trace.llm` до `orchestrator.decision`/`agent.handoff`/`case.finished` (`step_count` на payload, `ended_at` шага = finished); `prompt_preview` = `{messages[{role,content}], omitted?}` (дельта по ходам агента); `log.js` блоки промпта; `Parse agent chat` без ответа модели → `llm_unavailable`; `Call agent tool` transport fail → `service_unreachable` (конверт без ключа `error`); Runtime Config `chat_extra_params`; docs: vLLM `--enable-auto-tool-choice --tool-call-parser hermes`. Бриф `briefs/2026-09-16-7.8-log-loop.md`.
+
+Live (полный import 122 с + `--only live` hot 565 с; `mismatch_count: 0`, `llm_truncated: 0`; commissioning `kb_calls: 0`):
+commissioning `CASE-6aa99f94-439404` `CASE-6aa99f94-35844d` `CASE-6aa99f94-f10396` `CASE-6aa99f94-b02f41` `CASE-6aa99f94-3486b2` `CASE-6aa99f94-c41a8c`; demo `CASE-6aa9a06c-3450f8`; chain `CASE-6aa9a06c-a9a5c5`; excel_datasets `CASE-6aa9a06c-b14109` + apply `CASE-6aa9a099-69eb11` (`tool_calls: 4`) + gap `CASE-6aa9a0f4-9a5775`; recovery `CASE-6aa9a11c-fd1a79` / `CASE-6aa9a16e-e06e78` / `CASE-6aa9a16e-1c91a8`. `CASE-6aa99f94-439404` лог: `trace.rag` → `trace.llm` → `orchestrator.decision` → `agent.handoff`; последнее событие `case.finished`; `prompt_preview.messages` `system`/`user`.
+
+Гейт: офлайн GREEN (16 smokes, 5 pytest-наборов, combat); live 12/12 GREEN.
+
+Не сделано: 8.1 R1; удаление `n8n_agent` (ревизия 49); трекинг `run_live_*.py` вне gitignore. `presence_penalty` измерен, не меняли: apply `CASE-6aa9a099-69eb11` `tool_calls: 4` (потолок), `rag_empty: 1`.
+
+### Ревизия 49 (2026-09-16) — retrieval без ложного abstain + summary (8.1 + 8.2)
+
+Сделано: `ATTACH` не требует схему без `keyword_families`; тег-ветка по токенам запроса; лексика `plainto_tsquery('russian')` + GIN; `WRAP_SEMANTIC` по типу; 45 % только при ≥2 ветках; `mas_knowledge_spaces.py`; 45 `keyword_instruction.summary` ≤600; `knowledge-retrieval-smoke.js`; `max_rag_empty=0`. Гейт kit: подпись HITL по-русски (`CASE-6aaaeddc-9828bf` label `FIELD`). Бриф `briefs/2026-09-16-8.1-8.2-retrieval.md`. Lab ingest корпуса через Activity не гоняли (нужен POST `/v1/knowledge/ingest`); R1 живёт на уже лежащих в PG карточках.
+
+Live 1 (`--only live` после полного import, 755 с): commissioning `rag_empty: 0`, Builder `ready` · 6 карточек — `CASE-6aaaeddc-c99433` (golden 1, DATES) `CASE-6aaaeddc-9ecd0c` `CASE-6aaaeddc-0e4800` `CASE-6aaaeddc-5fc26d` `CASE-6aaaeddc-93cef5`; golden 2 `CASE-6aaaeddc-9828bf` RED HITL label `FIELD`; demo `CASE-6aaaee9f-a08944`; chain `CASE-6aaaee9f-bd4a47`; excel_datasets `CASE-6aaaee9f-a7d706` + apply `CASE-6aaaeec3-be9aca` + gap `CASE-6aaaef2b-64fdc6`; recovery `CASE-6aaaef9c-567bc6` / `CASE-6aaaf037-108c39` / `CASE-6aaaf037-62afbb`. Live 2 (kit gate): golden 2 `CASE-6aaaf133-55de14` GREEN, `rag_empty: 0`, `mismatch_count: 0`, без HITL. Повтор полного `--only live` RED: OpenRouter `Q-parse` ×3 / in-flight credits — не дефект retrieval.
+
+Гейт: офлайн GREEN (17 smokes, 5 pytest-наборов, combat). Live 12/12 одним пулом после фикса HITL — не снят (провайдер).
+
+Не сделано: 8.3–8.7; удаление `n8n_agent` (ревизия 50); lab ingest `summary`; `kb_calls ≥ 1`; трекинг `run_live_*.py` вне gitignore.
+
+### Ревизия 50 (2026-09-17) — live 12/12 после кредитов OpenRouter
+
+Сделано: код 8.1+8.2 не трогали. Офлайн гейт GREEN (ранее в сессии: regen 1 с, 17 smokes, 5 pytest, combat). Live 12/12 GREEN (~420 с, без `--hot`: предыдущий `--only live --hot` свалил Excel Extractor `service_unreachable` на параллельной шестёрке сразу после рестарта контейнера). `mismatch_count: 0`, `llm_truncated: 0`, `rag_empty: 0`, `kb_calls: 0` (порог `≥ 1` — 8.4). Builder `CASE-6aac04eb-c10811` `trace.rag` `ready` · 6 карточек (DATES/WELSPECS/…).
+
+Live: golden_1 `CASE-6aac04eb-c10811` steps 3; combat_0 `CASE-6aac04eb-58068a`; combat_1 `CASE-6aac04eb-929210`; golden_2 `CASE-6aac04eb-ac3117` steps 2; combat_2 `CASE-6aac04eb-298e94`; combat_3 `CASE-6aac04eb-00b2c2` steps 4 `tool_calls: 4`; demo `CASE-6aac056f-bf8106`; chain `CASE-6aac056f-f4ca1b` план 3/3; extract `CASE-6aac056f-89e325`; apply `CASE-6aac0590-bcb153`; gap `CASE-6aac05ea-5774e7` `waiting_user`; down `CASE-6aac0610-1bce55`; step_limit `CASE-6aac0654-d8c0c5`; rework `CASE-6aac0654-34b5f4`.
+
+Гейт: офлайн GREEN; live 12/12 GREEN.
+
+Не сделано: 8.3–8.7; удаление `n8n_agent` (ревизия 51); lab ingest `summary`; `kb_calls ≥ 1`; трекинг `run_live_*.py` вне gitignore.
+
+### Ревизия 51 (2026-09-17) — фильтры RAG из инвентаря (8.3)
+
+Сделано: `retrieval_filters_js` Excel — `inspect.tables[].kind` + `expected_output.datasets[].name`; Schedule — allowlist из `keywords_present` ∪ наборов/`expected_output`; `compact_inspect` отдаёт `kind`; текст задачи только в `query`. Бриф `briefs/2026-09-17-8.3-retrieval-filters.md`.
+
+Live 12/12 (~427 с после полного import): golden_1 `CASE-6aac0f0d-9b70a2` Builder `ready` · 6 (INCLUDE/DATES/WELSPECS с инвентаря) `rag_empty: 0`; combat_1 `CASE-6aac0f0d-d3bbb7`; golden_2 `CASE-6aac0f0d-bcfe4a`; combat_2 `CASE-6aac0f0d-3d3d98`; combat_0 `CASE-6aac0f0d-66c170`; combat_3 `CASE-6aac0f0d-803e5d` `tool_calls: 4`; demo `CASE-6aac0fa6-98878b`; extract `CASE-6aac0fa6-ee6c4e`; chain `CASE-6aac0fa7-702545`; apply `CASE-6aac0fc6-cdf469`; gap `CASE-6aac1012-d9f720`; down `CASE-6aac1039-1c3959`; step_limit `CASE-6aac1081-409e72`; rework `CASE-6aac1081-ca1dcc`.
+
+Гейт: офлайн GREEN (17 smokes, 5 pytest-наборов, combat); live 12/12 GREEN.
+
+Не сделано: 8.4–8.7; удаление `n8n_agent` (ревизия 52); lab ingest `summary`; `kb_calls ≥ 1`; трекинг `run_live_*.py` вне gitignore.
+
+### Ревизия 52 (2026-09-17) — KB по требованию (8.4)
+
+Сделано: Builder SYSTEM — набор: inspect_dataset → retrieve_knowledge → get_keyword → apply_dataset (без HITL про дату, если поля даты нет); Excel — retrieve, если протокола нет в срезе. On-demand `compactRetrievalCards(..., preferFull)` + `on_demand_text_limit` 4000; Prepare retrieve: запрошенные keyword, иначе семьи пустые. Guard `knowledge_required` на `apply_dataset` без `retrieve_knowledge` в `tool_log` (`skip_http`, без ключа `error`). Харнесс: `min_kb_calls=1`, WEFAC-карточка до apply. Бриф `briefs/2026-09-17-8.4-kb-on-demand.md`.
+
+Доказательство до guard: `CASE-6aac16ba-93c607` inspect_dataset → get_keyword(WEFAC) → apply_dataset, `kb_calls: 0`.
+
+Live 12/12 (полный import + `--only live` hot, 490 с): apply `CASE-6aac2e92-d1ad07` `kb_calls: 1` · `wefac-well-efficiency-v1` seq 18038 до `apply_dataset` 18054; Builder `tool_calls: 4` (get_keyword, inspect_dataset, apply_dataset, validate_result); commissioning `kb_calls: 0`. golden_1 `CASE-6aac2dee-7ef186`; combat_0 `CASE-6aac2dee-b1fbc3`; combat_1 `CASE-6aac2dee-60a9c5`; golden_2 `CASE-6aac2dee-0d115d`; combat_2 `CASE-6aac2dee-d8d810`; combat_3 `CASE-6aac2dee-d7933a`; demo `CASE-6aac2e72-9711da`; extract `CASE-6aac2e72-34608c`; chain `CASE-6aac2e72-788b4a`; gap `CASE-6aac2efa-6bcd26`; down `CASE-6aac2f24-42440c`; step_limit `CASE-6aac2f7a-f7aa6f`; rework `CASE-6aac2f7a-86ac23`.
+
+Гейт: офлайн GREEN (17 smokes, 5 pytest-наборов, combat); live 12/12 GREEN.
+
+Не сделано: 8.5–8.7; удаление `n8n_agent` (ревизия 53); lab ingest `summary`; трекинг `run_live_*.py` вне gitignore.
+
+### Ревизия 53 (2026-09-18) — корпус 8.5 + эмбеддинги baai/bge-m3
+
+Сделано: R6 — 3 `worked_example`; R7 — 4 Excel-карточки-дельты, ops удалена, тесты разморожены, `SELECTORS.excel` topics `["протокол"]`; R8 — заглушки `topics: [absent_agent]`, RRF не отдаёт их без фильтра, `specialist_packet` вычищен; комментарии `keywords: []`. Эмбеддинги: модель `baai/bge-m3` (Dimensions пусто, timeout −1 — n8n передаёт секунды в SDK как ms), PGVector `tnavigator_schedule_knowledge_v2` (1024; parent `documents_v1` тот же); skip только `in_vector`; Ensure создаёт пустую v2. Lab ingest `POST /v1/knowledge/ingest`: added 61, 258 чанков, dims 1024. Бриф `briefs/2026-09-17-8.5-corpus.md`. `docs.md` — полевой credential + `baai/bge-m3`.
+
+Офлайн GREEN (17 smokes, 5 pytest-наборов, combat). Live 1 (`--only live` после полного import, 1049 с): commissioning 6/6 `mismatch_count: 0` `rag_empty: 0` шаг 0 ⊆ policy; demo GREEN; apply `CASE-6aac49a7-7105b4` `kb_calls: 1`; gap GREEN; recovery GREEN. RED: extract `CASE-6aac483f-a9f38e` `spec_incomplete` warning (потом ok, 5 строк); chain `CASE-6aac483f-4642c7` `result_review_2` при `max_steps=1` (лишний HITL, не Builder/demo). Live 2 (`--cases excel_datasets,three_agent_chain`, 208 с): extract `CASE-6aac4b77-df4a1f` GREEN; chain `CASE-6aac4b77-03d809` план 3/3 GREEN; apply `CASE-6aac4b9e-96f167` `kb_calls: 1`.
+
+Live commissioning: golden_1 `CASE-6aac4711-a0e0bb`; golden_2 `CASE-6aac4711-29c634`; combat_0 `CASE-6aac4711-7dab92`; combat_1 `CASE-6aac4711-496c91`; combat_2 `CASE-6aac4711-48a2a4`; combat_3 `CASE-6aac4711-ed64cf` steps 6; demo `CASE-6aac483f-ad740d`; down `CASE-6aac4a5f-92118f`; step_limit `CASE-6aac4ab2-ec5b36`; rework `CASE-6aac4ab2-f9904c`.
+
+Гейт: офлайн GREEN; live 12/12 GREEN (два слота — повтор после флейка Qwen / `max_steps`).
+
+Не сделано: 8.6–8.7; удаление `n8n_agent` (ревизия 54); inventory `rag_inventory_incomplete` при 61/61 в v2 (ложный missing id, 8.7); трекинг `run_live_*.py` вне gitignore.
+
 ### Ближайшие шаги (в этом порядке)
 
 Каждый пункт — отдельный бриф (`/mas-brief` → файл в `briefs/`). Перед стартом и в конце — `python3 scripts/mas_gate.py [--live]`. Смысл и порядок — §2.8; критерии — §4; коды — §2.
 
-1. **7.1 + 7.2** — виды `trace.rag`/`trace.llm`, payload решения с токенами и RAG всегда, `orchestrator.resume` с execRef, рендер в логе (`log.js`), `mas_trace_case.py`. Критерий: лог любого live-кейса показывает запросы в базу, карточки и токены каждого шага.
-2. **7.3 + 7.4** — цикл агента на HTTP `/chat/completions` с thinking off и профилями сэмплинга (флаг `llm_transport`), `retrieve_knowledge` как виртуальный инструмент цикла, результат агента — из сессии (X7). Критерий: `--live` 12/12 без `lmChatOpenAi` в core-JSON, `trace.llm` без `<think>`, `llm_truncated: 0`; таблица сравнения профилей сэмплинга (`--repeat 3`).
-3. **7.5 + 7.6** — пороги `llm_truncated`/`rag_empty`/`kb_calls` в `report.json`; `docs.md` «Матрица секретов и связей», «Что видно в логе»; полные `.env.example`.
-4. **8.1 + 8.2** — retrieval без ложного `abstain`, поиск по тегам и русской лексике, фильтр семантики по типу, `summary` карточек. Критерий: `trace.rag` Builder `ready` на 6/6, `rag_empty: 0`.
-5. **8.3 – 8.7** — фильтры из инвентаря, KB по требованию в Builder, корпус (примеры, Excel-дельты, заглушки), оркестратор с политикой под цель, ingest по хэшу и UI знаний с поиском.
-6. **9.1 – 9.4** — pydantic-контракты, двойники из модели, чеклист-тест, discovery спек и производные (манифест/Health/гейт/zip).
-7. **9.5 – 9.8** — `LongJob`, потоковые бинари, агенты на общей форме (Builder `packet()`, Excel без снятых инструментов, один кастер дат, `repeat_guard`), рецепт нового агента.
-8. **10** — кластерный агент по спеке заказчика (заглушка CLI в lab), live-слот, четырёхагентная цепь.
-9. **11** — Activity production (B1–B4, B7, B9–B10; U1–U6, U8).
-10. **12** — стена `--live` ≤ 1200 с как критерий, страница «Метрики», golden второго поколения (F2), таймауты вниз.
+1. **8.6 – 8.7** — оркестратор с политикой под цель, ingest по хэшу и UI знаний.
+2. **Ревизия 54** — удалить откат `llm_transport=n8n_agent` (двойной граф).
+3. **9.1 – 9.4** — pydantic-контракты, двойники из модели, чеклист-тест, discovery спек и производные (манифест/Health/гейт/zip).
+4. **9.5 – 9.8** — `LongJob`, потоковые бинари, агенты на общей форме (Builder `packet()`, Excel без снятых инструментов, один кастер дат, `repeat_guard`), рецепт нового агента.
+5. **10** — кластерный агент по спеке заказчика (заглушка CLI в lab), live-слот, четырёхагентная цепь.
+6. **11** — Activity production (B1–B4, B7, B10; U1–U6, U8).
+7. **12** — стена `--live` ≤ 1200 с как критерий, страница «Метрики», golden второго поколения (F2), таймауты вниз.
 
 Не очередь: B8 (безопасность) — решение заказчика; S12 — по запросу инженера; судью «красиво ли написано» не добавлять.
 

@@ -113,5 +113,5 @@ def result_text_problems(result: dict[str, Any]) -> list[str]:
         problems += [f"question: {p}" for p in human_text_problems(req.get("question", ""))]
         for opt in req.get("options") or []:
             label = opt.get("label", "") if isinstance(opt, dict) else str(opt)
-            problems += [f"option «{label}»: {p}" for p in human_text_problems(label, min_length=1) if "по-русски" not in p]
+            problems += [f"option «{label}»: {p}" for p in human_text_problems(label, min_length=1) if "коротко" not in p]
     return problems

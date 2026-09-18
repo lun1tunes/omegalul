@@ -22,6 +22,7 @@ from .result import STATUSES, agent_result, engineer_request, in_progress, needs
 from .session import SessionStore
 from .text import human_text_problems, list_preview, options_for_human, parse_jsonish, plural_ru, slug, strip_attachment_names
 from .tools import ToolContext, ToolRegistry, tool_schema
+from .view import tool_model_view
 
 __all__ = [
     "STATUSES",
@@ -59,6 +60,7 @@ __all__ = [
     "slug",
     "strip_attachment_names",
     "tool_schema",
+    "tool_model_view",
     "upstream_agent_data",
     "upstream_datasets",
 ]

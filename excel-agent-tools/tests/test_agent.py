@@ -61,6 +61,7 @@ def test_open_session_returns_inventory_not_a_capability_decision() -> None:
     assert inspect["table_count"] >= 1
     table = inspect["tables"][0]
     assert table["columns"] == ["Скважина", "Дата ввода"]
+    assert table["kind"] == "data"
     assert table["sample"] and table["sample"][0]["Скважина"] == "1601"
     assert table["file"] == GOLDEN_XLSX.name
     assert opened["files"] == [GOLDEN_XLSX.name]

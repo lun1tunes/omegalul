@@ -74,7 +74,7 @@ flowchart TB
 
 Ещё нет: третьего боевого агента (расчёт, выгрузка с кластера) — только Excel и Schedule. Широкий набор живых кейсов (два вопроса от разных агентов, перепривязка и даты в одной задаче, несколько INCLUDE) — после 6.2.
 
-Если оркестратор импортирован до правки thinking: в **Orchestrator — MAS** должны быть HTTP-ноды **Decision chat**, **Verify chat**, **Interpret chat** (не Chat Model + Structured Output). На все три — тот же credential, что у модели; в Runtime Config заполнен `chat_base_url`. Иначе свободный ответ и следующий шаг снова пустеют.
+Если оркестратор импортирован до правки thinking: в **Orchestrator — MAS** должны быть HTTP-ноды **Decision chat**, **Verify chat**, **Interpret chat**. У агентов Excel / Schedule / Demo — HTTP-нода **Agent chat**. На все эти ноды — тот же OpenAI-compatible credential; в Runtime Config заполнен `chat_base_url`. Иначе свободный ответ и следующий шаг снова пустеют. Thinking у модели выключен телом запроса (`reasoning.enabled`, `enable_thinking`, `chat_template_kwargs.enable_thinking`), не отдельной нодой языковой модели.
 
 Очередь работ для разработчика — `MAS_REFACTORING_PLAN.md` §2.8.
 
@@ -86,7 +86,7 @@ flowchart TB
 - **PostgreSQL** с расширением `vector` — ставит DBA, вам выдают учётку для credential в n8n.
 - **Windows** с Python 3.11–3.13 (pip, без Node.js и без Docker).
 - Распакованный проект (четыре каталога сервисов рядом, как в репозитории) и пакет workflows.
-- Модель в n8n: credential типа OpenAI-compatible с вашим внутренним Base URL (тот же, что уже стоит на Chat Model).
+- Модель в n8n: credential типа OpenAI-compatible с вашим внутренним Base URL (тот же, что на **Decision chat** и **Agent chat**).
 
 Пакет импорта: в `dist/mas-<версия>.zip` лежат девять JSON, `IMPORT_ORDER.txt` и этот файл. Код сервисов — из распаковки проекта, не из zip.
 
@@ -155,8 +155,8 @@ n8n → **Import from File**, строго по `IMPORT_ORDER.txt`. Пока **�
 
 | Куда | Какой credential |
 |---|---|
-| **Decision chat**, **Verify chat**, **Interpret chat** в оркестраторе; Chat Model у обоих агентов | Один OpenAI-compatible credential вашей модели |
-| Knowledge Ingestion и Retrieval → Embeddings | Отдельный embedding credential, модель `text-embedding-3-small`, Dimensions пустое |
+| **Decision chat**, **Verify chat**, **Interpret chat** в оркестраторе; **Agent chat** у Excel Extractor, Schedule Builder и Demo Agent | Один OpenAI-compatible credential вашей модели |
+| Knowledge Ingestion и Retrieval → Embeddings | Отдельный embedding credential, модель `baai/bge-m3`, Dimensions пустое (таблица `tnavigator_schedule_knowledge_v2`) |
 | Ingestion, Retrieval, оркестратор, прокси, Error traces → Postgres | Одна учётка Postgres / PGVector (SSL = Disable, если сервер без TLS) |
 | Webhook оркестратора, нода **POST continue run**, webhook прокси | Header Auth — те же имя и значение, что в `mas-activity.env` |
 
@@ -170,12 +170,57 @@ n8n → **Import from File**, строго по `IMPORT_ORDER.txt`. Пока **�
 | `math_url` | `http://<IP-этой-Windows>:8100` |
 | `orchestrator_step_url` | `https://<ваш-n8n>/webhook/mas-orchestrator-step` — адрес, по которому **n8n достаёт сам себя** |
 | `chat_model` | id модели, как в credential |
-| `chat_base_url` | Base URL из того же credential, **без** `/chat/completions`. Нужен Decision, Verify и Interpret (понимание свободного ответа) |
+| `chat_base_url` | Base URL из того же credential, **без** `/chat/completions`. Нужен Decision, Verify, Interpret и Agent chat |
+| `chat_extra_params` | JSON-объект поверх сэмплинга и thinking-off (`{}` = значения шаблона). Не кладите сюда ключи и `messages` |
 | `mas_version` | строка из файла `VERSION` |
 | `max_steps` | обычно `12` |
 | `agent_workflow_ids` | пока `{}` — заполните на следующем шаге |
 
 Excel Tools без Header Auth — ключ в Runtime Config и на агенте не нужен.
+
+Проверка связи: на Windows `check-all-windows.bat` / `python scripts/field_check.py` (`/health` четырёх сервисов, Activity `/ready`). В n8n — форма **MAS Deployment Health Check**.
+
+#### Матрица секретов и связей
+
+Секреты живут в Credentials n8n и в `*.env` на Windows. В JSON workflows их нет.
+
+**Credentials n8n → ноды**
+
+| Секрет | Где задаётся | Кто читает | Как проверить |
+|---|---|---|---|
+| OpenAI-compatible (чат) | Credentials → тот же Base URL, что `chat_base_url` | **Decision chat**, **Verify chat**, **Interpret chat**; **Agent chat** у Excel / Schedule / Demo | Health Check PASS; в Логе `trace.llm` с `finish_reason` не `length`. Корп. vLLM/SGLang: `--enable-auto-tool-choice --tool-call-parser hermes` (иначе цикл агента не получит `tool_calls`). Thinking off: в `trace.llm` нет `think N`, `chat_extra_params` не включает thinking |
+| Embeddings `baai/bge-m3`, Dimensions пусто | Отдельный credential (тот же OpenAI-compatible endpoint, что у корпоративного контура) | Knowledge Ingestion, Knowledge Retrieval | «Загрузить в RAG» → ненулевые срезы |
+| Postgres / PGVector | Одна учётка (SSL = Disable, если сервер без TLS) | Ingestion, Retrieval, оркестратор, прокси, Error traces | `{"operation":"schema"}` → `ok: true` |
+| Header Auth | Имя и значение = `ORCHESTRATOR_AUTH_*` и `CONTROL_PLANE_PROXY_AUTH_*` в `mas-activity.env` | Webhook оркестратора, **POST continue run**, webhook прокси, пробы Health Check | Activity `/ready` 200; `/health` `control_plane_backend=n8n_proxy` |
+
+**Runtime Config (`Runtime URLs`) → потребители**
+
+| Поле | Кто читает | Поле / lab |
+|---|---|---|
+| `activity_base_url` | агенты (Activity API), оркестратор | IP этой Windows `:8200` / Compose `http://mas-activity:8200` |
+| `excel_tools_url` | агент Excel | `:8000` / `http://excel-tools:8000` |
+| `schedule_service_url` | агент Schedule | `:8090` / `http://schedule-builder:8090` |
+| `math_url` | HTTP-агент Math | `:8100` / `http://math-service:8100` |
+| `orchestrator_step_url` | Activity и n8n «сам в себя» | корпоративный URL `/webhook/mas-orchestrator-step` / lab `http://n8n:5678/…` с хоста Windows — тот адрес, с которого n8n достаёт себя |
+| `chat_model` | HTTP `/chat/completions` | id как в credential |
+| `chat_base_url` | Decision, Verify, Interpret, Agent chat (без `/chat/completions`) | Base URL credential |
+| `chat_extra_params` | те же HTTP-чаты (overlay `top_k` / `reasoning` / `enable_thinking`) | `{}` или JSON объекта; секретов нет |
+| `mas_version` | Health Check | строка из `VERSION` |
+| `max_steps` | оркестратор | обычно `12` |
+| `agent_workflow_ids` | оркестратор | id из URL после UI-импорта; lab CLI может оставить `{}` |
+
+**`.env` сервисов (полный список — в `*.env.example`)**
+
+| Файл | Назначение | Поле / lab |
+|---|---|---|
+| `mas-activity-service/mas-activity.env` | слушатель `:8200`, webhook оркестратора, прокси, TLS, таймауты, ссылки лога | `MAS_ACTIVITY_HOST=0.0.0.0`, корпоративные URL, `ACTIVITY_CA_BUNDLE`; lab — значения из корневого `.env` / Compose |
+| `excel-agent-tools/excel-tools.env` | слушатель `:8000`, сессии, лимиты книг | `EXCEL_TOOLS_HOST=0.0.0.0`; ключ не нужен |
+| `schedule-builder-service/schedule-builder.env` | слушатель `:8090`, `ACTIVITY_BASE_URL` | то же |
+| `fastapi-math-service/math-service.env` | слушатель `:8100` | то же |
+| `agents-template/demo_agent/demo-agent.env` | шаблон агента `:8300` (не полевой контур) | lab / проверка шаблона |
+| корневой `.env` | только lab Compose (Postgres, n8n, порты) | на поле не используется |
+
+Проверка переменных Activity: каждая строка `Settings` есть в `mas-activity.env.example` (pytest `test_settings`).
 
 ### 4. Связать workflows
 
@@ -210,7 +255,7 @@ Settings каждого из: оркестратор, оба агента, Retri
 ### 6. База знаний
 
 1. В **MAS — Knowledge Ingestion** те же Postgres и Embeddings, что у Retrieval. Активируйте webhook.
-2. Activity → **База знаний** → **Загрузить в RAG**. В ответе должны быть ненулевые срезы для оркестратора и Excel.
+2. Activity → **База знаний** → **Загрузить в RAG**. Первый ingest после импорта пишет `tnavigator_schedule_knowledge_v2` (`baai/bge-m3`). В ответе должны быть ненулевые срезы для оркестратора и Excel.
 
 ### 7. Проверка и включение
 
@@ -226,7 +271,22 @@ Settings каждого из: оркестратор, оба агента, Retri
 
 Новая задача — текст цели и файлы. Лента обновляется сама. Когда статус «ждём ответ» — нажмите кнопку или напишите обычную фразу своими словами (система поймёт и сопоставит с вариантами). Файлы можно докинуть перетаскиванием. Результаты — панель справа и чипы под сообщениями. Вкладка **Схема** показывает, какие агенты уже отработали. **База знаний** — карточки и повторная загрузка в RAG.
 
-Галочка **Режим разработчика** открывает вкладку **Лог**: шаги оркестратора, вызовы инструментов, ошибки узлов n8n со ссылкой на execution. Для обычной работы не нужна.
+Галочка **Режим разработчика** открывает вкладку **Лог**: шаги оркестратора, запрос в базу знаний и найденные карточки, токены и `finish_reason` каждого решения, вызовы инструментов, ошибки узлов n8n со ссылкой на execution. Эти строки в чат инженера не попадают. Для обычной работы вкладка не нужна.
+
+## Что видно в логе
+
+Лог — те же события кейса, что лента, плюс технические виды. Чат их скрывает. Открывается галочкой **Режим разработчика** → **Лог**, либо `GET /cases/{id}/log` (скачать: `?format=ndjson`).
+
+| Вид | Что это | Как читать |
+|---|---|---|
+| `orchestrator.decision` | шаг оркестратора | действие, `guard`, токены, `finish_reason`; в payload всегда `llm` и `rag`. В логе **после** `trace.rag` / `trace.llm` того же шага |
+| `trace.llm` | ход модели (Decision / Verify / Interpret / агент `role=agent`) | токены, `finish_reason`; `length` = ответ съеден thinking — гейт `llm_truncated`. Промпт — блоки `role` + текст, не одна JSON-строка |
+| `trace.rag` | запрос в базу знаний | query, status, карточки (`knowledge_id`, score, ветки). `unavailable` / 0 карточек у Schedule Builder на задачах «даты ввода» пока ожидаемо |
+| `trace.tool` | вызов инструмента FastAPI | имя, ok, длительность, аргументы; в α2 не входит `retrieve_knowledge` |
+| `orchestrator.resume` | продолжение `source=agent` или `system` | ссылка на execution, если в payload есть `execution_id` и `workflow_id` |
+| `system.node_error` | упал узел n8n | имя узла + ссылка на execution |
+
+Сводка шапки лога: шаги, передачи, инструменты, **запросы в базу** (`kb_calls` — только `retrieve_knowledge`, `phase=on_demand`), **пустой RAG** (`rag_empty`), **усечения LLM** (`llm_truncated`), вопросы инженеру, предупреждения. Ссылка на execution появляется только при паре id в payload и заданном `N8N_PUBLIC_URL` (адрес n8n в браузере). В lab с консоли: `python3 scripts/mas_trace_case.py CASE-…`.
 
 Если задача зависла в «идёт» без новых сообщений дольше пары минут — в ленте есть **Продолжить**. **Закрыть задачу** помечает её отменённой. **Перезапустить с теми же файлами** — если сервис агента не был поднят.
 
@@ -246,7 +306,8 @@ Settings каждого из: оркестратор, оба агента, Retri
 | Форма Health Check по адресу `/webhook/…` даёт 404 | Это форма: `/form/mas-deployment-health-check`. |
 | «Загрузить в RAG» → 404 | Ingestion не Active. |
 | Пустая лента при живом n8n | Переимпортировали прокси — перезапустите Activity. |
-| «Сервис агента не отвечает», задача сразу упала | Не запущен Excel/Schedule или неверный URL в Runtime Config. Поднимите сервис и перезапустите задачу. |
+| «Сервис агента не отвечает», задача сразу упала | Не запущен Excel/Schedule или неверный URL в Runtime Config. Поднимите сервис и перезапустите задачу. То же, если сервис упал **в середине** цикла инструментов. |
+| «Модель чата не ответила», задача сразу упала | Нет ответа `/chat/completions` (сеть, 5xx, пустой choices). Проверьте credential, `chat_base_url` и что корп. vLLM умеет function calling. Не путать с «агент не вернул факты». |
 | «Не удалось разобрать следующий шаг» | Модель вернула пустой ответ. В Логе смотрите строку решения. Три раза подряд задача падает. Проверьте, что на Decision chat, Verify chat и Interpret chat висит тот же credential и `chat_base_url` совпадает с Base URL модели. |
 | Вопрос с кнопками, вы ответили текстом, система переспросила «не поняла» | Напишите ближе к подписи кнопки или нажмите кнопку. Interpret chat должен быть на том же credential, что Decision. |
 | Activity пишет, что не дождалась шага, задача остаётся «идёт» | n8n ещё считает (лимит ожидания 30 мин). Это не «неверный адрес». Если connection refused — тогда да, адрес оркестратора. |

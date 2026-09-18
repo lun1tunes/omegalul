@@ -21,6 +21,7 @@ from mas_agent_kit import (
     flatten_artifacts,
     upstream_agent_data,
 )
+from mas_agent_kit.activity import EVENT_KINDS
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -147,6 +148,22 @@ def test_activity_client_and_case_packet(activity_server: str) -> None:
     silent = ActivityClient("http://127.0.0.1:9", agent_id="demo", case_id="CASE-1", timeout=0.2)
     assert silent.event("agent.progress", "x") is False and silent.case_state() == {}
     assert ActivityClient("", agent_id="demo").configured is False
+
+
+def test_trace_rag_and_llm_helpers(activity_server: str) -> None:
+    _FakeActivity.calls = []
+    activity = ActivityClient(activity_server, agent_id="demo", case_id="CASE-1", task_id="T-1")
+    assert activity.trace_rag(
+        caller="excel_extractor",
+        query="даты ввода",
+        status="ready",
+        cards=[{"knowledge_id": "k1", "rrf_score": 0.01, "branches": ["lexical"]}],
+    )
+    assert activity.trace_llm(role="decision", prompt_tokens=10, completion_tokens=5, finish_reason="stop", prompt_preview={"messages": [{"role": "system", "content": "x"}]})
+    kinds = [c["json"]["kind"] for c in _FakeActivity.calls if "json" in c]
+    assert kinds == ["trace.rag", "trace.llm"]
+    assert "trace.rag" in EVENT_KINDS and "trace.llm" in EVENT_KINDS
+    assert "orchestrator.resume" not in EVENT_KINDS
 
 
 class _DemoAgent(AgentService):

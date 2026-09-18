@@ -13,7 +13,7 @@ fields and ``invoke`` and leave ``system_prompt`` empty.
 The agent workflow generated from a spec always has the same shape:
 
     trigger → Runtime configuration → Normalize task → open_session → [Activity accepted/progress]
-    → Prepare AI Agent input → Knowledge Retrieval → AI Agent (+ tools as HTTP Request) → Summarize
+    → Prepare AI Agent input → Knowledge Retrieval → HTTP `/chat/completions` loop (tools + retrieve_knowledge)
     → Fetch /sessions/{id}/result → Format → Close session
 
 so an engineer who read one agent workflow can read every other one.
@@ -104,8 +104,8 @@ class AgentSpec:
     rag_selector: str = ""
     rag_ready_note: str = ""
     rag_empty_note: str = ""
-    #: JS appended to Prepare: may fill ``keyword_families`` / ``topics`` / ``task_patterns`` arrays
-    #: from ``blob`` / ``low`` (task text) for the retrieval filters. Optional.
+    #: JS appended to Prepare: may fill ``keyword_families`` / ``topics`` / ``task_patterns``
+    #: from ``opened.inspect`` / ``expected_output`` (never regex on the task text). Optional.
     retrieval_filters_js: str = ""
     #: JS expression (object literal body) with extra ``planner_input`` fields taken from ``opened``.
     planner_extra_js: str = ""
@@ -129,6 +129,8 @@ class AgentSpec:
     max_iterations: int = 8
     #: LLM model id on the OpenAI-compatible endpoint.
     model: str = DEFAULT_CHAT_MODEL
+    #: ``http_loop`` (default): n8n HTTP `/chat/completions` cycle. ``n8n_agent``: legacy LangChain Agent (rollback).
+    llm_transport: str = "http_loop"
 
     # -- derived ----------------------------------------------------------------------------------
 
@@ -202,3 +204,5 @@ class AgentSpec:
                 raise ValueError(f"{self.agent_id}: duplicate tool names")
             if "ask_engineer" not in names and self.hitl_policy == "agent_asks":
                 raise ValueError(f"{self.agent_id}: hitl_policy=agent_asks needs an ask_engineer tool")
+            if self.llm_transport not in ("http_loop", "n8n_agent"):
+                raise ValueError(f"{self.agent_id}: llm_transport must be http_loop or n8n_agent")

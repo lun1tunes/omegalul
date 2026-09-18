@@ -434,6 +434,7 @@ def compact_inspect(state: dict[str, Any]) -> dict[str, Any]:
                 "columns": cols[:24],
                 "columns_truncated": len(cols) > 24,
                 "title": table.get("title") or "",
+                "kind": table.get("kind") or "data",
                 "sample": sample,
             }
         )

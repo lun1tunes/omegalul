@@ -180,9 +180,6 @@ def test_workflows_use_current_n8n_2_30_8_ai_node_versions() -> None:
                 options = node["parameters"].get("options") or {}
                 live_chat = path.name in {
                     "mas-orchestrator.workflow.json",
-                    "excel-extractor-agent.workflow.json",
-                    "schedule-builder-agent.workflow.json",
-                    "demo-agent.workflow.json",
                 }
                 expect_timeout = 600000 if live_chat else 300000
                 assert options.get("timeout") == expect_timeout, (path.name, node["name"], options)
@@ -393,6 +390,28 @@ def test_mas_control_plane_proxy_contains_all_activity_operations() -> None:
     pg = next(node for node in workflow["nodes"] if node["name"] == "Execute control-plane SQL")
     assert pg["parameters"]["options"]["queryBatching"] == "independently"
 
+
+def test_schedule_builder_prompt_retrieves_before_apply_dataset() -> None:
+    """8.4 / S1: Builder asks the KB before apply_dataset; commissioning stays retrieve-free."""
+    text = (TEMPLATES / "agents" / "schedule_builder.py").read_text(encoding="utf-8")
+    assert "Перед apply_dataset всегда retrieve_knowledge" in text
+    assert "apply_commissioning для дат ввода — без retrieve" in text
+    assert "retrieve_knowledge не пропускай" in text
+    assert "knowledge_required" in text
+
+
+def test_agent_retrieval_filters_js_does_not_regex_the_task_text() -> None:
+    """R13: Prepare filters come from inspect / expected_output, not /дат|ввод/ on the goal (8.3)."""
+    for name in ("excel_extractor.py", "schedule_builder.py"):
+        text = (TEMPLATES / "agents" / name).read_text(encoding="utf-8")
+        start = text.index("retrieval_filters_js=")
+        end = text.index("planner_extra_js=", start)
+        chunk = text[start:end]
+        assert ".test(low)" not in chunk, name
+        assert "blob.match" not in chunk, name
+        assert "/дат" not in chunk, name
+        assert "inspect.tables" in chunk or "keywords_present" in chunk, name
+
 def test_mas_runtime_config_is_the_only_url_set() -> None:
     workflow = load_json(workflow_path("mas-runtime-config.workflow.json"))
     assert workflow["name"] == "MAS — Runtime Config"
@@ -410,6 +429,7 @@ def test_mas_runtime_config_is_the_only_url_set() -> None:
             "max_steps",
             "chat_model",
             "chat_base_url",
+            "chat_extra_params",
             "agent_workflow_ids",
             "mas_version",
     ]
@@ -509,6 +529,7 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "generate_demo_agent.py",
         "mas_state_utils.py",
         "mas_retrieval_client.py",
+        "mas_knowledge_spaces.py",
         "mas_tool_nodes.py",
         "relayout_core_workflows.py",
     }
@@ -527,6 +548,8 @@ def test_schedule_generator_and_architecture_decisions_are_portable_and_explicit
     assert "flowchart" in docs
     assert "MAS — Runtime Config" in docs
     assert "chat_base_url" in docs
+    assert "chat_extra_params" in docs
+    assert "tool-call-parser" in docs
     assert "IMPORT_ORDER.txt" in docs
     assert "mas-deployment-health-check" in docs
     assert "Agent — Excel Extractor" in docs
@@ -648,6 +671,7 @@ def test_operating_guide_ends_with_full_injection_template() -> None:
         "author",
         "access_scope",
         "text",
+        "summary",
         "examples",
         "schema_catalogue",
         "source_hash",
@@ -670,7 +694,9 @@ def test_operating_guide_ends_with_full_injection_template() -> None:
         "excel-agent-discovery-and-tables",
         "excel-agent-query-and-result-protocol",
         "excel-agent-clarification-and-continuation",
-        "excel-agent-rag-and-operations",
+        "worked-commissioning-dates-v1",
+        "worked-group-rebind-v1",
+        "worked-dataset-wefac-v1",
         "route-excel-extractor",
         "route-schedule-builder",
         "route-calculation",
@@ -702,7 +728,11 @@ def test_rag_ingestion_has_ui_only_postgres_inventory_check() -> None:
     assert by_name["Postgres — inspect RAG table contents"].get("alwaysOutputData") is True
     assert "$('Normalize approved SCHEDULE knowledge').all()" in by_name["Prepare full parent knowledge persistence"]["parameters"]["jsCode"]
     assert by_name["Finalize indexes and deduplicate chunks"].get("executeOnce") is True
-    assert by_name["Lookup existing knowledge keys"]["parameters"]["query"].startswith("SELECT target_base, knowledge_id, revision")
+    lookup_sql = by_name["Lookup existing knowledge keys"]["parameters"]["query"]
+    assert "in_vector" in lookup_sql
+    assert "tnavigator_schedule_knowledge_v2" in lookup_sql
+    ensure_sql = by_name["Ensure parent knowledge tables"]["parameters"]["query"]
+    assert "CREATE TABLE IF NOT EXISTS tnavigator_schedule_knowledge_v2" in ensure_sql
     connections = workflow["connections"]
     assert connections["PGVector — insert approved SCHEDULE knowledge"]["main"][0][0]["node"] == "Finalize indexes and deduplicate chunks"
     assert connections["Finalize indexes and deduplicate chunks"]["main"][0][0]["node"] == "Prepare full parent knowledge persistence"
@@ -711,6 +741,47 @@ def test_rag_ingestion_has_ui_only_postgres_inventory_check() -> None:
     assert connections["New knowledge to insert?"]["main"][1][0]["node"] == "Prepare RAG inventory query"
     assert connections["Prepare RAG inventory query"]["main"][0][0]["node"] == "Postgres — inspect RAG table contents"
     assert connections["Postgres — inspect RAG table contents"]["main"][0][0]["node"] == "Summarize RAG inventory"
+
+
+def test_rag_embeddings_use_bge_m3_and_v2_table() -> None:
+    """Field contour baai/bge-m3 (1024-d) on tnavigator_schedule_knowledge_v2; skip only in_vector."""
+    ingestion = load_json(workflow_path("tnavigator-schedule-knowledge-ingestion.workflow.json"))
+    retrieval = load_json(workflow_path("tnavigator-schedule-hybrid-retrieval.workflow.json"))
+
+    def check(wf: dict, embed_name: str, pg_name: str) -> None:
+        embed = next(node for node in wf["nodes"] if node["name"] == embed_name)
+        store = next(node for node in wf["nodes"] if node["name"] == pg_name)
+        assert embed["parameters"]["model"] == "baai/bge-m3"
+        assert "dimensions" not in embed["parameters"]
+        assert (embed["parameters"].get("options") or {}).get("timeout") == -1
+        assert "dimensions" not in (embed["parameters"].get("options") or {})
+        assert store["parameters"]["tableName"] == "tnavigator_schedule_knowledge_v2"
+
+    check(
+        ingestion,
+        "SCHEDULE Embeddings — configure same model in retrieval",
+        "PGVector — insert approved SCHEDULE knowledge",
+    )
+    check(
+        retrieval,
+        "SCHEDULE Retrieval Embeddings — same model as ingestion",
+        "PGVector semantic candidates",
+    )
+    select_js = next(
+        node["parameters"]["jsCode"]
+        for node in ingestion["nodes"]
+        if node["name"] == "Select new MAS knowledge"
+    )
+    assert "inVector.has(k)" in select_js
+    assert "existing.has(k)" not in select_js
+    inventory = next(
+        node["parameters"]["jsCode"]
+        for node in ingestion["nodes"]
+        if node["name"] == "Prepare RAG inventory query"
+    )
+    assert "tnavigator_schedule_knowledge_v2" in inventory
+    assert "VECTOR_TABLE_PLACEHOLDER" not in inventory
+
 
 def test_continuation_protocol_has_no_stale_agent_state_lookup_instruction() -> None:
     stale_phrases = (
@@ -826,7 +897,7 @@ def test_hybrid_rag_is_the_only_agent_knowledge_path() -> None:
         for node in ingestion["nodes"]
         if node["name"] == "Prepare RAG inventory query"
     )
-    assert "tnavigator_schedule_knowledge_v1" in json.dumps(ingestion, ensure_ascii=False)
+    assert "tnavigator_schedule_knowledge_v2" in json.dumps(ingestion, ensure_ascii=False)
     assert "corpus_json" in seed_code
     packaged = json.dumps(next(n for n in ingestion["nodes"] if n["name"] == "Packaged MAS corpus"), ensure_ascii=False)
     assert "$('Collect MAS knowledge blocks')" in inventory
@@ -841,26 +912,14 @@ def test_excel_protocol_cards_use_schedule_aligned_skeleton_and_retrieval_surfac
     required_sections = ("Назначение.", "Когда применять.", "Канон протокола.", "Валидация")
     must_keep = {
         "excel-agent-trust-boundary": ("session_id", "tbl_", "недоверенн"),
-        "excel-agent-discovery-and-tables": (
-            "ambiguous_columns",
-            "suggested_select",
-            "MAX_INTERNAL_BLANK_ROWS",
-            "Index",
-            "n/a",
-        ),
+        "excel-agent-discovery-and-tables": ("open_session", "unpivot", "n/a", "Index"),
         "excel-agent-query-and-result-protocol": (
             "extract_table",
             "query_table",
+            "expected_output",
             "save_agent_plan",
-            "validate_result",
-            "tail=true",
         ),
-        "excel-agent-clarification-and-continuation": (
-            "clarification_needed",
-            "continuation_state",
-            "get_session_state",
-        ),
-        "excel-agent-rag-and-operations": ("X-API-Key", "X-Excel-Webhook-Key", "embedding"),
+        "excel-agent-clarification-and-continuation": ("ask_engineer", "engineer_answers", "get_session_state"),
     }
     cards = {
         document.get("knowledge_id") or document.get("id"): document
@@ -869,15 +928,14 @@ def test_excel_protocol_cards_use_schedule_aligned_skeleton_and_retrieval_surfac
         == "excel_protocol"
         or str(document.get("knowledge_id") or document.get("id") or "").startswith("excel-agent-")
     }
-    assert set(must_keep) <= set(cards)
+    assert set(cards) == set(must_keep)
     for kid, needles in must_keep.items():
         block = cards[kid].get("schedule_knowledge_block") if isinstance(cards[kid].get("schedule_knowledge_block"), dict) else cards[kid]
         expected_revision = {
-            "excel-agent-trust-boundary": "4",
-            "excel-agent-discovery-and-tables": "6",
-            "excel-agent-query-and-result-protocol": "5",
-            "excel-agent-clarification-and-continuation": "4",
-            "excel-agent-rag-and-operations": "4",
+            "excel-agent-trust-boundary": "5",
+            "excel-agent-discovery-and-tables": "7",
+            "excel-agent-query-and-result-protocol": "6",
+            "excel-agent-clarification-and-continuation": "5",
         }
         assert str(block.get("revision")) == expected_revision[kid], kid
         assert not str(block.get("title") or "").lower().startswith("excel agent ")
@@ -889,8 +947,11 @@ def test_excel_protocol_cards_use_schedule_aligned_skeleton_and_retrieval_surfac
         blob = text + json.dumps(block.get("examples") or [], ensure_ascii=False)
         for needle in needles:
             assert needle in blob, (kid, needle)
+        for retired in ("clr_", "continuation_state"):
+            assert retired not in blob, (kid, retired)
 
-def test_excel_protocol_retrieval_boost_baseline_fixture_is_frozen() -> None:
+
+def test_excel_protocol_retrieval_boost_baseline_fixture_is_historical() -> None:
     baseline_path = ROOT / "n8n" / "tests" / "fixtures" / "excel-protocol-searchable-baseline.json"
     baseline = load_json(baseline_path)
     assert set(baseline) == {
@@ -898,13 +959,44 @@ def test_excel_protocol_retrieval_boost_baseline_fixture_is_frozen() -> None:
         "excel-agent-discovery-and-tables",
         "excel-agent-query-and-result-protocol",
         "excel-agent-clarification-and-continuation",
-        "excel-agent-rag-and-operations",
     }
     for kid, row in baseline.items():
-        assert row["task_patterns"] == []
-        assert (row.get("examples") or []) == []
-        assert str(row["revision"]) in {"1", "3"}
-        assert "searchable" in row and len(row["searchable"]) > 500
+        assert "searchable" in row and len(row["searchable"]) > 500, kid
+
+
+def test_mas_corpus_8_5_worked_examples_stubs_and_no_retired_tokens() -> None:
+    """8.5: worked_example ×3, stubs absent_agent, comments without INCLUDE/DATES, no retired tokens."""
+    docs = ingestible_operating_guide_documents()
+    by_id = {document.get("knowledge_id") or document.get("id"): document for document in docs}
+    assert {
+        "worked-commissioning-dates-v1",
+        "worked-group-rebind-v1",
+        "worked-dataset-wefac-v1",
+    } <= set(by_id)
+    for kid in (
+        "worked-commissioning-dates-v1",
+        "worked-group-rebind-v1",
+        "worked-dataset-wefac-v1",
+    ):
+        assert by_id[kid]["knowledge_type"] == "worked_example"
+        assert by_id[kid]["target_base"] == "schedule_mvp"
+        assert len(by_id[kid].get("task_patterns") or []) >= 3
+        assert len(by_id[kid].get("examples") or []) >= 2
+    comments = by_id["schedule-model-file-comments-v1"]
+    assert comments["keywords"] == []
+    assert str(comments["revision"]) == "4"
+    for kid in (
+        "route-cluster-calculation",
+        "route-binary-results",
+        "route-presentation",
+        "route-calculation",
+    ):
+        assert by_id[kid]["topics"] == ["absent_agent"], kid
+        assert "маршрутизация" not in (by_id[kid].get("topics") or [])
+    blob = json.dumps(docs, ensure_ascii=False)
+    for tok in ("clr_", "continuation_state", "specialist_packet"):
+        assert tok not in blob, tok
+    assert "agent_task" in by_id["specialist-template-bounded-work"]["text"]
 
 def _demo_spec():
     import sys
@@ -962,27 +1054,37 @@ def test_agent_spec_generates_the_uniform_agent_workflow_and_registry_row() -> N
         "Prepare AI Agent input",
         "Call Knowledge Retrieval",
         "Attach demo RAG evidence",
-        "Demo Agent AI Agent",
-        "Demo Agent Chat Model — Qwen",
+        "Activity — Demo Agent RAG",
+        "Restore after Demo Agent RAG",
+        "Build chat request",
+        "Demo Agent Agent chat",
+        "Parse agent chat",
+        "Agent loop router",
+        "Call agent tool",
+        "Retrieve knowledge",
         "Summarize AI steps",
-        "Result stored?",
         "Fetch demo result",
         "Format demo result",
         "Close demo session",
-        "count_wells",
-        "ask_engineer",
     ):
         assert must in names, must
     by_name = {n["name"]: n for n in wf["nodes"]}
-    # Tools are HTTP Request (as tool) nodes on the service URL from Runtime Config; session id is bound by the workflow.
-    tool = by_name["count_wells"]
-    assert tool["type"] == "n8n-nodes-base.httpRequestTool"
-    assert "$('Runtime configuration').first().json.demo_agent_url + '/agent-tools/' + \"count_wells\"" in tool["parameters"]["url"]
-    assert "session_id: $('Open demo session').first().json.session_id" in tool["parameters"]["jsonBody"]
-    assert wf["connections"]["count_wells"] == {"ai_tool": [[{"node": "Demo Agent AI Agent", "type": "ai_tool", "index": 0}]]}
-    assert wf["connections"]["Result stored?"]["main"][1][0]["node"] == "Fetch demo result"
-    assert "n.indexOf('count_')===0 || n==='ask_engineer'" in by_name["Summarize AI steps"]["parameters"]["jsCode"]
-    assert by_name["Demo Agent AI Agent"]["parameters"]["options"]["systemMessage"] == spec.system_prompt
+    assert "Demo Agent AI Agent" not in names
+    assert "Result stored?" not in names
+    assert "count_wells" not in names
+    chat = by_name["Demo Agent Agent chat"]
+    assert chat["type"] == "n8n-nodes-base.httpRequest"
+    assert chat["parameters"]["nodeCredentialType"] == "openAiApi"
+    call_tool = by_name["Call agent tool"]
+    assert call_tool["type"] == "n8n-nodes-base.httpRequest"
+    assert "$json.tool_url" in call_tool["parameters"]["url"]
+    build_js = by_name["Build chat request"]["parameters"]["jsCode"]
+    assert '"name": "count_wells"' in build_js
+    assert '"name": "ask_engineer"' in build_js
+    assert '"name": "retrieve_knowledge"' in build_js
+    assert spec.system_prompt in build_js
+    assert wf["connections"]["Restore after AI tools"]["main"][0][0]["node"] == "Fetch demo result"
+    assert "retrieve_knowledge" in by_name["Summarize AI steps"]["parameters"]["jsCode"]
     assert by_name["Open demo session"]["parameters"]["url"] == "={{ $json.demo_agent_url }}/agent-tools/open_session"
     # No service credential → no auth on HTTP nodes; Activity events never carry service auth.
     assert "authentication" not in by_name["Open demo session"]["parameters"]
@@ -1004,4 +1106,58 @@ def test_agent_spec_generates_the_uniform_agent_workflow_and_registry_row() -> N
     assert EXCEL_EXTRACTOR.service_credentials is None and SCHEDULE_BUILDER.service_credentials is None
     excel_wf = load_json(CORE / "excel-extractor-agent.workflow.json")
     assert excel_wf["id"] == EXCEL_EXTRACTOR.resolved_workflow_id == SEED[0]["invoke"]["workflow_id"]
+    from mas_agent_workflow import openai_tools_for_spec
+
+    for spec, filename in (
+        (EXCEL_EXTRACTOR, "excel-extractor-agent.workflow.json"),
+        (SCHEDULE_BUILDER, "schedule-builder-agent.workflow.json"),
+    ):
+        live = load_json(workflow_path(filename))
+        types = {node["type"] for node in live["nodes"]}
+        assert "@n8n/n8n-nodes-langchain.agent" not in types, filename
+        assert "@n8n/n8n-nodes-langchain.lmChatOpenAi" not in types, filename
+        assert "n8n-nodes-base.httpRequestTool" not in types, filename
+        tools_schema = openai_tools_for_spec(spec)
+        schema_names = [t["function"]["name"] for t in tools_schema]
+        assert schema_names[-1] == "retrieve_knowledge"
+        assert schema_names[:-1] == [name for name, _d, _f in spec.tools]
+        for (_name, _desc, fields), schema in zip(spec.tools, tools_schema[:-1], strict=True):
+            for key, typ, _req, _field_desc in fields:
+                expect = "number" if typ == "number" else "string"
+                assert schema["function"]["parameters"]["properties"][key]["type"] == expect, (spec.agent_id, key)
+
+
+def test_n8n_agent_transport_keeps_langchain_graph() -> None:
+    """llm_transport=n8n_agent is the one-revision rollback; default http_loop must not use it."""
+    import sys
+
+    sys.path.insert(0, str(TEMPLATES))
+    from mas_agent_workflow import build_workflow
+
+    spec = _demo_spec()
+    spec.llm_transport = "n8n_agent"
+    wf = build_workflow(spec)
+    types = {node["type"] for node in wf["nodes"]}
+    assert "@n8n/n8n-nodes-langchain.agent" in types
+    assert "n8n-nodes-base.httpRequestTool" in types
+    assert "Demo Agent AI Agent" in {node["name"] for node in wf["nodes"]}
+    assert "Result stored?" in {node["name"] for node in wf["nodes"]}
+
+
+def test_keyword_instruction_cards_have_bounded_summary() -> None:
+    import sys
+
+    sys.path.insert(0, str(TEMPLATES))
+    from schedule_rag_workflows import ingestible_blocks_from_payload
+
+    blocks = ingestible_blocks_from_payload(load_json(RAG_SOURCE))
+    keywords = [b for b in blocks if b.get("knowledge_type") == "keyword_instruction"]
+    assert len(keywords) >= 40
+    for block in keywords:
+        summary = str(block.get("summary") or "").strip()
+        assert summary, block.get("knowledge_id")
+        assert len(summary) <= 600, (block.get("knowledge_id"), len(summary))
+        assert "Когда применять" in summary or "когда применять" in summary.lower()
+    wcon = next(b for b in keywords if b.get("knowledge_id") == "wconprod-forecast-control-v1")
+    assert "WELTARG" in wcon["summary"]
 

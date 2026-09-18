@@ -18,7 +18,7 @@ from app import artifact_store
 from app import case_log
 from app import case_watch
 from app import control_plane
-from app.contracts import AGENT_EVENT_KINDS, AgentRegistryIn, CaseAnswerIn, CaseEventIn, CaseNameIn, MAX_STEPS, is_trace_kind
+from app.contracts import AGENT_EVENT_KINDS, AgentRegistryIn, CaseAnswerIn, CaseEventIn, CaseNameIn, MAX_STEPS, is_chat_hidden_kind, is_trace_kind
 from app.state_shape import (
     artifact_cards,
     artifact_filenames,
@@ -229,8 +229,8 @@ def collapse_duplicate_events(events: list[dict[str, Any]] | None) -> list[dict[
         if not isinstance(event, dict):
             continue
         kind = str(event.get("kind") or "")
-        if is_trace_kind(kind):
-            # Developer trace rows (tool calls, technical notes) live in the «Лог» tab only.
+        if is_chat_hidden_kind(kind):
+            # Developer-only: trace.* and orchestrator.resume («Продолжение по событию…»).
             continue
         msg = _event_message(event)
         if kind in AGENT_DUP_KINDS and out and _same_agent_line(out[-1], event):

@@ -93,12 +93,14 @@ def test_ready_health_and_static_assets() -> None:
         assert gone not in html, gone
     assert "app.js?v=108" in html
     assert "schema.js?v=46" in html
-    assert "log.js?v=1" in html
-    assert "app.css?v=114" in html
+    assert "log.js?v=4" in html
+    assert "app.css?v=116" in html
     for anchor in ('id="devModeToggle"', "Режим разработчика", 'id="viewLogBtn"', 'id="logView"', 'id="logSteps"', 'id="logDownload"'):
         assert anchor in html, anchor
     log_js = (STATIC / "log.js").read_text(encoding="utf-8")
     assert "/log?format=ndjson" in log_js and "window.MasLog" in log_js
+    assert "запросов в базу" in log_js and "усечений LLM" in log_js
+    assert "log-prompt" in log_js and "prompt_preview" in log_js
 
     js_text = (STATIC / "app.js").read_text(encoding="utf-8")
     assert "X-Activity-Key" not in js_text

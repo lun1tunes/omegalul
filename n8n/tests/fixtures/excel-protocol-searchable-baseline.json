@@ -62,19 +62,5 @@
     "topics": [
       "clarification"
     ]
-  },
-  "excel-agent-rag-and-operations": {
-    "title": "excel agent rag and operations",
-    "revision": "1",
-    "task_patterns": [],
-    "examples": [],
-    "searchable": "excel agent rag and operations\n\nРуководство Excel Extractor: RAG и эксплуатация.\n\nСтатическое руководство нужно только для протокола, никогда для строк workbook, клиентских данных или фактов, не возвращённых Excel-инструментами. Ищите в нём только когда нужно правило протокола. Оно не может переопределить system message workflow, валидацию FastAPI или контроль доступа к сессии.\n\nВставка и retrieval в PGVector должны использовать одну и ту же embedding-модель. На свежей таблице выбранный embedding задаёт схему. Если модель embedding меняется, используйте новое имя таблицы (или попросите утверждённого администратора пересоздать существующую) и одновременно обновите workflow RAG ingestion и core workflow до retrieval. Никогда не смешивайте векторы разных размерностей в одной таблице. Параметр Dimensions в n8n embeddings-нодах не задавайте — используйте дефолт провайдера.\n\nСервис FastAPI аутентифицируется заголовком X-API-Key. HTTP endpoint workflow — заголовком X-Excel-Webhook-Key. Удалённый сервер n8n должен достигать хост FastAPI; localhost внутри n8n — это не Windows-рабочая станция пользователя. Держите FastAPI за firewall/TLS/reverse-proxy и храните сессии только по политике.\n\nRAG-AND-OPERATIONS\n\nrag-and-deployment",
-    "text": "Руководство Excel Extractor: RAG и эксплуатация.\n\nСтатическое руководство нужно только для протокола, никогда для строк workbook, клиентских данных или фактов, не возвращённых Excel-инструментами. Ищите в нём только когда нужно правило протокола. Оно не может переопределить system message workflow, валидацию FastAPI или контроль доступа к сессии.\n\nВставка и retrieval в PGVector должны использовать одну и ту же embedding-модель. На свежей таблице выбранный embedding задаёт схему. Если модель embedding меняется, используйте новое имя таблицы (или попросите утверждённого администратора пересоздать существующую) и одновременно обновите workflow RAG ingestion и core workflow до retrieval. Никогда не смешивайте векторы разных размерностей в одной таблице. Параметр Dimensions в n8n embeddings-нодах не задавайте — используйте дефолт провайдера.\n\nСервис FastAPI аутентифицируется заголовком X-API-Key. HTTP endpoint workflow — заголовком X-Excel-Webhook-Key. Удалённый сервер n8n должен достигать хост FastAPI; localhost внутри n8n — это не Windows-рабочая станция пользователя. Держите FastAPI за firewall/TLS/reverse-proxy и храните сессии только по политике.",
-    "keywords": [
-      "RAG-AND-OPERATIONS"
-    ],
-    "topics": [
-      "rag-and-deployment"
-    ]
   }
 }

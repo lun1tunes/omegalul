@@ -24,7 +24,15 @@ from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
 
-EVENT_KINDS = ("agent.accepted", "agent.progress", "agent.failed", "trace.tool", "trace.note")
+EVENT_KINDS = (
+    "agent.accepted",
+    "agent.progress",
+    "agent.failed",
+    "trace.tool",
+    "trace.note",
+    "trace.rag",
+    "trace.llm",
+)
 
 
 def compact_for_log(value: Any, limit: int = 2000, *, _depth: int = 0) -> Any:
@@ -186,6 +194,65 @@ class ActivityClient:
         if error:
             payload["error"] = error
         return self.event("trace.tool", message, payload=payload)
+
+    def trace_rag(
+        self,
+        *,
+        caller: str,
+        query: str,
+        status: str,
+        filters: dict[str, Any] | None = None,
+        findings: list[Any] | None = None,
+        cards: list[Any] | None = None,
+        duration_ms: int | None = None,
+    ) -> bool:
+        """One knowledge-base lookup: query, status, card ids. Hidden from the engineer chat."""
+        cards = list(cards or [])
+        findings = list(findings or [])
+        message = f"База знаний: {status} · {len(cards)} карточек"
+        payload: dict[str, Any] = {
+            "caller": caller or self.agent_id,
+            "query": str(query or "")[:800],
+            "filters": compact_for_log(filters or {}, limit=800),
+            "status": status,
+            "findings": compact_for_log(findings[:8], limit=800),
+            "cards": compact_for_log(cards[:12], limit=1600),
+        }
+        if duration_ms is not None:
+            payload["duration_ms"] = int(duration_ms)
+        return self.event("trace.rag", message, payload=compact_for_log(payload, limit=4000))
+
+    def trace_llm(
+        self,
+        *,
+        role: str,
+        model: str = "",
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        finish_reason: str = "",
+        duration_ms: int | None = None,
+        reasoning_tokens: int = 0,
+        tool_calls: list[Any] | None = None,
+        prompt_preview: Any = None,
+        content_preview: str = "",
+    ) -> bool:
+        """One LLM hop (decision / verify / interpret / agent). Prompt stays in the developer log."""
+        tokens = int(prompt_tokens or 0) + int(completion_tokens or 0)
+        message = f"{role}: {finish_reason or 'stop'} · {tokens} tok"
+        payload: dict[str, Any] = {
+            "role": role,
+            "model": model,
+            "prompt_tokens": int(prompt_tokens or 0),
+            "completion_tokens": int(completion_tokens or 0),
+            "reasoning_tokens": int(reasoning_tokens or 0),
+            "finish_reason": finish_reason,
+            "tool_calls": compact_for_log(tool_calls or [], limit=800),
+            "prompt_preview": compact_for_log(prompt_preview if prompt_preview is not None else "", limit=4000),
+            "content_preview": compact_for_log(content_preview or "", limit=2000),
+        }
+        if duration_ms is not None:
+            payload["duration_ms"] = int(duration_ms)
+        return self.event("trace.llm", message, payload=payload)
 
     # -- write ----------------------------------------------------------------------------------
 

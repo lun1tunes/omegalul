@@ -221,7 +221,7 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(helperChunks[0].includes('parseKeepRemove'), false);
   {
     // Activity option button answer: {choice, text, label} — no regex on the human label.
-    const helpers = new Function(`${helperChunks[0]}; return { normalizeHitlAnswer, readUnlistedWellsPolicy, applyInterpretedDecision, buildClarifyQuestion, looksMachineText };`)();
+    const helpers = new Function(`${helperChunks[0]}; return { normalizeHitlAnswer, readUnlistedWellsPolicy, applyInterpretedDecision, buildClarifyQuestion, looksMachineText, buildRetrievalQuery, planRetrievalTopics };`)();
     const clicked = { choice: 'remove', text: 'Убрать из прогноза', label: 'Убрать из прогноза' };
     assert.equal(helpers.normalizeHitlAnswer('unlisted_wells_policy', clicked, '').unlisted_wells_policy, 'remove');
     assert.equal(helpers.readUnlistedWellsPolicy({ unlisted_wells_policy: clicked }), 'remove');
@@ -253,6 +253,21 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.equal(helpers.looksMachineText(clarify.question), false);
     assert.equal(helpers.looksMachineText('Оставить скважины как в исходном файле, пожалуйста.'), false);
     assert.equal(helpers.looksMachineText('Оставить скважины как в baseline, пожалуйста.'), true);
+    assert.equal(helpers.buildRetrievalQuery({
+      goal: 'сдвинь даты ввода',
+      inputs: [{ filename: 'dates.xlsx', role: 'excel' }],
+      agents: { excel_extractor: { summary: 'Извлечено 40 скважин из Excel' } },
+      plan: [{ title: 'Даты из Excel' }],
+    }), 'сдвинь даты ввода\nПлан: Даты из Excel');
+    const registry = [
+      { agent_id: 'excel_extractor', enabled: true, input_required: ['excel'], output_provides: ['facts', 'new_wells'] },
+      { agent_id: 'schedule_builder', enabled: true, input_required: ['schedule_source'], output_provides: ['schedule_out', 'diff'] },
+      { agent_id: 'demo_agent', enabled: true, input_required: [], output_provides: ['well_count', 'wells'] },
+    ];
+    assert.deepEqual(helpers.planRetrievalTopics([], registry, { inputs: [{ role: 'excel' }, { role: 'schedule_source' }] }), ['excel', 'schedule_source', 'well_count', 'wells']);
+    assert.deepEqual(helpers.planRetrievalTopics([], registry, { inputs: [{ role: 'schedule_source' }] }), ['schedule_source', 'well_count', 'wells']);
+    assert.deepEqual(helpers.planRetrievalTopics([], registry, { inputs: [] }), ['well_count', 'wells']);
+    assert.deepEqual(helpers.planRetrievalTopics([{ id: 'p2', status: 'pending', agent_id: 'schedule_builder' }], registry, { inputs: [{ role: 'excel' }, { role: 'schedule_source' }] }), ['schedule_source', 'schedule_out', 'diff']);
   }
   {
     // Two workbooks in one case: the first keeps the `excel` slot, the second survives as an attachment
@@ -533,19 +548,30 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(prepared.schedule_retrieval_request.filters.target_base, 'orchestrator_routing');
   assert.deepEqual(prepared.schedule_retrieval_request.filters.knowledge_types, ['routing_card']);
   assert.equal(prepared.schedule_retrieval_request.filters.access_scope, 'petroleum-engineering');
-  // Phase 2: no regex-derived tags in the retrieval request — selectors + plain-text query; the only tags
-  // are `topics` from the plan (registry roles of agents in open plan items — empty without a plan).
+  // Phase 2: no regex-derived tags in the retrieval request — selectors + plain-text query; step 0
+  // topics are registry roles of enabled agents whose input_required is covered by attached files.
   for (const gone of ['keyword_families', 'task_patterns']) {
     assert.equal(gone in prepared.schedule_retrieval_request.filters, false, gone);
   }
-  assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, []);
+  assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, ['excel', 'schedule_source']);
   assert.match(prepared.schedule_retrieval_request.query, /даты ввода/);
-  assert.match(prepared.schedule_retrieval_request.query, /Извлечено 40 скважин из Excel/);
+  assert.equal(prepared.schedule_retrieval_request.query.includes('dates.xlsx'), false, 'query must not carry filenames');
+  assert.equal(prepared.schedule_retrieval_request.query.includes('Извлечено 40 скважин'), false, 'query must not carry the journal');
   assert.ok(prepared.schedule_retrieval_request.query.length <= 800);
-  // No rule-based "next step" hint: the Decision LLM must reason from state + registry + RAG.
+  assert.equal(prepared.schedule_retrieval_request.top_k, 20);
+  {
+    const headings = ['Цель:', 'План задачи', 'Журнал задачи', 'Данные агентов:', 'Открытые вопросы:', 'Доступные агенты'];
+    let last = -1;
+    for (const h of headings) {
+      const at = prepared.planner_input.indexOf(h);
+      assert.ok(at > last, `planner_input section ${h} out of order`);
+      last = at;
+    }
+    assert.equal(prepared.planner_input.includes('Текущее состояние:'), false);
+    assert.match(prepared.planner_input, /Открытые вопросы:\n- нет/);
+  }
   assert.ok(!prepared.planner_input.includes('Подсказка следующего шага'));
   assert.ok(!/Дальше schedule_builder|Сначала excel_extractor|сразу schedule_builder|уже есть — finish/.test(prepared.planner_input));
-  assert.equal(prepared.schedule_retrieval_request.top_k, 12);
   assert.deepEqual(prepared.retrieval_selector, {
     target_base: 'orchestrator_routing',
     knowledge_types: ['routing_card'],
@@ -614,6 +640,14 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(attached.rag.cards[0].knowledge_id, 'route-excel-extractor');
   assert.ok(!attached.planner_input.includes('WCONPROD full manual'));
   assert.match(attached.planner_input, /excel_extractor/);
+  assert.match(attached.planner_input, /Политика из базы знаний:/);
+  assert.equal(attached.planner_input.includes('Retrieved knowledge'), false);
+  assert.ok(attached.planner_input.indexOf('Цель:') < attached.planner_input.indexOf('План задачи'));
+  assert.ok(attached.planner_input.indexOf('План задачи') < attached.planner_input.indexOf('Журнал задачи'));
+  assert.ok(attached.planner_input.indexOf('Журнал задачи') < attached.planner_input.indexOf('Данные агентов:'));
+  assert.ok(attached.planner_input.indexOf('Данные агентов:') < attached.planner_input.indexOf('Открытые вопросы:'));
+  assert.ok(attached.planner_input.indexOf('Открытые вопросы:') < attached.planner_input.indexOf('Доступные агенты'));
+  assert.ok(attached.planner_input.indexOf('Доступные агенты') < attached.planner_input.indexOf('Политика из базы знаний:'));
   assert.equal(attached.case_id, 'CASE-1');
   assert.ok(attached.state);
 
@@ -622,10 +656,23 @@ async function run(name, json, nodes = {}, binary = {}) {
     { error: { message: 'subworkflow missing' } },
     { 'Prepare decision context': prepared },
   );
-  assert.equal(attachedFail.rag.status, 'unavailable');
+  assert.equal(attachedFail.rag.status, 'failed');
   assert.equal(attachedFail.rag.cards.length, 0);
   assert.match(attachedFail.planner_input, /Не спрашивай инженера про базу знаний/);
   assert.ok(attachedFail.planner_input.includes(prepared.planner_input.slice(0, 40)));
+
+  const attachedAbstain = await run(
+    'Attach orchestrator RAG evidence',
+    {
+      contract: 'schedule_retrieval_result',
+      status: 'abstain',
+      results: [],
+      findings: [{ code: 'SCHEMA_KEYWORD_SCOPE_REQUIRED' }],
+    },
+    { 'Prepare decision context': prepared },
+  );
+  assert.equal(attachedAbstain.rag.status, 'abstain');
+  assert.deepEqual(attachedAbstain.rag.findings, ['SCHEMA_KEYWORD_SCOPE_REQUIRED']);
 
   const attachedEmpty = await run(
     'Attach orchestrator RAG evidence',
@@ -640,7 +687,7 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(attachedEmpty.rag.status, 'empty');
   assert.deepEqual(attachedEmpty.rag.findings, ['NO_AUTHORIZED_EVIDENCE']);
 
-  const longCard = 'R'.repeat(900);
+  const longCard = 'R'.repeat(1800);
   const attachedTrim = await run(
     'Attach orchestrator RAG evidence',
     {
@@ -657,7 +704,7 @@ async function run(name, json, nodes = {}, binary = {}) {
     { 'Prepare decision context': prepared },
   );
   assert.equal(attachedTrim.rag.cards.length, 6);
-  assert.equal(attachedTrim.rag.cards[0].text.length, 700);
+  assert.equal(attachedTrim.rag.cards[0].text.length, 1500);
 
   const attachedShort = await run(
     'Attach orchestrator RAG evidence',
@@ -706,6 +753,37 @@ async function run(name, json, nodes = {}, binary = {}) {
           knowledge_type: 'routing_card',
           target_base: 'orchestrator_routing',
           title: 'Weak',
+          rrf_score: 0.09,
+          body: { text: 'Достаточно длинный текст карточки маршрутизации чтобы пройти порог длины.' },
+        },
+        {
+          knowledge_id: 'strong',
+          knowledge_type: 'routing_card',
+          target_base: 'orchestrator_routing',
+          title: 'Strong',
+          rrf_score: 0.09,
+          topics: ['excel'],
+          body: { text: 'Делегируйте excel_extractor когда есть xlsx и в artifacts есть Excel файл.' },
+        },
+      ],
+    },
+    { 'Prepare decision context': prepared },
+  );
+  assert.equal(attachedFloor.rag.cards.length, 1);
+  assert.equal(attachedFloor.rag.cards[0].knowledge_id, 'strong');
+  assert.deepEqual(attachedFloor.rag.cards[0].topics, ['excel']);
+
+  const attachedFloorNoTopics = await run(
+    'Attach orchestrator RAG evidence',
+    {
+      contract: 'schedule_retrieval_result',
+      status: 'succeeded',
+      results: [
+        {
+          knowledge_id: 'weak',
+          knowledge_type: 'routing_card',
+          target_base: 'orchestrator_routing',
+          title: 'Weak',
           rrf_score: 0.01,
           body: { text: 'Достаточно длинный текст карточки маршрутизации чтобы пройти порог длины.' },
         },
@@ -719,10 +797,42 @@ async function run(name, json, nodes = {}, binary = {}) {
         },
       ],
     },
+    { 'Prepare decision context': { ...prepared, schedule_retrieval_request: { ...prepared.schedule_retrieval_request, filters: { ...prepared.schedule_retrieval_request.filters, topics: [] } } } },
+  );
+  assert.equal(attachedFloorNoTopics.rag.cards.length, 2);
+  assert.equal(attachedFloorNoTopics.rag.cards[0].knowledge_id, 'strong');
+  assert.equal(attachedFloorNoTopics.rag.cards[1].knowledge_id, 'weak');
+
+  const attachedMultiFloor = await run(
+    'Attach orchestrator RAG evidence',
+    {
+      contract: 'schedule_retrieval_result',
+      status: 'succeeded',
+      results: [
+        {
+          knowledge_id: 'weak-multi',
+          knowledge_type: 'routing_card',
+          target_base: 'orchestrator_routing',
+          title: 'Weak multi',
+          rrf_score: 0.01,
+          branches: ['lexical', 'semantic'],
+          body: { text: 'Достаточно длинный текст карточки маршрутизации чтобы пройти порог длины.' },
+        },
+        {
+          knowledge_id: 'strong-multi',
+          knowledge_type: 'routing_card',
+          target_base: 'orchestrator_routing',
+          title: 'Strong multi',
+          rrf_score: 0.09,
+          branches: ['lexical', 'semantic', 'tag'],
+          body: { text: 'Делегируйте excel_extractor когда есть xlsx и в artifacts есть Excel файл.' },
+        },
+      ],
+    },
     { 'Prepare decision context': prepared },
   );
-  assert.equal(attachedFloor.rag.cards.length, 1);
-  assert.equal(attachedFloor.rag.cards[0].knowledge_id, 'strong');
+  assert.equal(attachedMultiFloor.rag.cards.length, 1);
+  assert.equal(attachedMultiFloor.rag.cards[0].knowledge_id, 'strong-multi');
 
   const resumed = await run('Normalize step request', {
     action: 'resume',
@@ -942,7 +1052,9 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(interpretedRemove.state.hitl.pending, false);
   assert.equal(interpretedRemove.state.hitl.answers.unlisted_wells_policy.choice, 'remove');
   assert.equal(interpretedRemove.state.hitl.answers.unlisted_wells_policy.unlisted_wells_policy, 'remove');
-  assert.equal(interpretedRemove.persist_events[0][2], 'hitl.answered');
+  assert.equal(interpretedRemove.persist_events[0][2], 'trace.llm');
+  assert.equal(JSON.parse(interpretedRemove.persist_events[0][8]).role, 'interpret');
+  assert.equal(interpretedRemove.persist_events[1][2], 'hitl.answered');
 
   const interpretedUnsure = await run(
     'Apply interpreted answer',
@@ -965,9 +1077,10 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(interpretedUnsure.next_status, 'waiting_user');
   assert.equal(interpretedUnsure.state.hitl.pending, true);
   assert.match(String(interpretedUnsure.state.hitl.questions[0].question), /Не удалось однозначно понять ответ/);
-  assert.equal(interpretedUnsure.persist_events[0][2], 'hitl.request');
+  assert.equal(interpretedUnsure.persist_events[0][2], 'trace.llm');
+  assert.equal(interpretedUnsure.persist_events[1][2], 'hitl.request');
   // Developer log: the re-ask carries the execution reference like every other orchestrator event.
-  assert.equal(JSON.parse(interpretedUnsure.persist_events[0][8]).execution_id, 'exec-1');
+  assert.equal(JSON.parse(interpretedUnsure.persist_events[1][8]).execution_id, 'exec-1');
 
   const agentResume = await run(
     'Apply request extras',
@@ -989,6 +1102,9 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(agentResume.next_status, 'running');
   assert.equal(agentResume.persist_events[0][2], 'orchestrator.resume');
   assert.equal(agentResume.persist_events[0][3], 'agent');
+  const resumePayload = JSON.parse(agentResume.persist_events[0][8]);
+  assert.equal(resumePayload.source, 'agent');
+  assert.equal(resumePayload.execution_id, 'exec-1');
   // Phase 4.5: a payload shaped like agent_result is merged exactly like a synchronous result (slot + journal + agent.result).
   assert.equal(agentResume.state.agents.calculation_agent.status, 'completed');
   assert.equal(agentResume.state.agents.calculation_agent.task_id, 'TASK-long');
@@ -1108,11 +1224,12 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(parsed.state.current_task.context, undefined);
   assert.equal(parsed.state.version, 1);
   assert.equal(parsed.next_status, 'running');
-  assert.deepEqual(parsed.events.map((e) => e.kind), ['orchestrator.decision', 'agent.handoff']);
+  assert.deepEqual(parsed.events.map((e) => e.kind), ['trace.rag', 'trace.llm', 'orchestrator.decision', 'agent.handoff']);
   assert.equal(parsed.events.some((e) => e.kind === 'orchestrator.status'), false);
   // Developer log («Лог»): the raw LLM decision and the exact agent_task ride on the events together
   // with the n8n execution reference (this harness mocks $execution.id = exec-1; $workflow is absent → '').
-  const [decisionEv, handoffEv] = parsed.events;
+  const decisionEv = parsed.events.find((e) => e.kind === 'orchestrator.decision');
+  const handoffEv = parsed.events.find((e) => e.kind === 'agent.handoff');
   assert.equal(decisionEv.payload.decision.action.type, 'call_agent');
   assert.equal(decisionEv.payload.decision.action.handoff_message, 'Достань даты');
   assert.deepEqual(decisionEv.payload.decision.action.task.facts, [{ well: '295R', date: '2019-10-01' }], 'what the LLM invented is visible in the log, never in inputs');
@@ -1290,9 +1407,10 @@ async function run(name, json, nodes = {}, binary = {}) {
   // A finish is a decision too: the developer log gets the raw LLM decision as the last step's decision
   // (plan counters, guard, verification); it carries the same status_message as case.finished so the
   // Activity chat collapses the pair into one line.
-  assert.deepEqual(finished.events.map((e) => e.kind), ['orchestrator.decision', 'case.finished']);
+  assert.deepEqual(finished.events.map((e) => e.kind), ['trace.rag', 'trace.llm', 'orchestrator.decision', 'case.finished']);
   {
-    const [finishDecision, finishedEvent] = finished.events;
+    const finishDecision = finished.events.find((e) => e.kind === 'orchestrator.decision');
+    const finishedEvent = finished.events.find((e) => e.kind === 'case.finished');
     assert.equal(finishDecision.payload.action_type, 'finish');
     assert.equal(finishDecision.status_message, finishedEvent.status_message);
     assert.deepEqual(finishDecision.payload.plan, { total: 0, open: 0, accepted: 0, rejected: 0 });
@@ -1417,6 +1535,21 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.match(downOnce.events.find((e) => e.kind === 'case.failed').status_message, /не отвечает/);
   assert.equal(downOnce.events.find((e) => e.kind === 'case.failed').payload.code, 'service_unreachable');
 
+  const llmOnce = await run(
+    'Merge agent result',
+    {
+      status: 'failed',
+      message: 'Модель чата не ответила. Проверьте доступ к модели в настройках среды и перезапустите задачу.',
+      issues: [{ code: 'llm_unavailable' }],
+    },
+    {
+      'Parse decision': parsed,
+      'Prepare agent call': { ...parsed, agent_id: 'excel_extractor', activity_base_url: 'http://activity:8200' },
+    },
+  );
+  assert.equal(llmOnce.next_status, 'failed');
+  assert.equal(llmOnce.events.find((e) => e.kind === 'case.failed').payload.code, 'llm_unavailable');
+
   const execFail = await run(
     'Merge agent result',
     { error: { message: 'Subworkflow failed' } },
@@ -1481,7 +1614,7 @@ async function run(name, json, nodes = {}, binary = {}) {
     // check invented an uncoverable part «получить старый прогнозный schedule» and escalated to review).
     assert.match(prepared.planner_input, /- шаг 0: инженер приложил 1 файл\(ов\): baseline\.inc/);
     assert.ok(!prepared.planner_input.includes('пока ничего не сделано'));
-    const journalSection = prepared.planner_input.slice(0, prepared.planner_input.indexOf('\nТекущее состояние:'));
+    const journalSection = prepared.planner_input.slice(0, prepared.planner_input.indexOf('\nДанные агентов:'));
     assert.ok(!journalSection.includes('schedule_source'), 'journal names files, not artifact roles');
     assert.deepEqual(prepared.compact.journal, { history: [], stall_count: 0, completed_agents: [] });
     // No inputs at all → the journal says so explicitly.
@@ -1594,6 +1727,7 @@ async function run(name, json, nodes = {}, binary = {}) {
     // finish without summary_for_human → summary composed from the journal, never "вызвал агента".
     const finishBare = await decide(prepared, { progress: { goal_satisfied: true, evidence: 'ok' }, status_message: 'Готово', action: { type: 'finish' } });
     assert.match(finishBare.events.find((e) => e.kind === 'case.finished').status_message, /Schedule Builder: Перепривязал 2 скважины/);
+    assert.equal(finishBare.events[finishBare.events.length - 1].kind, 'case.finished');
     // The LLM leaked ids into the engineer-facing summary → the journal summary is shown instead.
     const finishLeaky = await decide(prepared, {
       progress: { goal_satisfied: true, evidence: 'ok' },
@@ -1721,6 +1855,7 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.match(verifySystem, /извлечь данные ≠ построить/);
     assert.match(verifySystem, /План оркестратора — подсказка, не источник требований/);
     assert.match(verifySystem, /пункт плана, которого нет в цели, не делай обязательной частью/);
+    assert.match(verifySystem, /Политика завершения/);
     assert.equal(/excel_extractor|schedule_builder|WCONPROD|Excel/.test(verifySystem), false, 'completion check knows no domain');
     assert.equal(wf.connections['No agent this step'].main[0][0].node, 'Continue loop?', 'a continue step re-enters the loop');
     // Runtime: Excel done, LLM proposes finish, the check says the deliverable is not covered.
@@ -1736,11 +1871,29 @@ async function run(name, json, nodes = {}, binary = {}) {
       status_message: 'Готово',
       action: { type: 'finish', result: { summary_for_human: 'Даты извлечены, прогнозный schedule обновлён.' } },
     };
-    const checkInput = await run('Prepare completion check', { output: falseFinish }, { 'Prepare decision context': preparedExcel, 'Decision LLM': { output: falseFinish } });
+    const checkInput = await run('Prepare completion check', { output: falseFinish }, {
+      'Prepare decision context': preparedExcel,
+      'Decision LLM': { output: falseFinish },
+      'Attach orchestrator RAG evidence': {
+        planner_input: preparedExcel.planner_input,
+        rag: {
+          status: 'ready',
+          cards: [{
+            knowledge_id: 'route-hitl-required-evidence',
+            title: 'Когда спрашивать инженера',
+            topics: ['HITL', 'completion'],
+            text: 'ask_user только за факты, без которых нельзя выбрать агента или продолжить.',
+          }],
+        },
+      },
+    });
     assert.match(checkInput.verify_input, /^Цель:/);
     assert.match(checkInput.verify_input, /excel_extractor → completed: Извлечено фактов: 8/);
     assert.match(checkInput.verify_input, /Предложенный итог оркестратора:\nДаты извлечены, прогнозный schedule обновлён\./);
+    assert.equal(checkInput.verify_input.includes('Данные агентов:'), false, 'the check sees goal + journal + proposal, not the agent dump');
     assert.equal(checkInput.verify_input.includes('Текущее состояние:'), false, 'the check sees goal + journal + proposal, not the raw state dump');
+    assert.match(checkInput.verify_input, /Политика завершения:/);
+    assert.match(checkInput.verify_input, /ask_user только за факты/);
     const rejected = {
       goal_parts: [
         { part: 'новые даты ввода извлечены из Excel', covered: true, evidence: 'шаг 1' },
@@ -1865,11 +2018,12 @@ async function run(name, json, nodes = {}, binary = {}) {
       action: { type: 'call_agent', agent_id: 'excel_extractor', handoff_message: 'Извлеки даты ввода из книги.' },
     };
 
-    // A fresh case: the prompt asks for a plan and explains the vocabulary; no plan → no RAG tags.
+    // A fresh case: the prompt asks for a plan; step 0 topics are roles of agents covered by attached files.
     let prepared = await prepare(baseState);
-    assert.match(prepared.planner_input, /План задачи \(твоя декомпозиция; статусы pending, active, done, blocked, dropped\):\n- план ещё не составлен: составь его в plan_update/);
-    assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, []);
+    assert.match(prepared.planner_input, /План задачи \(твоя декомпозиция; статусы pending, active, done, blocked, dropped\):\n- план ещё не составлен — запиши пункты с идентификатором, заголовком и статусом/);
+    assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, ['excel', 'schedule_source']);
     const system = wf.nodes.find((n) => n.name === 'Build decision chat').parameters.jsCode;
+    assert.match(system, /приоритет над догадкой/);
     assert.match(system, /plan_update/);
     assert.match(system, /Пункт без id отбрасывается/);
     assert.match(system, /finish возможен, только когда в плане нет пунктов pending, active или blocked/);
@@ -1937,7 +2091,7 @@ async function run(name, json, nodes = {}, binary = {}) {
     // The plan is what the Decision LLM and the completion check read next to the journal; titles feed retrieval.
     prepared = await prepare(merged.state);
     assert.match(prepared.planner_input, /План задачи[^\n]*\n- p1 \[done\] Даты ввода скважин из Excel — agent_id: excel_extractor\n- p2 \[pending\] Новый schedule на основе baseline — agent_id: schedule_builder \(после: p1\)\n- p3 \[pending\] Согласование с инженером\n/);
-    assert.ok(prepared.planner_input.indexOf('План задачи') < prepared.planner_input.indexOf('\nТекущее состояние:'), 'plan is inside the slice Prepare verify forwards');
+    assert.ok(prepared.planner_input.indexOf('План задачи') < prepared.planner_input.indexOf('\nДанные агентов:'), 'plan is inside the slice Prepare verify forwards');
     assert.deepEqual(prepared.compact.plan[1], { id: 'p2', title: 'Новый schedule на основе baseline', status: 'pending', agent_id: 'schedule_builder' });
     assert.match(prepared.schedule_retrieval_request.query, /План: Даты ввода скважин из Excel; Новый schedule на основе baseline; Согласование с инженером/);
     // Tag branch (O4 tail): registry roles of the agents named in *open* plan items — p1 is done (excel roles
@@ -1996,10 +2150,10 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.deepEqual(done.events.find((e) => e.kind === 'case.finished').payload.plan.map((p) => p.status), ['done', 'done', 'dropped']);
     // The finish decision is logged like every other decision (last step of the developer log shows
     // «Решение: finish» with the plan counters and the verifier's parts), same message as case.finished.
-    assert.deepEqual(done.events.map((e) => e.kind), ['orchestrator.decision', 'case.finished']);
+    assert.deepEqual(done.events.map((e) => e.kind), ['trace.rag', 'trace.llm', 'trace.llm', 'orchestrator.decision', 'case.finished']);
     assert.deepEqual(decisionPayload(done).plan, { total: 3, open: 0, accepted: 0, rejected: 0 });
     assert.equal(decisionPayload(done).verification.all_covered, true);
-    assert.equal(done.events[0].status_message, done.events[1].status_message);
+    assert.equal(done.events.find((e) => e.kind === 'orchestrator.decision').status_message, done.events.find((e) => e.kind === 'case.finished').status_message);
 
     // A plan item the model closes in the same reply as finish does not block it.
     const stale = { ...merged.state, plan: merged.state.plan.map((p) => (p.id === 'p2' ? { ...p, status: 'active' } : p)) };
@@ -2203,12 +2357,25 @@ async function run(name, json, nodes = {}, binary = {}) {
     const built = await run('Build decision chat', { planner_input: 'Цель: тест' }, { 'Runtime endpoints': { chat_model: 'qwen/qwen3.6-27b', chat_base_url: 'https://openrouter.ai/api/v1' } });
     assert.equal(built.chat_request.reasoning.enabled, false);
     assert.equal(built.chat_request.enable_thinking, false);
+    assert.equal(built.chat_request.chat_template_kwargs.enable_thinking, false);
+    assert.equal(built.chat_request.temperature, 0.2);
+    assert.equal(built.chat_request.top_p, 0.9);
     assert.equal(built.chat_request.model, 'qwen/qwen3.6-27b');
     assert.equal(built.chat_request.response_format.type, 'json_object');
     assert.equal(built.chat_url, 'https://openrouter.ai/api/v1/chat/completions');
     assert.equal(Object.prototype.hasOwnProperty.call(built.chat_request, 'reasoning_effort'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(built.chat_request, 'max_tokens'), false);
     assert.match(built.chat_request.messages[0].content, /plan_update/);
+    const builtExtra = await run('Build decision chat', { planner_input: 'Цель: тест' }, { 'Runtime endpoints': { chat_model: 'qwen/qwen3.6-27b', chat_base_url: 'https://openrouter.ai/api/v1', chat_extra_params: '{"top_k":11,"messages":[]}' } });
+    assert.equal(builtExtra.chat_request.top_k, 11);
+    assert.equal(builtExtra.chat_request.messages.length, 2);
+    assert.equal(builtExtra.chat_request.reasoning.enabled, false);
+    const builtVerify = await run('Build verify chat', { verify_input: 'Цель: тест' }, { 'Runtime endpoints': { chat_model: 'qwen/qwen3.6-27b', chat_base_url: 'https://openrouter.ai/api/v1' } });
+    assert.equal(builtVerify.chat_request.temperature, 0.2);
+    assert.equal(builtVerify.chat_request.chat_template_kwargs.enable_thinking, false);
+    const builtInterpret = await run('Build interpret chat', { interpret_input: 'Цель: тест' }, { 'Runtime endpoints': { chat_model: 'qwen/qwen3.6-27b', chat_base_url: 'https://openrouter.ai/api/v1' } });
+    assert.equal(builtInterpret.chat_request.temperature, 0.2);
+    assert.equal(builtInterpret.chat_request.enable_thinking, false);
     const httpFail = await run('Decision LLM', { error: 'URL parameter must be a string, got undefined' });
     assert.equal(httpFail.error, 'URL parameter must be a string, got undefined');
     const formatted = await run('Decision LLM', {
@@ -2283,6 +2450,52 @@ async function run(name, json, nodes = {}, binary = {}) {
     );
     assert.equal(afterRework.action_type, 'call_agent');
     assert.equal(afterRework.agent_task.inputs.rework_reason, 'Обновите schedule по извлечённым датам ввода');
+  }
+
+  {
+    // O25/R9: every decision persist carries llm+rag; the same step writes trace.rag / trace.llm.
+    const prepared = await run('Prepare decision context', {}, {
+      'Apply request extras': {
+        case_id: 'CASE-OBS',
+        action: 'run',
+        state: { goal: 'Сдвинуть даты ввода', status: 'running', step_count: 0, version: 1, artifacts: {}, data: {}, hitl: { pending: false, questions: [], answers: {} }, plan: [] },
+        next_status: 'running',
+      },
+      'Load case': { case_id: 'CASE-OBS', state: JSON.stringify({ goal: 'Сдвинуть даты ввода', status: 'running', step_count: 0, version: 1, artifacts: {}, data: {}, hitl: { pending: false, questions: [], answers: {} }, plan: [] }), status: 'running' },
+      'Load agent registry': [{ agent_id: 'excel_extractor', title: 'Excel', when_to_use: 'книги', input_required: [], output_provides: ['facts'], enabled: true }],
+      'Runtime endpoints': { activity_base_url: 'http://mas-activity:8200', max_steps: '12' },
+    });
+    const parsed = await run(
+      'Parse decision',
+      { output: { progress: { goal_satisfied: false, evidence: 'нет', missing: 'даты' }, status_message: 'Сначала извлеку даты из Excel.', action: { type: 'call_agent', agent_id: 'excel_extractor', handoff_message: 'Извлеки даты.' } } },
+      {
+        'Prepare decision context': prepared,
+        'Decision LLM': {
+          output: { progress: { goal_satisfied: false, evidence: 'нет', missing: 'даты' }, status_message: 'Сначала извлеку даты из Excel.', action: { type: 'call_agent', agent_id: 'excel_extractor', handoff_message: 'Извлеки даты.' } },
+          llm_parse: { finish_reason: 'stop', prompt_tokens: 100, completion_tokens: 20, reasoning_tokens: 0 },
+        },
+        'Attach orchestrator RAG evidence': {
+          rag: { status: 'ready', cards: [{ knowledge_id: 'route-mas-thin-orchestrator', rrf_score: 0.016, branches: ['semantic'] }], findings: [] },
+          schedule_retrieval_request: { query: 'Сдвинуть даты ввода', filters: { target_base: 'orchestrator_routing' } },
+        },
+        'Build decision chat': { chat_request: { model: 'qwen/qwen3.6-27b', messages: [{ role: 'system', content: 'x' }] } },
+      },
+    );
+    const payload = parsed.events.find((e) => e.kind === 'orchestrator.decision').payload;
+    assert.equal(payload.llm.finish_reason, 'stop');
+    assert.equal(payload.llm.prompt_tokens, 100);
+    assert.equal(payload.llm.completion_tokens, 20);
+    assert.equal(payload.rag.status, 'ready');
+    assert.equal(payload.rag.cards[0].knowledge_id, 'route-mas-thin-orchestrator');
+    assert.equal(parsed.events.some((e) => e.kind === 'trace.rag' && e.payload.status === 'ready'), true);
+    assert.equal(parsed.events.some((e) => e.kind === 'trace.llm' && e.payload.role === 'decision'), true);
+    assert.deepEqual(parsed.events.map((e) => e.kind).slice(0, 3), ['trace.rag', 'trace.llm', 'orchestrator.decision']);
+    assert.ok(parsed.events.findIndex((e) => e.kind === 'agent.handoff') > parsed.events.findIndex((e) => e.kind === 'orchestrator.decision'));
+    const llmPreview = parsed.events.find((e) => e.kind === 'trace.llm' && e.payload.role === 'decision').payload.prompt_preview;
+    assert.equal(Array.isArray(llmPreview.messages), true);
+    assert.equal(llmPreview.messages[0].role, 'system');
+    assert.equal(parsed.persist_events.some((row) => row[2] === 'trace.rag'), true);
+    assert.equal(parsed.persist_events.some((row) => row[2] === 'trace.llm'), true);
   }
 
   assert.equal(err.name, 'Error — MAS Node Traces');

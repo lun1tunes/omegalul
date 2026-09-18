@@ -524,8 +524,11 @@ def patch_nodes(nodes, name_to_id: dict[str, str], env: dict[str, str]) -> int:
                     changed += 1
                 elif ctype == "openAiApi":
                     qwen_id = str(env.get("_N8N_QWEN_CRED_ID") or "").strip()
+                    params = node.get("parameters") if isinstance(node.get("parameters"), dict) else {}
                     is_chat = node.get("type") == "@n8n/n8n-nodes-langchain.lmChatOpenAi"
-                    if qwen_id and (is_chat or "qwen" in cname.lower()):
+                    is_embed = node.get("type") == "@n8n/n8n-nodes-langchain.embeddingsOpenAi"
+                    is_openai_http = node.get("type") == "n8n-nodes-base.httpRequest" and str(params.get("nodeCredentialType") or "") == "openAiApi"
+                    if qwen_id and (is_chat or is_embed or is_openai_http or "qwen" in cname.lower()):
                         meta["id"] = qwen_id
                         meta["name"] = "Qwen OpenAI-compatible"
                     else:

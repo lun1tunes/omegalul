@@ -45,6 +45,7 @@ assert.deepEqual(fields, {
   max_steps: '12',
   chat_model: 'qwen/qwen3.6-27b',
   chat_base_url: 'https://openrouter.ai/api/v1',
+  chat_extra_params: '{}',
   agent_workflow_ids: '{}',
   mas_version: masVersion,
 });

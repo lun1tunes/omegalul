@@ -14,17 +14,18 @@ SYSTEM = """Ты — инженер-решатель агента Schedule Build
 Какой инструмент когда:
 - Задача про НОВЫЕ ДАТЫ ВВОДА скважин (Excel «скважина — дата», fact_count > 0) → apply_commissioning. Факты, решение по скважинам вне Excel и параметры новых скважин уже в сессии — аргументов не нужно. Другие apply_* для такой задачи не вызывай.
 - Задача про ГРУППЫ (поместить скважины в группу, групповой контроль GCONPROD) → inspect_schedule (имена скважин, дерево GRUPTREE), затем apply_group_rebind с полным spec: wells, parent_group, parent_of_parent, control (ORAT/WRAT/GRAT/LRAT/RESV), gas_rate числом в м3/сут («200 тыс. м3 газа в сут.» → 200000). Родителя новой группы бери из дерева исходного файла (корень — FIELD или как в inspect), если инженер не сказал иначе.
-- В сессии есть именованные наборы (dataset_count > 0, не пары «скважина — дата ввода»): inspect_dataset по имени → search_keywords / get_keyword (имя keyword только из каталога и retrieved knowledge) → apply_dataset с field_map (поле набора → параметр keyword из get_keyword.details.parameters). Сопоставление полей — твоё, по смыслу набора и схемы; не выдумывай keyword и не подставляй пустые значения. apply_commissioning сюда не подходит.
-- Точечные правки режимов/keywords без набора → search_keywords → get_keyword (details.parameters) → apply_operations или render_ir.
+- В сессии есть именованные наборы (dataset_count > 0, не пары «скважина — дата ввода»): inspect_dataset по имени → retrieve_knowledge (query — смысл набора, keywords — имя keyword) → get_keyword → apply_dataset с field_map. retrieve_knowledge не пропускай: стартовый срез — краткие summary чужих keyword, полный when-to-use только из retrieve. Нет поля даты в наборе — не спрашивай инженера про дату; apply_dataset без date_field обновляет существующие записи скважины. inspect_schedule и search_keywords не вызывай, если retrieve + get_keyword уже дали keyword и поля. Не выдумывай keyword и не подставляй пустые значения. apply_commissioning сюда не подходит.
+- Точечные правки режимов/keywords без набора: если keyword нет в текущих карточках — retrieve_knowledge, затем get_keyword (details.parameters) → apply_operations или render_ir. search_keywords — только если retrieve пуст.
 - inspect_well / analyze_forecast_controls / list_records — чтобы посмотреть скважину перед правкой. Не вызывай их «на всякий случай» и не больше трёх раз подряд.
 - build_schedule — только если apply уже менял сессию; validate_result — проверки emit.
-- ask_engineer — единственный способ спросить инженера. Только когда данных нет ни в задаче, ни в исходном файле, ни в ответах инженера (engineer_answers), ни в наборе. Один вопрос обычной русской фразой: что нужно и зачем; варианты (options) — как их называет инженер: имена групп из исходного файла, «оставить»/«убрать». Никаких имён полей, JSON, enum, кодов. Инженер отвечает фактами, таблицами и файлами — не строками .INC.
+- ask_engineer — единственный способ спросить инженера. Только когда данных нет ни в задаче, ни в исходном файле, ни в ответах инженера (engineer_answers), ни в наборе. Не спрашивай дату шага, если в наборе нет поля даты. Один вопрос обычной русской фразой: что нужно и зачем; варианты (options) — как их называет инженер: имена групп из исходного файла, «оставить»/«убрать». Никаких имён полей, JSON, enum, кодов. Инженер отвечает фактами, таблицами и файлами — не строками .INC.
 
 Ответы инструментов:
 - ok:false, code:spec_incomplete — это тебе, не инженеру: заполни missing из текста задачи, inspect_schedule и inspect_dataset (where_to_find подсказывает откуда) и вызови инструмент снова. Спрашивай инженера, только если данных действительно нет.
 - ok:false, code:dataset_values_missing — в наборе пустые обязательные поля: спроси инженера через ask_engineer, не подставляй значения сам.
 - ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.
 - ok:false, code:well_not_in_schedule / operations_required / unknown_dataset / unknown_keyword — ошибка твоего вызова; исправь аргументы.
+- ok:false, code:knowledge_required — сначала retrieve_knowledge (query и keywords набора), затем get_keyword, затем apply_dataset.
 - ok:false, code:result_already_stored — результат этого запуска уже зафиксирован (apply или вопрос инженеру). Больше инструменты не вызывай, заверши ответ.
 - status completed или needs_input от apply_* / ask_engineer — результат зафиксирован. STOP: не вызывай build и другие apply.
 
@@ -36,7 +37,7 @@ SYSTEM = """Ты — инженер-решатель агента Schedule Build
 - apply_operations принимает JSON-массив [{keyword, operation, fields}], не объект с ключами "0","1".
 - Если analyze_forecast_controls вернул needs_input по границе history/forecast — не применяй операцию, спроси инженера.
 - rework_reason в задаче — замечание оркестратора к прошлому результату: устрани именно его.
-- Retrieved knowledge — только срез schedule_mvp (keyword_instruction / worked_example): when-to-use и pitfalls. Расклад полей — из get_keyword.details / render_ir. Пустой или unavailable срез — работай инструментами, не спрашивай про базу знаний.
+- Retrieved knowledge — срез schedule_mvp (keyword_instruction / worked_example): стартовый Attach — краткие summary. Перед apply_dataset всегда retrieve_knowledge, затем get_keyword. Нет даты в наборе — не спрашивай HITL про дату шага, date_field не передавай. Перед первым apply_operations / render_ir по keyword, которого нет в карточках, — тоже retrieve_knowledge. apply_commissioning для дат ввода — без retrieve. Расклад полей — get_keyword.details. Пустой или unavailable срез — работай инструментами, не спрашивай про базу знаний.
 
 Заверши одним коротким фактическим предложением по-русски о том, что сделано или чего не хватило.
 """
@@ -83,12 +84,12 @@ TOOLS = [
     ),
     (
         "apply_dataset",
-        "Записать именованный набор в SCHEDULE. Keyword — из search_keywords/get_keyword/карточки знаний, не выдумывать. field_map — поле набора → параметр схемы. Пустые значения не подставляй.",
+        "Записать именованный набор в SCHEDULE. Keyword — из retrieve_knowledge/get_keyword, не выдумывать. field_map — поле набора → параметр схемы. Пустые значения не подставляй.",
         [
             ("dataset", "string", True, "Имя набора из inspect_dataset / open_session.datasets"),
-            ("keyword", "string", True, "Имя keyword из каталога (search_keywords / get_keyword)"),
+            ("keyword", "string", True, "Имя keyword из retrieve_knowledge / get_keyword"),
             ("field_map", "json", True, "Объект: поле набора → параметр keyword из get_keyword.details.parameters"),
-            ("date_field", "string", False, "Поле набора с датой шага DATES, если строки привязаны к дате исходного файла; пусто — обновить существующие записи скважины"),
+            ("date_field", "string", False, "Поле набора с датой шага DATES, только если в строках есть дата; пусто/не передавай — обновить существующие записи скважины, не спрашивать инженера про дату"),
         ],
     ),
     (
@@ -170,17 +171,41 @@ SPEC = AgentSpec(
     rag_ready_note=(
         "Карточки — срез schedule_mvp (keyword_instruction / worked_example), "
         "не excel_protocol и не orchestrator_routing. "
-        "Это when-to-use и pitfalls. Расклад полей — get_keyword.details / render_ir, "
-        "не schema_catalogue из RAG."
+        "Стартовый срез — краткие summary (when-to-use). "
+        "Перед apply_dataset — retrieve_knowledge (полный текст), затем get_keyword.details. "
+        "Не schema_catalogue из RAG."
     ),
     rag_empty_note=(
         "Срез schedule_mvp пуст или недоступен — работай инструментами. "
         "Не спрашивай HITL про RAG и не ходи в другие target_base."
     ),
-    # Keyword families / topics narrow the RAG slice to the cards about the keywords the task names.
+    # Keyword families from session inventory (inspect + expected datasets), not from task-text regex.
     retrieval_filters_js="const ALLOWED_KEYWORDS=" + json.dumps(SCHEDULE_KEYWORDS) + ";\n" + r"""
 const allowed=new Set(ALLOWED_KEYWORDS);
-for(const k of (blob.match(/\b[A-Z][A-Z0-9_]{2,}\b/g)||[])) if(allowed.has(k)) keyword_families.push(k);
+const inspect=opened.inspect&&typeof opened.inspect==='object'?opened.inspect:{};
+const expected=opened.expected_output&&typeof opened.expected_output==='object'?opened.expected_output:((task.inputs&&task.inputs.expected_output&&typeof task.inputs.expected_output==='object')?task.inputs.expected_output:{});
+const ranked=[];
+const seenKw=new Set();
+function addKw(raw){
+  const k=String(raw||'').trim().toUpperCase();
+  if(!k||!allowed.has(k)||seenKw.has(k)) return;
+  seenKw.add(k);
+  ranked.push(k);
+}
+function walkDataset(v){
+  if(!v) return;
+  if(typeof v==='string'){ addKw(v); return; }
+  if(Array.isArray(v)){ v.forEach(walkDataset); return; }
+  if(typeof v==='object'){
+    addKw(v.name);
+    if(Array.isArray(v.keywords)) v.keywords.forEach(addKw);
+    if(Array.isArray(v.fields)) v.fields.forEach((f)=>{ if(f&&typeof f==='object') addKw(f.name); else addKw(f); });
+  }
+}
+walkDataset(expected.datasets);
+walkDataset(opened.datasets);
+for(const k of (Array.isArray(inspect.keywords_present)?inspect.keywords_present:[])) addKw(k);
+keyword_families.push(...ranked.slice(0,6));
 """,
     planner_extra_js=(
         "fact_count:opened.fact_count||0,\n"

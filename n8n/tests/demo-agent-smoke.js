@@ -4,7 +4,7 @@
  * for the FastAPI service in agents-template/demo_agent (mas-agent-kit).
  *
  * Proves the "add an agent" recipe end to end at the JSON level:
- *  - the workflow has the same shape as the production agents (trigger → open_session → AI Agent + tools → result),
+ *  - the workflow has the same shape as the production agents (trigger → open_session → HTTP chat loop → result),
  *  - the registry seed carries the row (enabled=false) with the workflow id — the orchestrator is not touched,
  *  - Runtime Config has the service URL field, the Health Check does not require a disabled agent,
  *  - a long job (tool start_long_job → status in_progress) is passed through to the orchestrator unchanged.
@@ -29,28 +29,30 @@ assert.equal(wf.active, false);
 assert.equal(wf.nodes.some((n) => n.type === 'n8n-nodes-base.webhook'), false, 'sub-workflow, no webhook');
 const trigger = wf.nodes.find((n) => n.type === 'n8n-nodes-base.executeWorkflowTrigger');
 assert.ok(trigger && trigger.typeVersion === 1.2);
-const agent = wf.nodes.find((n) => n.name === 'Demo Agent AI Agent');
-assert.equal(agent.type, '@n8n/n8n-nodes-langchain.agent');
-assert.equal(agent.parameters.text, '={{ $json.planner_input }}');
-const chat = wf.nodes.find((n) => n.type === '@n8n/n8n-nodes-langchain.lmChatOpenAi');
+assert.equal(wf.nodes.some((n) => n.type === '@n8n/n8n-nodes-langchain.agent'), false, 'http_loop: no LangChain agent');
+assert.equal(wf.nodes.some((n) => n.type === '@n8n/n8n-nodes-langchain.lmChatOpenAi'), false, 'http_loop: no Chat Model');
+assert.equal(wf.nodes.some((n) => n.type === 'n8n-nodes-base.httpRequestTool'), false);
+assert.equal(wf.nodes.some((n) => n.type === '@n8n/n8n-nodes-langchain.toolHttpRequest'), false);
+const chat = wf.nodes.find((n) => n.name === 'Demo Agent Agent chat');
 assert.ok(chat);
-assert.equal(chat.parameters.model.value, 'qwen/qwen3.6-27b');
-assert.equal('maxTokens' in (chat.parameters.options || {}), false);
+assert.equal(chat.type, 'n8n-nodes-base.httpRequest');
+assert.equal(chat.parameters.nodeCredentialType, 'openAiApi');
 assert.equal(chat.parameters.options.timeout, 600000);
 assert.equal(wf.settings.executionTimeout, 1800);
-assert.equal(wf.nodes.some((n) => n.type === '@n8n/n8n-nodes-langchain.toolHttpRequest'), false, 'tools are httpRequestTool 4.4');
-const tools = wf.nodes.filter((n) => n.type === 'n8n-nodes-base.httpRequestTool').map((n) => n.name).sort();
-assert.deepEqual(tools, ['ask_engineer', 'count_wells', 'start_long_job']);
-for (const name of tools) {
+function sourceCode(name) {
   const node = wf.nodes.find((n) => n.name === name);
-  assert.match(String(node.parameters.url), /demo_agent_url/, `${name} reads the service URL from Runtime Config`);
-  assert.match(String(node.parameters.url), new RegExp(`/agent-tools/' \\+ "${name}"`), `${name} → POST /agent-tools/${name}`);
-  assert.match(String(node.parameters.jsonBody), /session_id/, `${name} carries the session id`);
+  assert.ok(node && node.parameters && node.parameters.jsCode, name);
+  return node.parameters.jsCode;
 }
-const system = agent.parameters.options.systemMessage;
-assert.match(system, /count_wells/);
-assert.match(system, /start_long_job/);
-assert.equal(/excel_extractor|schedule_builder/.test(system), false, 'the demo prompt knows nothing about other agents');
+const buildJs = sourceCode('Build chat request');
+assert.match(buildJs, /count_wells/);
+assert.match(buildJs, /start_long_job/);
+assert.match(buildJs, /retrieve_knowledge/);
+assert.equal(/excel_extractor|schedule_builder/.test(buildJs), false, 'the demo prompt knows nothing about other agents');
+assert.equal(wf.connections['Restore after Demo Agent RAG'].main[0][0].node, 'Build chat request');
+assert.equal(wf.connections['Agent loop router'].main[3][0].node, 'Summarize AI steps');
+assert.equal(wf.connections['Restore after AI tools'].main[0][0].node, 'Fetch demo result');
+assert.equal(wf.connections['Fetch demo result'].main[0][0].node, 'Format demo result');
 for (const node of wf.nodes.filter((n) => n.type === 'n8n-nodes-base.httpRequest')) {
   assert.equal(String(node.parameters.url).includes('demo-agent:8300'), false, `${node.name}: no Compose DNS in runtime nodes`);
 }
@@ -96,19 +98,14 @@ assert.ok(manifest.full_clean_import_set.includes('workflows/support/demo-agent.
 assert.equal(manifest.runtime_import_order.some((p) => p.includes('demo-agent')), false, 'optional: not in the field runtime order');
 
 // -- Code nodes: the long job flows through as in_progress ----------------------------------------
-function sourceCode(name) {
-  const node = wf.nodes.find((n) => n.name === name);
-  assert.ok(node && node.parameters && node.parameters.jsCode, name);
-  return node.parameters.jsCode;
-}
 async function run(name, json, nodes = {}) {
   const lookup = (nodeName) => {
     if (!Object.prototype.hasOwnProperty.call(nodes, nodeName)) throw new Error(`node not executed: ${nodeName}`);
     const items = [{ json: nodes[nodeName] }];
-    return { first: () => items[0], all: () => items };
+    return { first: () => items[0], last: () => items[0], all: () => items, item: items[0] };
   };
   const fn = new AsyncFunction('$json', '$', '$input', sourceCode(name));
-  const result = await fn(json, lookup, { first: () => ({ json }), all: () => [{ json }] });
+  const result = await fn(json, lookup, { first: () => ({ json }), last: () => ({ json }), all: () => [{ json }], item: { json } });
   assert.ok(Array.isArray(result) && result[0]?.json);
   return result[0].json;
 }
@@ -117,10 +114,11 @@ async function run(name, json, nodes = {}) {
   const opened = { task_id: 'TASK-7', session_id: 'demo_1' };
   const longJob = await run(
     'Summarize AI steps',
-    { output: 'Запустил демонстрационный расчёт.', intermediateSteps: [{ action: { tool: 'start_long_job' } }] },
+    { llm_final_text: 'Запустил демонстрационный расчёт.', tool_log: ['start_long_job'], iteration: 2 },
     { 'Open demo session': opened },
   );
-  assert.equal(longJob.skip_fetch, false, 'start_long_job stored a result — fetch it');
+  assert.equal(longJob.total_calls, 1);
+  assert.ok(longJob.tools_used.includes('start_long_job'));
   const fetched = await run(
     'Format demo result',
     {
@@ -150,9 +148,9 @@ async function run(name, json, nodes = {}) {
   assert.equal('watch' in completed, false, 'no watch key when the agent did not send one');
 
   const noResult = await run(
-    'Summarize AI steps',
-    { output: 'Не понял задачу.', intermediateSteps: [] },
-    { 'Open demo session': opened },
+    'Format demo result',
+    {},
+    { 'Open demo session': opened, 'Summarize AI steps': { llm_final_text: 'Опишите задачу одним-двумя предложениями.' } },
   );
   assert.equal(noResult.status, 'needs_input');
   assert.match(noResult.requests[0].question, /Опишите задачу/);
@@ -169,6 +167,16 @@ async function run(name, json, nodes = {}) {
   assert.equal(down.issues[0].code, 'service_unreachable');
   assert.match(down.message, /Demo Agent/);
   assert.equal(MACHINE.test(down.message), false, down.message);
+
+  const llmDown = await run(
+    'Format demo result',
+    {},
+    { 'Open demo session': opened, 'Summarize AI steps': { llm_final_text: '', llm_unavailable: true } },
+  );
+  assert.equal(llmDown.status, 'failed');
+  assert.equal(llmDown.issues[0].code, 'llm_unavailable');
+  assert.match(llmDown.message, /Модель чата не ответила/);
+  assert.equal(MACHINE.test(llmDown.message), false, llmDown.message);
 
   console.log('demo-agent-smoke: ok');
 })().catch((err) => {

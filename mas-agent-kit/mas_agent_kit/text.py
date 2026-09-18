@@ -46,11 +46,11 @@ def human_text_problems(text: Any, *, min_length: int = 12) -> list[str]:
 
 
 def option_problems(options: list[dict[str, str]]) -> list[str]:
-    """Option labels are short by nature — only the machine-token / language checks apply."""
+    """Option labels may be short; they still need Russian prose (value may be FIELD)."""
     out: list[str] = []
     for opt in options:
-        for problem in human_text_problems(opt.get("label", "")):
-            if "коротко" in problem or "по-русски" in problem:
+        for problem in human_text_problems(opt.get("label", ""), min_length=1):
+            if "коротко" in problem:
                 continue
             out.append(f"вариант «{opt.get('label', '')}»: {problem}")
     return out

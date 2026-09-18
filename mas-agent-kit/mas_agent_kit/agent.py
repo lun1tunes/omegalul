@@ -41,6 +41,7 @@ from .packet import CasePacket
 from .result import agent_result, needs_input
 from .session import SessionStore
 from .tools import ToolRegistry
+from .view import tool_model_view
 
 #: ``next_step`` the model reads after a tool fixed the session result — who acts next, so it stops.
 RESULT_NEXT_STEP: dict[str, str] = {
@@ -175,6 +176,15 @@ class AgentService:
             view["next_step"] = hint
         return view
 
+    def tool_view(self, tool_name: str, result: dict[str, Any]) -> dict[str, Any]:
+        """HTTP body the LLM loop appends as a tool message: valid JSON, size-bounded.
+
+        ``clip(body, 8000)`` in n8n cut ``get_keyword`` mid-object (WCONHIST ~22K). Bound
+        the tree here; the loop stringifies it without a character clip. Override per tool
+        if a service needs a different slice.
+        """
+        return tool_model_view(result)
+
 
 def agent_router(agent: AgentService, *, dependencies: list[Any] | None = None) -> APIRouter:
     router = APIRouter(dependencies=dependencies or [])
@@ -206,7 +216,7 @@ def agent_router(agent: AgentService, *, dependencies: list[Any] | None = None) 
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         agent.trace_tool(state, tool_name, args, result, int((time.monotonic() - started) * 1000))
         agent.after_tool(state, tool_name, result)
-        return result
+        return agent.tool_view(tool_name, result)
 
     @router.get("/sessions/{session_id}/result")
     def session_result(session_id: str) -> dict[str, Any]:

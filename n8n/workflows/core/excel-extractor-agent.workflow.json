@@ -6,7 +6,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + FastAPI tools (сгенерировано из `agents/excel_extractor.py`).\n\n1. Bind **Qwen** credential on Excel Extractor Chat Model — Qwen\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (поле `excel_tools_url` = URL сервиса).\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `excel_protocol`).\n4. Оркестратор вызывает этот workflow через универсальный `Call agent (n8n)` по id из `agent_registry.invoke`. После импорта через UI id меняется — впишите новый id (из URL этого workflow) в `MAS — Runtime Config` → `agent_workflow_ids`.\n5. Settings → **Error workflow** = `Error — MAS Node Traces` (после импорта через UI ссылка по id теряется): упавший узел попадёт в лог кейса (Activity → Режим разработчика → Лог).\n\nИнструмент выбирает LLM по задаче (нет regex-роутера). Вопрос инженеру — только `ask_engineer` прозой с вариантами; ошибки аргументов возвращаются LLM, не человеку. Результат читается из GET /sessions/{id}/result, сессия закрывается POST /sessions/{id}/close.",
+        "content": "## edit after import\n\n**Agent — Excel Extractor** — один LLM + FastAPI tools (сгенерировано из `agents/excel_extractor.py`).\n\n1. Bind **Qwen** credential on **Excel Extractor Agent chat** (тот же OpenAI-compatible, что у Decision chat оркестратора).\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (поле `excel_tools_url` = URL сервиса).\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `excel_protocol`).\n4. Оркестратор вызывает этот workflow через универсальный `Call agent (n8n)` по id из `agent_registry.invoke`. После импорта через UI id меняется — впишите новый id (из URL этого workflow) в `MAS — Runtime Config` → `agent_workflow_ids`.\n5. Settings → **Error workflow** = `Error — MAS Node Traces` (после импорта через UI ссылка по id теряется): упавший узел попадёт в лог кейса (Activity → Режим разработчика → Лог).\n\nИнструмент выбирает LLM по задаче (нет regex-роутера). Вопрос инженеру — только `ask_engineer` прозой с вариантами; ошибки аргументов возвращаются LLM, не человеку. Результат читается из GET /sessions/{id}/result, сессия закрывается POST /sessions/{id}/close.",
         "height": 380,
         "width": 480,
         "color": 1
@@ -17,7 +17,7 @@
       "typeVersion": 1,
       "position": [
         -40,
-        -950
+        -695
       ]
     },
     {
@@ -275,13 +275,13 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5600,
+        7280,
         0
       ]
     },
     {
       "parameters": {
-        "jsCode": "const RAG_TARGET_BASE=\"excel_protocol\";\nconst RAG_ACCESS_SCOPE=\"petroleum-engineering\";\nconst RAG_KNOWLEDGE_TYPES=[\"protocol_instruction\"];\nconst RAG_TOP_K=8;\nconst RAG_TOPICS=[\"протокол\", \"clarification\"];\nconst opened=$json||{};\nconst task=$('Normalize excel task').first().json.agent_task||{};\nconst objective=String(opened.objective||task.objective||'');\nconst handoff=String(opened.handoff_message||task.handoff_message||'');\nconst blob=[objective,handoff].join('\\n');\nconst low=blob.toLowerCase();\n// Retrieval filters. Hints below only narrow the RAG slice — they never pick a tool.\nconst keyword_families=[];\nconst topics=RAG_TOPICS.slice();\nconst task_patterns=[];\nif(/дат|ввод|commission/.test(low)) task_patterns.push('даты ввода');\nif(/таблиц|query|дебит|истори|управлен/.test(low)) task_patterns.push('извлечь таблицу');\nif(/уточн|ambigu|clarif/.test(low)) task_patterns.push('clarification_needed');\nconst query=blob.trim().replace(/\\b[\\w.-]+\\.(xlsx|xls|xlsm|inc|dev|txt|csv)\\b/gi,' ').replace(/\\s+/g,' ').trim().slice(0,800)||\"excel_protocol instruction\";\nconst retrieval_selector={target_base:RAG_TARGET_BASE,knowledge_types:RAG_KNOWLEDGE_TYPES};\nconst schedule_retrieval_request={\n  query,\n  filters:{target_base:RAG_TARGET_BASE,access_scope:RAG_ACCESS_SCOPE,knowledge_types:RAG_KNOWLEDGE_TYPES,keyword_families:[...new Set(keyword_families)].slice(0,6),topics:[...new Set(topics)],task_patterns:[...new Set(task_patterns)]},\n  top_k:RAG_TOP_K\n};\n// The LLM decides which tool fits: task text + what open_session found + what the engineer already answered.\nconst engineerAnswers=Array.isArray(opened.engineer_answers)?opened.engineer_answers:[];\nconst reworkReason=String(opened.rework_reason||(task.inputs&&task.inputs.rework_reason)||'').trim();\nconst planner_input=JSON.stringify({\n  objective,\n  handoff_message:handoff,\n  inspect:opened.inspect||{},\n  files:Array.isArray(opened.files)?opened.files:[],\n  engineer_answers:engineerAnswers,\n  ...(reworkReason?{rework_reason:reworkReason}:{}),\n  ...(opened.expected_output&&typeof opened.expected_output==='object'&&Object.keys(opened.expected_output).length?{expected_output:opened.expected_output}:{})\n});\nreturn [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];\n"
+        "jsCode": "const RAG_TARGET_BASE=\"excel_protocol\";\nconst RAG_ACCESS_SCOPE=\"petroleum-engineering\";\nconst RAG_KNOWLEDGE_TYPES=[\"protocol_instruction\"];\nconst RAG_TOP_K=8;\nconst RAG_TOPICS=[\"протокол\"];\nconst opened=$json||{};\nconst task=$('Normalize excel task').first().json.agent_task||{};\nconst objective=String(opened.objective||task.objective||'');\nconst handoff=String(opened.handoff_message||task.handoff_message||'');\nconst blob=[objective,handoff].join('\\n');\nconst low=blob.toLowerCase();\n// Retrieval filters from inspect / expected_output (spec JS). Task text is query only.\nconst keyword_families=[];\nconst topics=RAG_TOPICS.slice();\nconst task_patterns=[];\nconst inspect=opened.inspect&&typeof opened.inspect==='object'?opened.inspect:{};\nconst expected=opened.expected_output&&typeof opened.expected_output==='object'?opened.expected_output:((task.inputs&&task.inputs.expected_output&&typeof task.inputs.expected_output==='object')?task.inputs.expected_output:{});\nfor(const t of (Array.isArray(inspect.tables)?inspect.tables:[])){\n  const kind=String(t&&t.kind||'').trim();\n  if(kind) task_patterns.push(kind);\n}\nfor(const d of (Array.isArray(expected.datasets)?expected.datasets:[])){\n  const name=String(d&&d.name||'').trim();\n  if(name) task_patterns.push(name);\n}\nconst query=blob.trim().replace(/\\b[\\w.-]+\\.(xlsx|xls|xlsm|inc|dev|txt|csv)\\b/gi,' ').replace(/\\s+/g,' ').trim().slice(0,800)||\"excel_protocol instruction\";\nconst retrieval_selector={target_base:RAG_TARGET_BASE,knowledge_types:RAG_KNOWLEDGE_TYPES};\nconst schedule_retrieval_request={\n  query,\n  filters:{target_base:RAG_TARGET_BASE,access_scope:RAG_ACCESS_SCOPE,knowledge_types:RAG_KNOWLEDGE_TYPES,keyword_families:[...new Set(keyword_families)].slice(0,6),topics:[...new Set(topics)],task_patterns:[...new Set(task_patterns)]},\n  top_k:RAG_TOP_K\n};\n// The LLM decides which tool fits: task text + what open_session found + what the engineer already answered.\nconst engineerAnswers=Array.isArray(opened.engineer_answers)?opened.engineer_answers:[];\nconst reworkReason=String(opened.rework_reason||(task.inputs&&task.inputs.rework_reason)||'').trim();\nconst planner_input=JSON.stringify({\n  objective,\n  handoff_message:handoff,\n  inspect:opened.inspect||{},\n  files:Array.isArray(opened.files)?opened.files:[],\n  engineer_answers:engineerAnswers,\n  ...(reworkReason?{rework_reason:reworkReason}:{}),\n  ...(opened.expected_output&&typeof opened.expected_output==='object'&&Object.keys(opened.expected_output).length?{expected_output:opened.expected_output}:{})\n});\nreturn [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];\n"
       },
       "id": "2d5a7eba-bd5e-5ccb-895a-b7ca5109b7cc",
       "name": "Prepare AI Agent input",
@@ -328,7 +328,7 @@
     },
     {
       "parameters": {
-        "jsCode": "function unwrapRetrieval(raw){\n  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\n  const src=obj(raw)?raw:{};\n  if(obj(src.schedule_retrieval_result)) return src.schedule_retrieval_result;\n  if(obj(src.body)&&obj(src.body.schedule_retrieval_result)) return src.body.schedule_retrieval_result;\n  if(String(src.contract||'')==='schedule_retrieval_result') return src;\n  if(src.error||Number(src.statusCode)>=400) return {status:'failed',findings:[{code:'RETRIEVAL_CALL_FAILED'}],results:[]};\n  return src;\n}\nfunction compactRetrievalCards(result, selector, limit, textLimit){\n  const rows=Array.isArray(result.results)?result.results:[];\n  const wantedBase=String(selector.target_base||'');\n  const wantedTypes=new Set((selector.knowledge_types||[]).map(v=>String(v).toLowerCase()));\n  const cap=Number(limit)||6;\n  const cut=Number(textLimit)||700;\n  const minText=50;\n  const relKeep=0.45;\n  const scored=[];\n  for(const r of rows){\n    if(!r||typeof r!=='object') continue;\n    const body=r.body&&typeof r.body==='object'?r.body:{};\n    const base=String(r.target_base||body.target_base||(result.filters&&result.filters.target_base)||'');\n    const kt=String(r.knowledge_type||body.knowledge_type||'').toLowerCase();\n    if(wantedBase&&base&&base!==wantedBase) continue;\n    if(wantedTypes.size&&kt&&!wantedTypes.has(kt)) continue;\n    const text=String(body.text||body.instruction||r.text||'').trim();\n    if(text.length<minText) continue;\n    const score=r.rrf_score!=null?Number(r.rrf_score):(body.rrf_score!=null?Number(body.rrf_score):null);\n    if(Number.isFinite(score)&&score<=0) continue;\n    scored.push({\n      knowledge_id:String(r.knowledge_id||body.knowledge_id||''),\n      title:String(r.title||body.title||'').slice(0,160),\n      knowledge_type:kt||null,\n      text:text.slice(0,cut),\n      _score:Number.isFinite(score)?score:null\n    });\n  }\n  const finite=scored.map(c=>c._score).filter(s=>s!=null);\n  const best=finite.length?Math.max.apply(null,finite):0;\n  const floor=best>0?best*relKeep:0;\n  const kept=scored.filter(c=>c._score==null||floor<=0||c._score>=floor);\n  kept.sort((a,b)=>{\n    if(a._score==null&&b._score==null) return 0;\n    if(a._score==null) return 1;\n    if(b._score==null) return -1;\n    return b._score-a._score;\n  });\n  return kept.slice(0,cap).map(c=>({knowledge_id:c.knowledge_id,title:c.title,knowledge_type:c.knowledge_type,text:c.text}));\n}\nconst prev=$(\"Prepare AI Agent input\").first().json||{};\nconst raw=$json||{};\nconst result=unwrapRetrieval(raw);\nconst fallbackSelector={\"target_base\": \"excel_protocol\", \"knowledge_types\": [\"protocol_instruction\"]};\nconst fromPrev=prev.retrieval_selector;\nconst selector=(fromPrev&&fromPrev.target_base)?{target_base:String(fromPrev.target_base),knowledge_types:Array.isArray(fromPrev.knowledge_types)&&fromPrev.knowledge_types.length?fromPrev.knowledge_types:fallbackSelector.knowledge_types}:fallbackSelector;\nconst failed=result.status==='abstain'||result.status==='failed'||result.status==='needs_input'||Boolean(raw.error);\nconst cards=failed?[]:compactRetrievalCards(result,selector,8,1200);\nconst rag={contract:'mas_rag_evidence',contract_version:'1.0',target_base:selector.target_base,knowledge_types:selector.knowledge_types,status:failed?'unavailable':(cards.length?'ready':'empty'),cards,findings:(Array.isArray(result.findings)?result.findings:[]).slice(0,6).map(f=>f&&f.code).filter(Boolean)};\nconst note=rag.status==='ready'?\"Карточки — срез excel_protocol (protocol_instruction), не schedule_mvp и не orchestrator_routing. Это протокол инструментов (opaque id, extract_table / extract_commissioning, query_table только подглядеть). Строки workbook только из Excel-tools. Не спрашивай HITL про базу знаний.\":\"Срез excel_protocol пуст или недоступен — работай правилами инструментов. Не спрашивай HITL про RAG и не ходи в другие target_base.\";\nconst planner=`${prev.planner_input||prev.agent_input||''}\\n\\nRetrieved knowledge (target_base=${selector.target_base}):\\n${JSON.stringify(rag,null,2)}\\n\\n${note}\\n`;\nreturn [{json:{...prev,rag,planner_input:planner,agent_input:planner}}];\n"
+        "jsCode": "function unwrapRetrieval(raw){\n  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\n  const src=obj(raw)?raw:{};\n  if(obj(src.schedule_retrieval_result)) return src.schedule_retrieval_result;\n  if(obj(src.body)&&obj(src.body.schedule_retrieval_result)) return src.body.schedule_retrieval_result;\n  if(String(src.contract||'')==='schedule_retrieval_result') return src;\n  if(src.error||Number(src.statusCode)>=400) return {status:'failed',findings:[{code:'RETRIEVAL_CALL_FAILED'}],results:[]};\n  return src;\n}\nfunction retrievalOutage(result, raw){\n  if(Boolean(raw&&raw.error)||Number(raw&&raw.statusCode)>=400) return 'failed';\n  const st=String((result&&result.status)||'').toLowerCase();\n  if(st==='failed'||st==='error') return 'failed';\n  if(st==='needs_input') return 'needs_input';\n  if(st==='abstain') return 'abstain';\n  if(st==='unavailable') return 'unavailable';\n  return '';\n}\nfunction compactRetrievalCards(result, selector, limit, textLimit, preferFull){\n  const rows=Array.isArray(result.results)?result.results:[];\n  const wantedBase=String(selector.target_base||'');\n  const wantedTypes=new Set((selector.knowledge_types||[]).map(v=>String(v).toLowerCase()));\n  const cap=Number(limit)||6;\n  const cut=Number(textLimit)||700;\n  const minText=50;\n  const relKeep=0.45;\n  const scored=[];\n  for(const r of rows){\n    if(!r||typeof r!=='object') continue;\n    const body=r.body&&typeof r.body==='object'?r.body:{};\n    const base=String(r.target_base||body.target_base||(result.filters&&result.filters.target_base)||'');\n    const kt=String(r.knowledge_type||body.knowledge_type||'').toLowerCase();\n    if(wantedBase&&base&&base!==wantedBase) continue;\n    if(wantedTypes.size&&kt&&!wantedTypes.has(kt)) continue;\n    const summary=String(body.summary||r.summary||'').trim();\n    const full=String(body.text||body.instruction||r.text||'').trim();\n    const text=preferFull?(full||summary):(summary||full);\n    if(text.length<minText) continue;\n    const score=r.rrf_score!=null?Number(r.rrf_score):(body.rrf_score!=null?Number(body.rrf_score):null);\n    if(Number.isFinite(score)&&score<=0) continue;\n    const topics=Array.isArray(r.topics)?r.topics:(Array.isArray(body.topics)?body.topics:[]);\n    scored.push({\n      knowledge_id:String(r.knowledge_id||body.knowledge_id||''),\n      title:String(r.title||body.title||'').slice(0,160),\n      knowledge_type:kt||null,\n      text:text.slice(0,cut),\n      revision:(r.revision!=null&&r.revision!=='')?r.revision:((body.revision!=null&&body.revision!=='')?body.revision:null),\n      rrf_score:Number.isFinite(score)?score:null,\n      branches:Array.isArray(r.branches)?r.branches.slice(0,6).map(b=>String(b)):(Array.isArray(body.branches)?body.branches.slice(0,6).map(b=>String(b)):[]),\n      topics:topics.slice(0,12).map(t=>String(t||'').trim()).filter(Boolean),\n      _score:Number.isFinite(score)?score:null\n    });\n  }\n  const finite=scored.map(c=>c._score).filter(s=>s!=null);\n  const best=finite.length?Math.max.apply(null,finite):0;\n  const floor=best>0?best*relKeep:0;\n  const want=new Set((Array.isArray(selector.topics)?selector.topics:[]).map(t=>String(t||'').toLowerCase()).filter(Boolean));\n  const orch=String(selector.target_base||'')==='orchestrator_routing';\n  const kept=scored.filter(c=>{\n    if(c._score==null||floor<=0) return true;\n    const cardTopics=(Array.isArray(c.topics)?c.topics:[]).map(t=>String(t||'').toLowerCase());\n    if(want.size&&cardTopics.some(t=>want.has(t))) return true;\n    const n=Array.isArray(c.branches)?c.branches.length:0;\n    if(n<2){\n      if(orch&&want.size) return false;\n      return true;\n    }\n    return c._score>=floor;\n  });\n  kept.sort((a,b)=>{\n    if(a._score==null&&b._score==null) return 0;\n    if(a._score==null) return 1;\n    if(b._score==null) return -1;\n    return b._score-a._score;\n  });\n  return kept.slice(0,cap).map(c=>({knowledge_id:c.knowledge_id,title:c.title,knowledge_type:c.knowledge_type,text:c.text,revision:c.revision,rrf_score:c.rrf_score,branches:c.branches,topics:c.topics}));\n}\nconst prev=$(\"Prepare AI Agent input\").first().json||{};\nconst raw=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst result=unwrapRetrieval(raw);\nconst fallbackSelector={\"target_base\": \"excel_protocol\", \"knowledge_types\": [\"protocol_instruction\"]};\nconst fromPrev=prev.retrieval_selector;\nconst req=obj(prev.schedule_retrieval_request)?prev.schedule_retrieval_request:{};\nconst wantTopics=Array.isArray(req.filters&&req.filters.topics)?req.filters.topics:[];\nconst selector=(fromPrev&&fromPrev.target_base)?{target_base:String(fromPrev.target_base),knowledge_types:Array.isArray(fromPrev.knowledge_types)&&fromPrev.knowledge_types.length?fromPrev.knowledge_types:fallbackSelector.knowledge_types,topics:wantTopics}:Object.assign({},fallbackSelector,{topics:wantTopics});\nconst outage=retrievalOutage(result,raw);\nconst cards=(outage==='failed'||outage==='needs_input')?[]:compactRetrievalCards(result,selector,8,1200);\nconst rag={contract:'mas_rag_evidence',contract_version:'1.0',target_base:selector.target_base,knowledge_types:selector.knowledge_types,status:outage||(cards.length?'ready':'empty'),phase:\"initial\",cards,findings:(Array.isArray(result.findings)?result.findings:[]).slice(0,6).map(f=>f&&f.code).filter(Boolean)};\nconst note=rag.status==='ready'?\"Карточки — срез excel_protocol (protocol_instruction), не schedule_mvp и не orchestrator_routing. Это протокол инструментов (opaque id, extract_table / extract_commissioning, query_table только подглядеть). Строки workbook только из Excel-tools. Не спрашивай HITL про базу знаний.\":\"Срез excel_protocol пуст или недоступен — работай правилами инструментов. Не спрашивай HITL про RAG и не ходи в другие target_base.\";\nconst planner=`${prev.planner_input||prev.agent_input||''}\\n\\nRetrieved knowledge (target_base=${selector.target_base}):\\n${JSON.stringify(rag,null,2)}\\n\\n${note}\\n`;\nconst logCards=(Array.isArray(cards)?cards:[]).map(c=>({knowledge_id:String((c&&c.knowledge_id)||''),revision:(c&&c.revision)!=null?c.revision:null,rrf_score:Number.isFinite(Number(c&&c.rrf_score))?Number(c.rrf_score):null,branches:Array.isArray(c&&c.branches)?c.branches.slice(0,6):[]}));\nconst logFindings=(Array.isArray(result.findings)?result.findings:[]).slice(0,8).map(f=>{if(obj(f)&&f.code)return{code:String(f.code)};const code=String(f||'').trim();return code?{code}:null}).filter(Boolean);\nconst activity={activity_kind:'trace.rag',status_message:`База знаний: ${rag.status} · ${logCards.length} карточек`,activity_payload:{caller:\"excel_extractor\",query:String(req.query||result.query||'').slice(0,800),filters:obj(req.filters)?req.filters:{},status:rag.status,phase:rag.phase,findings:logFindings,cards:logCards}};\nreturn [{json:{...prev,rag,planner_input:planner,agent_input:planner,...activity}}];\n"
       },
       "id": "10aa56ce-c69e-532e-a7c2-0efd4561415d",
       "name": "Attach excel RAG evidence",
@@ -336,72 +336,422 @@
       "typeVersion": 2,
       "position": [
         3080,
-        510
+        0
       ]
     },
     {
       "parameters": {
-        "promptType": "define",
-        "text": "={{ $json.planner_input }}",
-        "hasOutputParser": false,
-        "options": {
-          "systemMessage": "Ты — решатель агента Excel Extractor: читаешь задачу инженера, инвентарь приложенных Excel-книг (файлы, листы, таблицы с колонками и первыми строками) и expected_output (форму наборов, которую просит оркестратор). Сам выбираешь таблицу и колонки и вызываешь инструмент извлечения. Данные извлекают инструменты — ты их не переписываешь и SCHEDULE / .INC не пишешь.\n\nКнигу целиком тебе не показывают — она лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\n\nКакой инструмент когда:\n- expected_output.datasets в задаче — извлеки каждый названный набор. name=facts → extract_commissioning; name=new_wells → extract_well_parameters; любое другое name → extract_table с этим name и columns {поле: точная колонка из инвентаря}. types и description полей — из expected_output. После каждого extract_* смотри next_step: если там ещё ожидаются наборы — извлеки их следующим вызовом.\n- expected_output нет, задача про даты ввода / запуска скважин (таблица «скважина — дата») → extract_commissioning с table_id, well_column и date_column из инвентаря (inspect.tables: columns и sample). Если в таблице несколько колонок с датами — бери новую (плановую) дату ввода, а не старую / дату из исходного .INC. Один вызов на таблицу. Не вызывай extract_well_parameters: таблица дат ввода — не параметры новых скважин.\n- expected_output нет, задача явно про добавление новых скважин (не просто «новые даты ввода») и в инвентаре есть таблица параметров (группа, интервал MD, диаметр, режим, дебит, BHP, VFP, файл траектории) → extract_well_parameters с table_id, well_column и mapping колонок на поля: date, group, phase, i, j, md_top, md_bot, diameter, control, rate, bhp, thp, vfp_table, welltrack_include. Немаппированные колонки сохраняются под своими заголовками.\n- Любая другая таблица (мероприятия, дебиты, история, режимы, PVT, широкая таблица с колонками-датами) → extract_table: table_id, name (латинский идентификатор по смыслу задачи: well_events, oil_rates), columns {поле: колонка}. Широкая таблица (месяцы/даты в заголовках) — unpivot {columns: [эти колонки], name_field: date, value_field: rate}. Не вызывай extract_commissioning, если это не даты ввода.\n- Задача требует и даты ввода, и параметры новых скважин — оба инструмента в одном ответе, по одному вызову каждый, затем extract_table на остальные наборы. Не вызывай extract_well_parameters «на всякий случай».\n- Инвентаря не хватает (заголовки непонятны, таблица не найдена) → describe_table / sheet_preview / list_column_values / detect_tables / match_tables — не больше трёх вызовов подряд. query_table — только чтобы подглядеть строки перед extract_*; сам по себе результат не фиксирует. select и filters — JSON-массивы, не объект с ключами \"0\",\"1\". Не выгружай всю книгу.\n- ask_engineer — единственный способ спросить инженера: только когда по инвентарю и ответам инженера (engineer_answers) нельзя выбрать таблицу или колонку (например две колонки дат без пояснений). Один вопрос обычной русской фразой; варианты — как их видит инженер (названия листов и колонок). Никаких имён полей, JSON, enum. Имена файлов в вопрос не вставляй — они в инвентаре; говори «в книге», лист и колонка.\n\nОтветы инструментов:\n- ok:false, code:spec_incomplete / table_not_found / column_not_found / column_not_dates / no_rows / name_reserved / field_name_invalid / unpivot_invalid — это тебе, не инженеру: исправь аргументы по инвентарю (available_tables / available_columns / missing в том же ответе подсказывают) и вызови инструмент снова. name_reserved: facts извлекает extract_commissioning, new_wells — extract_well_parameters.\n- ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.\n- ok:false, code:too_many_attempts — больше этот инструмент не вызывай: спроси инженера или заверши ответ.\n- status completed от extract_* — часть результата зафиксирована. Если next_step говорит, что оркестратор ещё ожидает наборы — извлеки их. Если извлекать больше нечего — STOP. status needs_input от ask_engineer — STOP.\n\nИнварианты:\n- Не придумывай скважины, даты, дебиты, имена листов, table_id и колонок — только из инвентаря и ответов инструментов.\n- rework_reason в задаче — замечание оркестратора к прошлому результату: устрани именно его.\n- Retrieved knowledge — только срез excel_protocol / protocol_instruction (протокол инструментов). Пустой или unavailable срез — работай по инвентарю, инженера про базу знаний не спрашивай.\n\nЗаверши одним коротким фактическим предложением по-русски: что извлечено или чего не хватило.\n",
-          "maxIterations": 8,
-          "returnIntermediateSteps": true,
-          "passthroughBinaryImages": false,
-          "passthroughBinaryPdfs": false,
-          "enableStreaming": false
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize excel task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
         },
-        "needsFallback": false
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"excel_extractor\", agent_id: \"excel_extractor\", task_id: $('Normalize excel task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: Object.assign({source: \"excel-extractor-agent-workflow\"}, $json.activity_payload || {}, {execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')})}) }}"
       },
-      "id": "2f03ceca-e58c-53ff-8b58-4586a68f08ea",
-      "name": "Excel Extractor AI Agent",
-      "type": "@n8n/n8n-nodes-langchain.agent",
-      "typeVersion": 3.1,
+      "id": "2175c957-3748-5f8a-953c-53f340f93913",
+      "name": "Activity — Excel Extractor RAG",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
       "position": [
         3360,
-        510
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Attach excel RAG evidence').first().json||{}; return [{json:x}];"
+      },
+      "id": "c6f66974-92aa-519f-8839-93c59c58325e",
+      "name": "Restore after Excel Extractor RAG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3640,
+        0
       ]
     },
     {
       "parameters": {
-        "model": {
-          "mode": "id",
-          "value": "qwen/qwen3.6-27b"
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst SYSTEM=\"Ты — решатель агента Excel Extractor: читаешь задачу инженера, инвентарь приложенных Excel-книг (файлы, листы, таблицы с колонками и первыми строками) и expected_output (форму наборов, которую просит оркестратор). Сам выбираешь таблицу и колонки и вызываешь инструмент извлечения. Данные извлекают инструменты — ты их не переписываешь и SCHEDULE / .INC не пишешь.\\n\\nКнигу целиком тебе не показывают — она лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.\\n\\nКакой инструмент когда:\\n- expected_output.datasets в задаче — извлеки каждый названный набор. name=facts → extract_commissioning; name=new_wells → extract_well_parameters; любое другое name → extract_table с этим name и columns {поле: точная колонка из инвентаря}. types и description полей — из expected_output. После каждого extract_* смотри next_step: если там ещё ожидаются наборы — извлеки их следующим вызовом.\\n- expected_output нет, задача про даты ввода / запуска скважин (таблица «скважина — дата») → extract_commissioning с table_id, well_column и date_column из инвентаря (inspect.tables: columns и sample). Если в таблице несколько колонок с датами — бери новую (плановую) дату ввода, а не старую / дату из исходного .INC. Один вызов на таблицу. Не вызывай extract_well_parameters: таблица дат ввода — не параметры новых скважин.\\n- expected_output нет, задача явно про добавление новых скважин (не просто «новые даты ввода») и в инвентаре есть таблица параметров (группа, интервал MD, диаметр, режим, дебит, BHP, VFP, файл траектории) → extract_well_parameters с table_id, well_column и mapping колонок на поля: date, group, phase, i, j, md_top, md_bot, diameter, control, rate, bhp, thp, vfp_table, welltrack_include. Немаппированные колонки сохраняются под своими заголовками.\\n- Любая другая таблица (мероприятия, дебиты, история, режимы, PVT, широкая таблица с колонками-датами) → extract_table: table_id, name (латинский идентификатор по смыслу задачи: well_events, oil_rates), columns {поле: колонка}. Широкая таблица (месяцы/даты в заголовках) — unpivot {columns: [эти колонки], name_field: date, value_field: rate}. Не вызывай extract_commissioning, если это не даты ввода.\\n- Задача требует и даты ввода, и параметры новых скважин — оба инструмента в одном ответе, по одному вызову каждый, затем extract_table на остальные наборы. Не вызывай extract_well_parameters «на всякий случай».\\n- Инвентаря не хватает (заголовки непонятны, таблица не найдена) → describe_table / sheet_preview / list_column_values / detect_tables / match_tables — не больше трёх вызовов подряд. query_table — только чтобы подглядеть строки перед extract_*; сам по себе результат не фиксирует. select и filters — JSON-массивы, не объект с ключами \\\"0\\\",\\\"1\\\". Не выгружай всю книгу.\\n- ask_engineer — единственный способ спросить инженера: только когда по инвентарю и ответам инженера (engineer_answers) нельзя выбрать таблицу или колонку (например две колонки дат без пояснений). Один вопрос обычной русской фразой; варианты — как их видит инженер (названия листов и колонок). Никаких имён полей, JSON, enum. Имена файлов в вопрос не вставляй — они в инвентаре; говори «в книге», лист и колонка.\\n\\nОтветы инструментов:\\n- ok:false, code:spec_incomplete / table_not_found / column_not_found / column_not_dates / no_rows / name_reserved / field_name_invalid / unpivot_invalid — это тебе, не инженеру: исправь аргументы по инвентарю (available_tables / available_columns / missing в том же ответе подсказывают) и вызови инструмент снова. name_reserved: facts извлекает extract_commissioning, new_wells — extract_well_parameters.\\n- ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.\\n- ok:false, code:too_many_attempts — больше этот инструмент не вызывай: спроси инженера или заверши ответ.\\n- status completed от extract_* — часть результата зафиксирована. Если next_step говорит, что оркестратор ещё ожидает наборы — извлеки их. Если извлекать больше нечего — STOP. status needs_input от ask_engineer — STOP.\\n\\nИнварианты:\\n- Не придумывай скважины, даты, дебиты, имена листов, table_id и колонок — только из инвентаря и ответов инструментов.\\n- rework_reason в задаче — замечание оркестратора к прошлому результату: устрани именно его.\\n- Retrieved knowledge — срез excel_protocol / protocol_instruction. Если протокола для выбранного инструмента нет в срезе — retrieve_knowledge с query по смыслу таблицы. Пустой или unavailable срез — работай по инвентарю, инженера про базу знаний не спрашивай.\\n\\nЗаверши одним коротким фактическим предложением по-русски: что извлечено или чего не хватило.\\n\";\nconst TOOLS=[{\"type\": \"function\", \"function\": {\"name\": \"workbook_introspect\", \"description\": \"Компактные листы и размеры книги. Без файла.\", \"parameters\": {\"type\": \"object\", \"properties\": {}, \"additionalProperties\": true}}}, {\"type\": \"function\", \"function\": {\"name\": \"sheet_preview\", \"description\": \"Небольшой preview одного листа. sheet только из инвентаря / introspect.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"sheet\": {\"type\": \"string\", \"description\": \"Точное имя листа из инвентаря\"}}, \"additionalProperties\": true, \"required\": [\"sheet\"]}}}, {\"type\": \"function\", \"function\": {\"name\": \"detect_tables\", \"description\": \"Найти таблицы (если инвентарь пуст или неполный). sheet опционален. Возвращает table_id, range, columns — не книгу.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"sheet\": {\"type\": \"string\", \"description\": \"Ограничить поиск одним листом\"}}, \"additionalProperties\": true}}}, {\"type\": \"function\", \"function\": {\"name\": \"match_tables\", \"description\": \"Ранжировать найденные таблицы по фразе запроса.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"Что искать: даты ввода, параметры скважин, дебиты, ...\"}}, \"additionalProperties\": true, \"required\": [\"query\"]}}}, {\"type\": \"function\", \"function\": {\"name\": \"describe_table\", \"description\": \"Колонки, число строк и sample одной таблицы. table_id только из инвентаря / detect.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"table_id\": {\"type\": \"string\", \"description\": \"table_id из инвентаря\"}}, \"additionalProperties\": true, \"required\": [\"table_id\"]}}}, {\"type\": \"function\", \"function\": {\"name\": \"list_column_values\", \"description\": \"Ограниченные distinct-значения одной колонки — чтобы понять, что в ней лежит.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"table_id\": {\"type\": \"string\", \"description\": \"table_id из инвентаря\"}, \"column\": {\"type\": \"string\", \"description\": \"Точное имя колонки из инвентаря\"}}, \"additionalProperties\": true, \"required\": [\"table_id\", \"column\"]}}}, {\"type\": \"function\", \"function\": {\"name\": \"query_table\", \"description\": \"Строки таблицы для прочих данных (дебиты, история). select и filters — JSON-массивы: [\\\"well\\\",\\\"date\\\"] и [{\\\"field\\\":\\\"well\\\",\\\"operator\\\":\\\"eq\\\",\\\"value\\\":\\\"101\\\"}].\", \"parameters\": {\"type\": \"object\", \"properties\": {\"table_id\": {\"type\": \"string\", \"description\": \"table_id из инвентаря\"}, \"select\": {\"type\": \"string\", \"description\": \"Массив имён колонок, например [\\\"well\\\",\\\"date\\\"] Передай JSON-строкой.\"}, \"filters\": {\"type\": \"string\", \"description\": \"Массив {field, operator, value} Передай JSON-строкой.\"}, \"limit\": {\"type\": \"string\", \"description\": \"Лимит строк, по умолчанию 200\"}}, \"additionalProperties\": true, \"required\": [\"table_id\"]}}}, {\"type\": \"function\", \"function\": {\"name\": \"extract_commissioning\", \"description\": \"Извлечь факты «скважина — дата ввода» из выбранной тобой таблицы. Ты указываешь table_id и точные имена колонок из инвентаря; извлечение детерминированное, колонки проверяются (column_not_found / column_not_dates вернутся тебе).\", \"parameters\": {\"type\": \"object\", \"properties\": {\"table_id\": {\"type\": \"string\", \"description\": \"table_id таблицы со скважинами и датами из инвентаря\"}, \"well_column\": {\"type\": \"string\", \"description\": \"Точное имя колонки со скважинами\"}, \"date_column\": {\"type\": \"string\", \"description\": \"Точное имя колонки с новой датой ввода (не из исходного .INC)\"}}, \"additionalProperties\": true, \"required\": [\"table_id\", \"well_column\", \"date_column\"]}}}, {\"type\": \"function\", \"function\": {\"name\": \"extract_well_parameters\", \"description\": \"Извлечь таблицу параметров новых скважин (группа, интервал MD, диаметр, режим, дебит, BHP, VFP, файл траектории). Ты указываешь table_id, колонку скважин и mapping колонок на поля; извлечение детерминированное.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"table_id\": {\"type\": \"string\", \"description\": \"table_id таблицы параметров из инвентаря\"}, \"well_column\": {\"type\": \"string\", \"description\": \"Точное имя колонки со скважинами\"}, \"mapping\": {\"type\": \"string\", \"description\": \"JSON-объект {поле: колонка}: date, group, phase, i, j, md_top, md_bot, diameter, control, rate, bhp, thp, vfp_table, welltrack_include → точные имена колонок Передай JSON-строкой.\"}}, \"additionalProperties\": true, \"required\": [\"table_id\", \"well_column\"]}}}, {\"type\": \"function\", \"function\": {\"name\": \"extract_table\", \"description\": \"Извлечь любую таблицу как именованный набор данных (строки под data[name] + JSON-артефакт). Ты указываешь table_id, латинское name (из expected_output или по смыслу задачи) и columns {поле: колонка}; извлечение детерминированное. Не для дат ввода (extract_commissioning) и не для параметров новых скважин (extract_well_parameters).\", \"parameters\": {\"type\": \"object\", \"properties\": {\"table_id\": {\"type\": \"string\", \"description\": \"table_id таблицы из инвентаря\"}, \"name\": {\"type\": \"string\", \"description\": \"Латинское имя набора: то, что в expected_output.datasets[].name, иначе well_events / oil_rates / …\"}, \"columns\": {\"type\": \"string\", \"description\": \"JSON-объект {поле: точная колонка из инвентаря}. Пусто — все колонки, имена полей из заголовков Передай JSON-строкой.\"}, \"title\": {\"type\": \"string\", \"description\": \"Короткое русское название набора для ленты\"}, \"types\": {\"type\": \"string\", \"description\": \"JSON-объект {поле: text|number|date|boolean}; пусто — тип по значениям Передай JSON-строкой.\"}, \"filters\": {\"type\": \"string\", \"description\": \"JSON-массив {field, operator, value} по колонке или полю Передай JSON-строкой.\"}, \"key_field\": {\"type\": \"string\", \"description\": \"Поле-ключ: дубликаты отбрасываются, первое вхождение остаётся\"}, \"unpivot\": {\"type\": \"string\", \"description\": \"JSON {columns: [широкие колонки] или rest, name_field: date, value_field: rate} — широкая таблица в длинные строки Передай JSON-строкой.\"}}, \"additionalProperties\": true, \"required\": [\"table_id\", \"name\"]}}}, {\"type\": \"function\", \"function\": {\"name\": \"ask_engineer\", \"description\": \"Спросить инженера одним вопросом по-русски, когда по инвентарю нельзя выбрать таблицу или колонку. Варианты показываются кнопками. Не для ошибок вызова инструментов.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"question\": {\"type\": \"string\", \"description\": \"Обычная русская фраза: что нужно уточнить и зачем, без имён полей и JSON\"}, \"options\": {\"type\": \"string\", \"description\": \"Варианты через точку с запятой, как их видит инженер (названия листов/колонок); пусто — свободный ответ\"}, \"topic\": {\"type\": \"string\", \"description\": \"Короткая латинская тема вопроса, например date_column\"}}, \"additionalProperties\": true, \"required\": [\"question\"]}}}, {\"type\": \"function\", \"function\": {\"name\": \"retrieve_knowledge\", \"description\": \"Найти карточки в базе знаний по запросу. Вызови, когда в текущем срезе нет инструкции по нужному keyword или протоколу — особенно перед первым apply_dataset / apply_operations / extract_table по ним. keywords — имена keyword через запятую.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"Поисковый запрос (русская фраза или имена keyword)\"}, \"keywords\": {\"type\": \"string\", \"description\": \"Необязательно: семейства keyword через запятую\"}}, \"required\": [\"query\"]}}}];\nconst THINKING_OFF={\"reasoning\": {\"enabled\": false}, \"enable_thinking\": false, \"chat_template_kwargs\": {\"enable_thinking\": false}};\nconst SAMPLING={\"temperature\": 0.7, \"top_p\": 0.8, \"top_k\": 20, \"presence_penalty\": 1.5};\nconst DEFAULT_CHAT_MODEL=\"qwen/qwen3.6-27b\";\nconst MAX_ITER=8;\nconst prev=$json||{};\nlet cfg={};\ntry{cfg=$('Runtime configuration').first().json||{};}catch(e){cfg={}}\nconst model=String(cfg.chat_model||'').trim()||DEFAULT_CHAT_MODEL;\nconst base=String(cfg.chat_base_url||'').replace(/[/]+$/,'');\nconst chat_url=base?base+'/chat/completions':'';\nlet messages=Array.isArray(prev.messages)?prev.messages:[];\nif(!messages.length){\n  messages=[{role:'system',content:SYSTEM},{role:'user',content:String(prev.planner_input||prev.agent_input||'')}];\n}\nconst extra=parseChatExtra(cfg);\nconst chat_request={model,...SAMPLING,...THINKING_OFF,messages,tools:TOOLS,tool_choice:'auto',...extra};\nreturn [{json:{...prev,messages,chat_request,chat_url,max_iterations:MAX_ITER,iteration:Number(prev.iteration||0)}}];\n"
+      },
+      "id": "142f7fa8-e4ef-5e91-9859-f3980c49d07e",
+      "name": "Build chat request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3920,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.chat_url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
         },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.chat_request }}",
         "options": {
-          "temperature": 0,
           "timeout": 600000,
-          "maxRetries": 5
-        },
-        "responsesApiEnabled": false
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "neverError": true
+            }
+          }
+        }
       },
-      "id": "e81706e1-430e-5640-a5c8-2500fb80aa1b",
-      "name": "Excel Extractor Chat Model — Qwen",
-      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
-      "typeVersion": 1.3,
+      "id": "e3565639-34f3-596a-b6c5-6f8fb3f8fa5e",
+      "name": "Excel Extractor Agent chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
       "position": [
-        3360,
-        340
+        4200,
+        0
       ],
       "credentials": {
         "openAiApi": {
           "id": "REPLACE_IN_UI",
           "name": "REPLACE: Qwen OpenAI-compatible agent credential"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
     },
     {
       "parameters": {
-        "jsCode": "const agent=$json||{};\nconst opened=$('Open excel session').first().json||{};\nconst steps=Array.isArray(agent.intermediateSteps)?agent.intermediateSteps:(Array.isArray(agent.intermediate_steps)?agent.intermediate_steps:[]);\nconst toolName=step=>{\n  if(!step||typeof step!=='object') return '';\n  const a=step.action&&typeof step.action==='object'?step.action:step;\n  return String(a.tool||a.toolName||a.name||step.tool||'');\n};\nconst tools=steps.map(toolName).filter(Boolean);\nconst unique=[...new Set(tools)];\nconst counts={};\nfor(const name of tools) counts[name]=(counts[name]||0)+1;\nconst repeated=Object.keys(counts).some(name=>counts[name]>3);\n// A stored result exists after one of the result tools (completed) or ask_engineer (needs_input); the session is authoritative.\nconst hasResult=tools.some(n=>n.indexOf('extract_')===0 || n==='ask_engineer');\nconst skipFetch=!hasResult;\nconst finalText=String(agent.output||agent.text||'').trim();\n// Engineer-facing fallback when the LLM ended without fixing a result: plain Russian, no tool names.\nconst question=repeated?\"Excel Extractor несколько раз просматривал книгу, но не смог выбрать таблицу и колонки. Уточните, на каком листе и в каких колонках находятся скважины и нужные значения (даты ввода, режимы, дебиты).\":\"Excel Extractor не смог понять, какие данные взять из приложенной книги. Уточните, на каком листе и в каких колонках находятся скважины и нужные значения (даты ввода, режимы, дебиты).\";\nconst message=hasResult?(finalText||\"Excel Extractor извлёк данные из книги.\"):(finalText?finalText+' ':'')+question;\nreturn [{json:{\n  ...(skipFetch?{\n    task_id:opened.task_id||'',\n    agent_id:\"excel_extractor\",\n    status:'needs_input',\n    message:question,\n    data:{tools_used:unique,total_calls:steps.length,llm_final_text:finalText.slice(0,600)},\n    artifacts:{},\n    issues:[{type:repeated?'repeated_tools':\"no_extract\"}],\n    assumptions:[],\n    requests:[{question_id:\"Q-clarify\",question,options:[],accepts:{free_text:true,files:[\"xlsx\"]}}]\n  }:agent),\n  skip_fetch:skipFetch,\n  has_result:hasResult,\n  activity_kind:'agent.progress',\n  status_message:message.slice(0,400),\n  activity_payload:{source:\"excel-extractor-agent-workflow\",total_calls:steps.length,tools_used:unique,iterations:steps.length}\n}}];\n"
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst http=$json||{};\nconst prev=fromNode('Build chat request');\nconst choice=obj((http.choices||[])[0])?(http.choices||[])[0]:{};\nconst msg=obj(choice.message)?choice.message:{};\nconst content=stripThink(typeof msg.content==='string'?msg.content:'');\nconst usage=obj(http.usage)?http.usage:{};\nconst details=obj(usage.completion_tokens_details)?usage.completion_tokens_details:{};\nconst finish=String(choice.finish_reason||http.finish_reason||'');\nconst errObj=obj(http.error)?http.error:null;\nconst errText=typeof http.error==='string'?http.error:String((errObj&&(errObj.message||errObj.code))||'');\nconst statusCode=Number(http.statusCode||http.status||(errObj&&errObj.status)||0);\nconst toolCalls=Array.isArray(msg.tool_calls)?msg.tool_calls:[];\nconst pending=toolCalls.map(tc=>{\n  const fn=obj(tc.function)?tc.function:{};\n  return {id:String(tc.id||''),name:String(fn.name||tc.name||''),arguments:fn.arguments!=null?fn.arguments:tc.arguments};\n}).filter(t=>t.name);\nconst iteration=Number(prev.iteration||0)+1;\nconst maxIter=Number(prev.max_iterations||8);\nconst over=iteration>=maxIter;\nlet messages=Array.isArray(prev.messages)?prev.messages.slice():[];\nconst assistant={role:'assistant',content:content||null};\nif(toolCalls.length) assistant.tool_calls=toolCalls;\nmessages.push(assistant);\nconst tool_log=Array.isArray(prev.tool_log)?prev.tool_log.slice():[];\nconst llm_unavailable=(!pending.length)&&(Boolean(errText)||statusCode>=400||!Array.isArray(http.choices)||finish==='error');\nconst loop_route=llm_unavailable?'done':(pending.length?loopRouteForPending(pending, over):'done');\nconst promptMsgs=obj(prev.chat_request)&&Array.isArray(prev.chat_request.messages)?prev.chat_request.messages:[];\nconst tokens=Number(usage.prompt_tokens||0)+Number(usage.completion_tokens||0);\nconst payload={\n  role:'agent',\n  model:String((obj(prev.chat_request)&&prev.chat_request.model)||''),\n  prompt_tokens:Number(usage.prompt_tokens||0),\n  completion_tokens:Number(usage.completion_tokens||0),\n  reasoning_tokens:Number(details.reasoning_tokens||0),\n  finish_reason:llm_unavailable?(finish||'error'):(finish||(errText?'error':'stop')),\n  tool_calls:pending.map(t=>({name:t.name,args_preview:clip(String(t.arguments||''),400)})),\n  prompt_preview:previewChatMessages(promptMsgs, Number(prev.prompt_len||0)),\n  content_preview:clip(content,2000)\n};\nif(errText) payload.error=errText.slice(0,200);\nreturn [{json:{\n  ...prev,\n  messages,\n  pending_tools:llm_unavailable?[]:pending,\n  iteration,\n  over,\n  loop_route,\n  llm_final_text:content,\n  llm_unavailable,\n  prompt_len:promptMsgs.length,\n  tool_log,\n  finish_reason:payload.finish_reason,\n  activity_kind:'trace.llm',\n  status_message:`agent: ${payload.finish_reason} · ${tokens} tok`,\n  activity_payload:payload\n}}];\n"
+      },
+      "id": "6540c4eb-56e7-53aa-b3d8-abc215c549d8",
+      "name": "Parse agent chat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize excel task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"excel_extractor\", agent_id: \"excel_extractor\", task_id: $('Normalize excel task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: Object.assign({source: \"excel-extractor-agent-workflow\"}, $json.activity_payload || {}, {execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')})}) }}"
+      },
+      "id": "8f11a349-2a92-5dd5-b169-10eefa94f5db",
+      "name": "Activity — Excel Extractor LLM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        4760,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Parse agent chat').first().json||{}; return [{json:x}];"
+      },
+      "id": "5c62ede5-379f-548b-b67c-8d0c5d7374bb",
+      "name": "Restore after Excel Extractor LLM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5040,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 4,
+        "output": "={{ ({chat:0,tool:1,retrieve:2,done:3})[$json.loop_route] ?? 3 }}"
+      },
+      "id": "b5f9f476-2f3e-5dca-9821-c5e198aa845b",
+      "name": "Agent loop router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        5320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst ALLOWED=new Set([\"workbook_introspect\", \"sheet_preview\", \"detect_tables\", \"match_tables\", \"describe_table\", \"list_column_values\", \"query_table\", \"extract_commissioning\", \"extract_well_parameters\", \"extract_table\", \"ask_engineer\"]);\nconst SERVICE_KEY=\"excel_tools_url\";\nconst OPEN_NAME=\"Open excel session\";\n\nconst prev=$json||{};\nconst pending=Array.isArray(prev.pending_tools)?prev.pending_tools:[];\nconst call=pending[0]||{};\nconst name=String(call.name||'');\nconst args=parseArgs(call.arguments);\nconst opened=fromNode(OPEN_NAME);\nconst sessionId=String(opened.session_id||prev.session_id||'');\nlet cfg={};\ntry{cfg=$('Runtime configuration').first().json||{};}catch(e){cfg={}}\nconst base=String(cfg[SERVICE_KEY]||prev[SERVICE_KEY]||'').replace(/[/]+$/,'');\nconst log=Array.isArray(prev.tool_log)?prev.tool_log:[];\nconst needKb=name==='apply_dataset'&&ALLOWED.has(name)&&!log.includes('retrieve_knowledge');\nconst skip_http=!name||!ALLOWED.has(name)||needKb;\nconst skip_result=needKb?{ok:false,code:'knowledge_required',message:'Сначала вызови retrieve_knowledge с query (смысл набора) и keywords (имя keyword), затем get_keyword, затем apply_dataset. Стартовый срез — краткие summary; полный текст — только из retrieve_knowledge.'}:(skip_http?{ok:false,code:'unknown_tool',message:'Нет такого инструмента',available:[...ALLOWED]}:null);\nconst tool_url=skip_http?'':(base+'/agent-tools/'+name);\nconst tool_body={session_id:sessionId,...args};\nreturn [{json:{...prev,pending_tool:call,tool_url,tool_body,skip_http,skip_result}}];\n"
+      },
+      "id": "bbe3770a-3bc7-5a5a-946a-c82c56bde174",
+      "name": "Prepare tool call",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5600,
+        -170
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c6f626b9-81ec-533e-ad59-e33986a3ed85",
+              "leftValue": "={{ Boolean($json.skip_http) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ac0cd7dd-b33e-5166-8023-2859e56f3322",
+      "name": "Skip unknown tool?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5880,
+        -170
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.tool_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.tool_body }}"
+      },
+      "id": "c1c8f5b7-2580-5d35-82ab-6ebd3223e248",
+      "name": "Call agent tool",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        6160,
+        -85
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst http=$json||{};\nconst prev=fromNode('Prepare tool call');\nconst call=obj(prev.pending_tool)?prev.pending_tool:{};\nlet pending=Array.isArray(prev.pending_tools)?prev.pending_tools.slice(1):[];\nlet messages=Array.isArray(prev.messages)?prev.messages.slice():[];\nconst transport=prev.skip_http?'':toolTransportCode(http);\nconst result=prev.skip_http?prev.skip_result:(transport?{ok:false,code:transport,message:transport==='service_unreachable'?'Сервис агента не отвечает':'Инструмент не ответил'}:http);\nconst body=typeof result==='string'?result:JSON.stringify(result==null?{}:result);\nmessages.push({role:'tool',tool_call_id:String(call.id||''),content:body});\nconst tool_log=Array.isArray(prev.tool_log)?prev.tool_log.slice():[];\nif(call.name) tool_log.push(String(call.name));\nconst down=transport==='service_unreachable';\nconst loop_route=down?'done':loopRouteForPending(pending, Boolean(prev.over));\nreturn [{json:{...prev,messages,pending_tools:down?[]:pending,tool_log,loop_route,skip_http:false,skip_result:null,service_unreachable:Boolean(prev.service_unreachable||down)}}];\n"
+      },
+      "id": "37c35666-3380-5527-a825-2b4310bb0f23",
+      "name": "Append tool result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6160,
+        -255
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst prev=$json||{};\nconst pending=Array.isArray(prev.pending_tools)?prev.pending_tools:[];\nconst call=pending[0]||{};\nconst args=parseArgs(call.arguments);\nconst req=obj(prev.schedule_retrieval_request)?{...prev.schedule_retrieval_request}:{};\nconst filters=obj(req.filters)?{...req.filters}:{};\nconst keywords=String(args.keywords||'').split(/[,;]/).map(s=>s.trim().toUpperCase()).filter(Boolean);\nif(keywords.length) filters.keyword_families=[...new Set(keywords)].slice(0,6);\nelse filters.keyword_families=[];\nconst query=clip(String(args.query||'').trim()||String(req.query||''),800);\nreturn [{json:{...prev,pending_tool:call,schedule_retrieval_request:{...req,query,filters}}}];\n"
+      },
+      "id": "309631e2-94a0-5dd5-9b05-b09a596a479c",
+      "name": "Prepare retrieve request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI",
+          "mode": "list",
+          "cachedResultName": "MAS — Knowledge Retrieval"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "schedule_retrieval_request": "={{ $json.schedule_retrieval_request }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "b812eb53-8afd-500d-bafd-c976872fcedc",
+      "name": "Retrieve knowledge",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        5880,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nfunction unwrapRetrieval(raw){\n  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\n  const src=obj(raw)?raw:{};\n  if(obj(src.schedule_retrieval_result)) return src.schedule_retrieval_result;\n  if(obj(src.body)&&obj(src.body.schedule_retrieval_result)) return src.body.schedule_retrieval_result;\n  if(String(src.contract||'')==='schedule_retrieval_result') return src;\n  if(src.error||Number(src.statusCode)>=400) return {status:'failed',findings:[{code:'RETRIEVAL_CALL_FAILED'}],results:[]};\n  return src;\n}\nfunction retrievalOutage(result, raw){\n  if(Boolean(raw&&raw.error)||Number(raw&&raw.statusCode)>=400) return 'failed';\n  const st=String((result&&result.status)||'').toLowerCase();\n  if(st==='failed'||st==='error') return 'failed';\n  if(st==='needs_input') return 'needs_input';\n  if(st==='abstain') return 'abstain';\n  if(st==='unavailable') return 'unavailable';\n  return '';\n}\nfunction compactRetrievalCards(result, selector, limit, textLimit, preferFull){\n  const rows=Array.isArray(result.results)?result.results:[];\n  const wantedBase=String(selector.target_base||'');\n  const wantedTypes=new Set((selector.knowledge_types||[]).map(v=>String(v).toLowerCase()));\n  const cap=Number(limit)||6;\n  const cut=Number(textLimit)||700;\n  const minText=50;\n  const relKeep=0.45;\n  const scored=[];\n  for(const r of rows){\n    if(!r||typeof r!=='object') continue;\n    const body=r.body&&typeof r.body==='object'?r.body:{};\n    const base=String(r.target_base||body.target_base||(result.filters&&result.filters.target_base)||'');\n    const kt=String(r.knowledge_type||body.knowledge_type||'').toLowerCase();\n    if(wantedBase&&base&&base!==wantedBase) continue;\n    if(wantedTypes.size&&kt&&!wantedTypes.has(kt)) continue;\n    const summary=String(body.summary||r.summary||'').trim();\n    const full=String(body.text||body.instruction||r.text||'').trim();\n    const text=preferFull?(full||summary):(summary||full);\n    if(text.length<minText) continue;\n    const score=r.rrf_score!=null?Number(r.rrf_score):(body.rrf_score!=null?Number(body.rrf_score):null);\n    if(Number.isFinite(score)&&score<=0) continue;\n    const topics=Array.isArray(r.topics)?r.topics:(Array.isArray(body.topics)?body.topics:[]);\n    scored.push({\n      knowledge_id:String(r.knowledge_id||body.knowledge_id||''),\n      title:String(r.title||body.title||'').slice(0,160),\n      knowledge_type:kt||null,\n      text:text.slice(0,cut),\n      revision:(r.revision!=null&&r.revision!=='')?r.revision:((body.revision!=null&&body.revision!=='')?body.revision:null),\n      rrf_score:Number.isFinite(score)?score:null,\n      branches:Array.isArray(r.branches)?r.branches.slice(0,6).map(b=>String(b)):(Array.isArray(body.branches)?body.branches.slice(0,6).map(b=>String(b)):[]),\n      topics:topics.slice(0,12).map(t=>String(t||'').trim()).filter(Boolean),\n      _score:Number.isFinite(score)?score:null\n    });\n  }\n  const finite=scored.map(c=>c._score).filter(s=>s!=null);\n  const best=finite.length?Math.max.apply(null,finite):0;\n  const floor=best>0?best*relKeep:0;\n  const want=new Set((Array.isArray(selector.topics)?selector.topics:[]).map(t=>String(t||'').toLowerCase()).filter(Boolean));\n  const orch=String(selector.target_base||'')==='orchestrator_routing';\n  const kept=scored.filter(c=>{\n    if(c._score==null||floor<=0) return true;\n    const cardTopics=(Array.isArray(c.topics)?c.topics:[]).map(t=>String(t||'').toLowerCase());\n    if(want.size&&cardTopics.some(t=>want.has(t))) return true;\n    const n=Array.isArray(c.branches)?c.branches.length:0;\n    if(n<2){\n      if(orch&&want.size) return false;\n      return true;\n    }\n    return c._score>=floor;\n  });\n  kept.sort((a,b)=>{\n    if(a._score==null&&b._score==null) return 0;\n    if(a._score==null) return 1;\n    if(b._score==null) return -1;\n    return b._score-a._score;\n  });\n  return kept.slice(0,cap).map(c=>({knowledge_id:c.knowledge_id,title:c.title,knowledge_type:c.knowledge_type,text:c.text,revision:c.revision,rrf_score:c.rrf_score,branches:c.branches,topics:c.topics}));\n}\nconst fallbackSelector={\"target_base\": \"excel_protocol\", \"knowledge_types\": [\"protocol_instruction\"]};\nconst caller=\"excel_extractor\";\nconst maxCards=8;\nconst textLimit=4000;\n\nconst prev=fromNode('Prepare retrieve request');\nconst raw=$json||{};\nconst result=unwrapRetrieval(raw);\nconst fromPrev=prev.retrieval_selector;\nconst selector=(fromPrev&&fromPrev.target_base)?{target_base:String(fromPrev.target_base),knowledge_types:Array.isArray(fromPrev.knowledge_types)&&fromPrev.knowledge_types.length?fromPrev.knowledge_types:fallbackSelector.knowledge_types}:fallbackSelector;\nconst outage=retrievalOutage(result,raw);\nconst cards=(outage==='failed'||outage==='needs_input')?[]:compactRetrievalCards(result,selector,maxCards,textLimit,true);\nconst rag={contract:'mas_rag_evidence',contract_version:'1.0',target_base:selector.target_base,knowledge_types:selector.knowledge_types,status:outage||(cards.length?'ready':'empty'),phase:'on_demand',cards,findings:(Array.isArray(result.findings)?result.findings:[]).slice(0,6).map(f=>f&&f.code).filter(Boolean)};\nconst call=obj(prev.pending_tool)?prev.pending_tool:{};\nlet pending=Array.isArray(prev.pending_tools)?prev.pending_tools.slice(1):[];\nlet messages=Array.isArray(prev.messages)?prev.messages.slice():[];\nmessages.push({role:'tool',tool_call_id:String(call.id||''),content:JSON.stringify({status:rag.status,findings:rag.findings,cards:rag.cards})});\nconst tool_log=Array.isArray(prev.tool_log)?prev.tool_log.slice():[];\ntool_log.push('retrieve_knowledge');\nconst loop_route=loopRouteForPending(pending, Boolean(prev.over));\nconst req=obj(prev.schedule_retrieval_request)?prev.schedule_retrieval_request:{};\nconst logCards=(Array.isArray(cards)?cards:[]).map(c=>({knowledge_id:String((c&&c.knowledge_id)||''),revision:(c&&c.revision)!=null?c.revision:null,rrf_score:Number.isFinite(Number(c&&c.rrf_score))?Number(c.rrf_score):null,branches:Array.isArray(c&&c.branches)?c.branches.slice(0,6):[]}));\nconst logFindings=(Array.isArray(result.findings)?result.findings:[]).slice(0,8).map(f=>{if(obj(f)&&f.code)return{code:String(f.code)};const code=String(f||'').trim();return code?{code}:null}).filter(Boolean);\nreturn [{json:{\n  ...prev,\n  messages,\n  pending_tools:pending,\n  tool_log,\n  loop_route,\n  rag,\n  activity_kind:'trace.rag',\n  status_message:`База знаний: ${rag.status} · ${logCards.length} карточек`,\n  activity_payload:{caller,query:String(req.query||result.query||'').slice(0,800),filters:obj(req.filters)?req.filters:{},status:rag.status,phase:rag.phase,findings:logFindings,cards:logCards}\n}}];\n"
+      },
+      "id": "89777923-24b3-5ce5-97f4-b0c70485fca2",
+      "name": "Attach retrieve evidence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6160,
+        85
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize excel task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"excel_extractor\", agent_id: \"excel_extractor\", task_id: $('Normalize excel task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: Object.assign({source: \"excel-extractor-agent-workflow\"}, $json.activity_payload || {}, {execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')})}) }}"
+      },
+      "id": "18fae8fb-164c-5ce6-aa3d-cec59ea1c384",
+      "name": "Activity — Excel Extractor retrieve",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        6440,
+        -85
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Attach retrieve evidence').first().json||{}; return [{json:x}];"
+      },
+      "id": "e96adb85-9907-53fe-8044-6cbb69c655a2",
+      "name": "Restore after Excel Extractor retrieve",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6720,
+        -85
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst OPEN_NAME=\"Open excel session\";\n\nconst prev=$json||{};\nconst opened=fromNode(OPEN_NAME);\nconst tools=Array.isArray(prev.tool_log)?prev.tool_log.filter(Boolean):[];\nconst unique=[...new Set(tools)];\nconst finalText=stripThink(String(prev.llm_final_text||''));\nconst counts={};\nfor(const name of tools) counts[name]=(counts[name]||0)+1;\nconst repeated=Object.keys(counts).some(name=>name!=='retrieve_knowledge'&&counts[name]>3);\nconst total=tools.filter(n=>n!=='retrieve_knowledge').length;\nconst human=finalText.trim();\nconst status_message=(human&&!looksMachine(human))?clip(human,400):'Агент завершил шаг.';\nreturn [{json:{\n  ...prev,\n  llm_final_text:finalText,\n  tools_used:unique,\n  total_calls:total,\n  repeated,\n  activity_kind:'agent.progress',\n  status_message,\n  activity_payload:{source:\"excel-extractor-agent-workflow\",total_calls:total,tools_used:unique,iterations:Number(prev.iteration||0)}\n}}];\n"
       },
       "id": "8e5963b8-e599-57ec-905d-0d75952ce797",
       "name": "Summarize AI steps",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3640,
-        0
+        5600,
+        170
       ]
     },
     {
@@ -436,8 +786,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        3920,
-        0
+        5880,
+        170
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
@@ -451,41 +801,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4200,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "57f74c33-6c5d-5732-b88a-dbadd50eb78d",
-              "leftValue": "={{ Boolean($json.skip_fetch) }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "true"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "30ee313e-c2a8-562c-86b1-aba72d7174e2",
-      "name": "Result stored?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        4480,
-        0
+        6160,
+        255
       ]
     },
     {
@@ -516,8 +833,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        4760,
-        0
+        6440,
+        85
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true,
@@ -527,15 +844,15 @@
     },
     {
       "parameters": {
-        "jsCode": "const fetched=$json||{};\nconst opened=$('Open excel session').first().json||{};\nconst arts=fetched.artifacts&&typeof fetched.artifacts==='object'?fetched.artifacts:{};\n// n8n may coerce an empty artifact text to a boolean; a boolean card is no card.\nconst artifacts=Object.fromEntries(Object.entries(arts).filter(([,v])=>typeof v!=='boolean'));\nif(fetched.status){\n  return [{json:{\n    task_id:fetched.task_id||opened.task_id||'',\n    agent_id:\"excel_extractor\",\n    status:fetched.status,\n    message:fetched.message||'',\n    data:fetched.data||{},\n    artifacts,\n    issues:fetched.issues||[],\n    assumptions:fetched.assumptions||[],\n    requests:fetched.requests||[],\n    // in_progress (long job): what the feed/monitor may show or poll (CASE-6a9f3bc9-10cb9f: was dropped here).\n    ...(fetched.watch&&typeof fetched.watch==='object'?{watch:fetched.watch}:{})\n  }}];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:\"excel_extractor\",\n  status:'failed',\n  message:String(fetched.message||fetched.error||\"Excel Extractor не вернул факты\"),\n  data:{},\n  artifacts:{},\n  issues:[{type:\"excel_agent_no_result\"}],\n  assumptions:[],\n  requests:[]\n}}];\n"
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst AGENT_ID=\"excel_extractor\";\nconst NO_RESULT_ISSUE=\"no_extract\";\nconst QUESTION_ID=\"Q-clarify\";\nconst ACCEPTS_FILES=[\"xlsx\"];\nconst FAIL_MSG=\"Excel Extractor не вернул факты\";\nconst FAIL_ISSUE=\"excel_agent_no_result\";\nconst OPEN_NAME=\"Open excel session\";\nconst DOWN_MSG=\"Сервис агента „Excel Extractor“ не отвечает по адресу из настроек среды. Проверьте, что он запущен, и перезапустите задачу.\";\nconst LLM_DOWN_MSG=\"Модель чата не ответила. Проверьте доступ к модели в настройках среды и перезапустите задачу.\";\n\nconst fetched=$json||{};\nconst opened=fromNode(OPEN_NAME);\nconst summarized=fromNode('Summarize AI steps');\nconst finalText=stripThink(String(summarized.llm_final_text||fetched.llm_final_text||''));\nconst arts=fetched.artifacts&&typeof fetched.artifacts==='object'?fetched.artifacts:{};\nconst artifacts=Object.fromEntries(Object.entries(arts).filter(([,v])=>typeof v!=='boolean'));\nfunction pack(src){\n  return {json:{\n    task_id:src.task_id||opened.task_id||'',\n    agent_id:AGENT_ID,\n    status:src.status,\n    message:src.message||'',\n    data:src.data||{},\n    artifacts:src.artifacts&&typeof src.artifacts==='object'?src.artifacts:artifacts,\n    issues:src.issues||[],\n    assumptions:src.assumptions||[],\n    requests:src.requests||[],\n    ...(src.watch&&typeof src.watch==='object'?{watch:src.watch}:{})\n  }};\n}\nif(summarized.service_unreachable||fetched.service_unreachable){\n  return [pack({status:'failed',message:DOWN_MSG,data:{},artifacts:{},issues:[{code:'service_unreachable'}],requests:[]})];\n}\nif(summarized.llm_unavailable||fetched.llm_unavailable){\n  return [pack({status:'failed',message:LLM_DOWN_MSG,data:{},artifacts:{},issues:[{code:'llm_unavailable'}],requests:[]})];\n}\nif(fetched.status){\n  const issues=Array.isArray(fetched.issues)?fetched.issues:[];\n  const generic=issues.some(i=>i&&i.type===NO_RESULT_ISSUE);\n  if(generic&&fetched.status==='needs_input'&&finalText&&!looksMachine(finalText)){\n    const reqs=Array.isArray(fetched.requests)?fetched.requests:[];\n    const requests=reqs.length?reqs.map((r,i)=>i===0?{...r,question:finalText}:r):[{question_id:QUESTION_ID,question:finalText,options:[],accepts:{free_text:true,files:ACCEPTS_FILES}}];\n    return [pack({...fetched,message:finalText,requests,artifacts})];\n  }\n  return [pack({...fetched,artifacts})];\n}\nif(finalText&&!looksMachine(finalText)){\n  return [pack({\n    status:'needs_input',\n    message:finalText,\n    data:{llm_final_text:finalText.slice(0,600)},\n    artifacts:{},\n    issues:[{type:NO_RESULT_ISSUE}],\n    requests:[{question_id:QUESTION_ID,question:finalText,options:[],accepts:{free_text:true,files:ACCEPTS_FILES}}]\n  })];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:AGENT_ID,\n  status:'failed',\n  message:String(fetched.message||FAIL_MSG),\n  data:{},\n  artifacts:{},\n  issues:[{type:FAIL_ISSUE}],\n  assumptions:[],\n  requests:[]\n}}];\n"
       },
       "id": "76537492-0ad0-514e-9053-8685f3bf04b1",
       "name": "Format excel result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5040,
-        0
+        6720,
+        85
       ]
     },
     {
@@ -569,451 +886,11 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        5320,
+        7000,
         0
       ],
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "toolDescription": "Компактные листы и размеры книги. Без файла.",
-        "descriptionType": "manual",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"workbook_introspect\" }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id}) }}",
-        "options": {
-          "timeout": 180000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "id": "71b0ad7a-728c-509e-b23d-b9cdc615e2ae",
-      "name": "workbook_introspect",
-      "type": "n8n-nodes-base.httpRequestTool",
-      "typeVersion": 4.4,
-      "position": [
-        3080,
-        340
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
-    },
-    {
-      "parameters": {
-        "toolDescription": "Небольшой preview одного листа. sheet только из инвентаря / introspect.",
-        "descriptionType": "manual",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"sheet_preview\" }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, sheet: $fromAI(\"sheet\", \"Точное имя листа из инвентаря\", \"string\")}) }}",
-        "options": {
-          "timeout": 180000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "id": "669a4f3a-4afd-5a8e-999e-35cfadceb7eb",
-      "name": "sheet_preview",
-      "type": "n8n-nodes-base.httpRequestTool",
-      "typeVersion": 4.4,
-      "position": [
-        3360,
-        170
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
-    },
-    {
-      "parameters": {
-        "toolDescription": "Найти таблицы (если инвентарь пуст или неполный). sheet опционален. Возвращает table_id, range, columns — не книгу.",
-        "descriptionType": "manual",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"detect_tables\" }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, sheet: $fromAI(\"sheet\", \"Ограничить поиск одним листом\", \"string\", \"\")}) }}",
-        "options": {
-          "timeout": 180000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "id": "3a321bbf-c410-53e2-b000-a99958d37337",
-      "name": "detect_tables",
-      "type": "n8n-nodes-base.httpRequestTool",
-      "typeVersion": 4.4,
-      "position": [
-        3080,
-        170
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
-    },
-    {
-      "parameters": {
-        "toolDescription": "Ранжировать найденные таблицы по фразе запроса.",
-        "descriptionType": "manual",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"match_tables\" }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, query: $fromAI(\"query\", \"Что искать: даты ввода, параметры скважин, дебиты, ...\", \"string\")}) }}",
-        "options": {
-          "timeout": 180000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "id": "fd8414df-6c58-5e8d-9f9e-d49bcfa063c1",
-      "name": "match_tables",
-      "type": "n8n-nodes-base.httpRequestTool",
-      "typeVersion": 4.4,
-      "position": [
-        3360,
-        0
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
-    },
-    {
-      "parameters": {
-        "toolDescription": "Колонки, число строк и sample одной таблицы. table_id только из инвентаря / detect.",
-        "descriptionType": "manual",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"describe_table\" }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, table_id: $fromAI(\"table_id\", \"table_id из инвентаря\", \"string\")}) }}",
-        "options": {
-          "timeout": 180000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "id": "96de5f67-f2d4-5264-a64d-a957f04be6d2",
-      "name": "describe_table",
-      "type": "n8n-nodes-base.httpRequestTool",
-      "typeVersion": 4.4,
-      "position": [
-        3080,
-        0
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
-    },
-    {
-      "parameters": {
-        "toolDescription": "Ограниченные distinct-значения одной колонки — чтобы понять, что в ней лежит.",
-        "descriptionType": "manual",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"list_column_values\" }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, table_id: $fromAI(\"table_id\", \"table_id из инвентаря\", \"string\"), column: $fromAI(\"column\", \"Точное имя колонки из инвентаря\", \"string\")}) }}",
-        "options": {
-          "timeout": 180000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "id": "217189e1-947c-5e4f-b109-ff47a44e265f",
-      "name": "list_column_values",
-      "type": "n8n-nodes-base.httpRequestTool",
-      "typeVersion": 4.4,
-      "position": [
-        3360,
-        -170
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
-    },
-    {
-      "parameters": {
-        "toolDescription": "Строки таблицы для прочих данных (дебиты, история). select и filters — JSON-массивы: [\"well\",\"date\"] и [{\"field\":\"well\",\"operator\":\"eq\",\"value\":\"101\"}].",
-        "descriptionType": "manual",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"query_table\" }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, table_id: $fromAI(\"table_id\", \"table_id из инвентаря\", \"string\"), select: $fromAI(\"select\", \"JSON-текст. Массив имён колонок, например ['well','date']\", \"string\", \"\"), filters: $fromAI(\"filters\", \"JSON-текст. Массив {field, operator, value}\", \"string\", \"\"), limit: $fromAI(\"limit\", \"Лимит строк, по умолчанию 200\", \"string\", \"\")}) }}",
-        "options": {
-          "timeout": 180000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "id": "11d8897f-cc55-5326-b643-3bd461d3602b",
-      "name": "query_table",
-      "type": "n8n-nodes-base.httpRequestTool",
-      "typeVersion": 4.4,
-      "position": [
-        3080,
-        -170
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
-    },
-    {
-      "parameters": {
-        "toolDescription": "Извлечь факты «скважина — дата ввода» из выбранной тобой таблицы. Ты указываешь table_id и точные имена колонок из инвентаря; извлечение детерминированное, колонки проверяются (column_not_found / column_not_dates вернутся тебе).",
-        "descriptionType": "manual",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"extract_commissioning\" }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, table_id: $fromAI(\"table_id\", \"table_id таблицы со скважинами и датами из инвентаря\", \"string\"), well_column: $fromAI(\"well_column\", \"Точное имя колонки со скважинами\", \"string\"), date_column: $fromAI(\"date_column\", \"Точное имя колонки с новой датой ввода (не из исходного .INC)\", \"string\")}) }}",
-        "options": {
-          "timeout": 180000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "id": "fa55ccb0-944f-55c5-971b-8e216a89245c",
-      "name": "extract_commissioning",
-      "type": "n8n-nodes-base.httpRequestTool",
-      "typeVersion": 4.4,
-      "position": [
-        3360,
-        -340
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
-    },
-    {
-      "parameters": {
-        "toolDescription": "Извлечь таблицу параметров новых скважин (группа, интервал MD, диаметр, режим, дебит, BHP, VFP, файл траектории). Ты указываешь table_id, колонку скважин и mapping колонок на поля; извлечение детерминированное.",
-        "descriptionType": "manual",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"extract_well_parameters\" }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, table_id: $fromAI(\"table_id\", \"table_id таблицы параметров из инвентаря\", \"string\"), well_column: $fromAI(\"well_column\", \"Точное имя колонки со скважинами\", \"string\"), mapping: $fromAI(\"mapping\", \"JSON-текст. JSON-объект {поле: колонка}: date, group, phase, i, j, md_top, md_bot, diameter, control, rate, bhp, thp, vfp_table, welltrack_include → точные имена колонок\", \"string\", \"\")}) }}",
-        "options": {
-          "timeout": 180000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "id": "3364b250-c973-5052-b385-404c10836cc7",
-      "name": "extract_well_parameters",
-      "type": "n8n-nodes-base.httpRequestTool",
-      "typeVersion": 4.4,
-      "position": [
-        3080,
-        -340
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
-    },
-    {
-      "parameters": {
-        "toolDescription": "Извлечь любую таблицу как именованный набор данных (строки под data[name] + JSON-артефакт). Ты указываешь table_id, латинское name (из expected_output или по смыслу задачи) и columns {поле: колонка}; извлечение детерминированное. Не для дат ввода (extract_commissioning) и не для параметров новых скважин (extract_well_parameters).",
-        "descriptionType": "manual",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"extract_table\" }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, table_id: $fromAI(\"table_id\", \"table_id таблицы из инвентаря\", \"string\"), name: $fromAI(\"name\", \"Латинское имя набора: то, что в expected_output.datasets[].name, иначе well_events / oil_rates / …\", \"string\"), columns: $fromAI(\"columns\", \"JSON-текст. JSON-объект {поле: точная колонка из инвентаря}. Пусто — все колонки, имена полей из заголовков\", \"string\", \"\"), title: $fromAI(\"title\", \"Короткое русское название набора для ленты\", \"string\", \"\"), types: $fromAI(\"types\", \"JSON-текст. JSON-объект {поле: text|number|date|boolean}; пусто — тип по значениям\", \"string\", \"\"), filters: $fromAI(\"filters\", \"JSON-текст. JSON-массив {field, operator, value} по колонке или полю\", \"string\", \"\"), key_field: $fromAI(\"key_field\", \"Поле-ключ: дубликаты отбрасываются, первое вхождение остаётся\", \"string\", \"\"), unpivot: $fromAI(\"unpivot\", \"JSON-текст. JSON {columns: [широкие колонки] или rest, name_field: date, value_field: rate} — широкая таблица в длинные строки\", \"string\", \"\")}) }}",
-        "options": {
-          "timeout": 180000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "id": "986f064f-3468-5659-bee4-c643aa5d373c",
-      "name": "extract_table",
-      "type": "n8n-nodes-base.httpRequestTool",
-      "typeVersion": 4.4,
-      "position": [
-        3360,
-        -510
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
-    },
-    {
-      "parameters": {
-        "toolDescription": "Спросить инженера одним вопросом по-русски, когда по инвентарю нельзя выбрать таблицу или колонку. Варианты показываются кнопками. Не для ошибок вызова инструментов.",
-        "descriptionType": "manual",
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/agent-tools/' + \"ask_engineer\" }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({session_id: $('Open excel session').first().json.session_id, question: $fromAI(\"question\", \"Обычная русская фраза: что нужно уточнить и зачем, без имён полей и JSON\", \"string\"), options: $fromAI(\"options\", \"Варианты через точку с запятой, как их видит инженер (названия листов/колонок); пусто — свободный ответ\", \"string\", \"\"), topic: $fromAI(\"topic\", \"Короткая латинская тема вопроса, например date_column\", \"string\", \"\")}) }}",
-        "options": {
-          "timeout": 180000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "id": "6eaa89b6-7dcf-5bfa-82fd-72a86b3c22ad",
-      "name": "ask_engineer",
-      "type": "n8n-nodes-base.httpRequestTool",
-      "typeVersion": 4.4,
-      "position": [
-        3080,
-        -510
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
     }
   ],
   "connections": {
@@ -1149,150 +1026,244 @@
       "main": [
         [
           {
-            "node": "Excel Extractor AI Agent",
+            "node": "Activity — Excel Extractor RAG",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Excel Extractor Chat Model — Qwen": {
-      "ai_languageModel": [
-        [
-          {
-            "node": "Excel Extractor AI Agent",
-            "type": "ai_languageModel",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "workbook_introspect": {
-      "ai_tool": [
-        [
-          {
-            "node": "Excel Extractor AI Agent",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "sheet_preview": {
-      "ai_tool": [
-        [
-          {
-            "node": "Excel Extractor AI Agent",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "detect_tables": {
-      "ai_tool": [
-        [
-          {
-            "node": "Excel Extractor AI Agent",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "match_tables": {
-      "ai_tool": [
-        [
-          {
-            "node": "Excel Extractor AI Agent",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "describe_table": {
-      "ai_tool": [
-        [
-          {
-            "node": "Excel Extractor AI Agent",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "list_column_values": {
-      "ai_tool": [
-        [
-          {
-            "node": "Excel Extractor AI Agent",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "query_table": {
-      "ai_tool": [
-        [
-          {
-            "node": "Excel Extractor AI Agent",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "extract_commissioning": {
-      "ai_tool": [
-        [
-          {
-            "node": "Excel Extractor AI Agent",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "extract_well_parameters": {
-      "ai_tool": [
-        [
-          {
-            "node": "Excel Extractor AI Agent",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "extract_table": {
-      "ai_tool": [
-        [
-          {
-            "node": "Excel Extractor AI Agent",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "ask_engineer": {
-      "ai_tool": [
-        [
-          {
-            "node": "Excel Extractor AI Agent",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Excel Extractor AI Agent": {
+    "Activity — Excel Extractor RAG": {
       "main": [
         [
           {
+            "node": "Restore after Excel Extractor RAG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format excel result": {
+      "main": [
+        [
+          {
+            "node": "Close excel session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close excel session": {
+      "main": [
+        [
+          {
+            "node": "Restore after Excel Extractor activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after Excel Extractor RAG": {
+      "main": [
+        [
+          {
+            "node": "Build chat request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build chat request": {
+      "main": [
+        [
+          {
+            "node": "Excel Extractor Agent chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Excel Extractor Agent chat": {
+      "main": [
+        [
+          {
+            "node": "Parse agent chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse agent chat": {
+      "main": [
+        [
+          {
+            "node": "Activity — Excel Extractor LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Excel Extractor LLM": {
+      "main": [
+        [
+          {
+            "node": "Restore after Excel Extractor LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after Excel Extractor LLM": {
+      "main": [
+        [
+          {
+            "node": "Agent loop router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent loop router": {
+      "main": [
+        [
+          {
+            "node": "Build chat request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare tool call",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare retrieve request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Summarize AI steps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare tool call": {
+      "main": [
+        [
+          {
+            "node": "Skip unknown tool?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip unknown tool?": {
+      "main": [
+        [
+          {
+            "node": "Append tool result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call agent tool",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call agent tool": {
+      "main": [
+        [
+          {
+            "node": "Append tool result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append tool result": {
+      "main": [
+        [
+          {
+            "node": "Agent loop router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare retrieve request": {
+      "main": [
+        [
+          {
+            "node": "Retrieve knowledge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retrieve knowledge": {
+      "main": [
+        [
+          {
+            "node": "Attach retrieve evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach retrieve evidence": {
+      "main": [
+        [
+          {
+            "node": "Activity — Excel Extractor retrieve",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — Excel Extractor retrieve": {
+      "main": [
+        [
+          {
+            "node": "Restore after Excel Extractor retrieve",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after Excel Extractor retrieve": {
+      "main": [
+        [
+          {
+            "node": "Agent loop router",
             "type": "main",
             "index": 0
           }
@@ -1325,24 +1296,6 @@
       "main": [
         [
           {
-            "node": "Result stored?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Result stored?": {
-      "main": [
-        [
-          {
-            "node": "Format excel result",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
             "node": "Fetch excel result",
             "type": "main",
             "index": 0
@@ -1355,28 +1308,6 @@
         [
           {
             "node": "Format excel result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Format excel result": {
-      "main": [
-        [
-          {
-            "node": "Close excel session",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Close excel session": {
-      "main": [
-        [
-          {
-            "node": "Restore after Excel Extractor activity",
             "type": "main",
             "index": 0
           }
@@ -1397,5 +1328,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "82311165-419a-4698-8e51-2578946bd760"
+  "versionId": "c4d88e91-1590-415f-94ff-3461247d9150"
 }

@@ -65,6 +65,7 @@ def test_records_levels_sources_steps_and_links() -> None:
     assert handoff["source"] == "orchestrator" and handoff["detail"]["handoff_message"] == "Извлеките даты ввода" and handoff["detail"]["agent_task"] == {"objective": "даты"}
     accepted = by_kind["agent.accepted"][0]
     assert accepted["source"] == "agent:excel_extractor" and accepted["execution_url"] == "https://n8n.corp/workflow/wf-excel/executions/4712"
+    assert accepted["actor"] == "excel_extractor" and accepted["status"] == "running"
 
     failed_call, ok_call = by_kind["trace.tool"]
     assert failed_call["level"] == "warn" and failed_call["title"] == "excel_extractor: extract_commissioning → ошибка column_not_found" and failed_call["duration_ms"] == 12
@@ -77,6 +78,7 @@ def test_records_levels_sources_steps_and_links() -> None:
     assert summary["steps"] == 2 and summary["tool_calls"] == 2 and summary["hitl_rounds"] == 1 and summary["handoffs"] == 1
     assert summary["errors"] == 0 and summary["warnings"] == 2 and summary["agents"] == ["excel_extractor"]
     assert summary["tool_calls_by_agent"] == {"excel_extractor": 2}
+    assert summary["llm_truncated"] == 0 and summary["rag_empty"] == 0 and summary["kb_calls"] == 0
     steps = {s["step"]: s for s in log["steps"]}
     assert steps[0]["title"] == "Старт" and steps[1]["agent_id"] == "excel_extractor" and steps[1]["tool_calls"] == 2 and steps[1]["level"] == "warn"
     assert steps[2]["action_type"] == "finish" and steps[2]["duration_ms"] is not None
@@ -200,7 +202,9 @@ def test_threshold_violations_name_the_log_record() -> None:
     assert any("steps=2 > 1" in p and "seq=" in p for p in steps)
     tools = case_log.threshold_violations(records, max_warnings=10, max_steps=6, max_tool_calls_per_agent=1)
     assert any("tool_calls[excel_extractor]=2 > 1" in p and "seq=" in p for p in tools)
-    skipped = case_log.threshold_violations(records, max_warnings=None, max_steps=None, max_tool_calls_per_agent=None)
+    skipped = case_log.threshold_violations(
+        records, max_warnings=None, max_steps=None, max_tool_calls_per_agent=None, max_llm_truncated=None
+    )
     assert skipped == []
 
 
@@ -267,7 +271,202 @@ def test_metrics_cases_since_excludes_older_and_omits_records() -> None:
     assert "records" not in row and "summary" in row
     assert row["summary"]["tool_calls_by_agent"] == {"excel_extractor": 2}
     assert "warnings" in row["summary"] and "steps" in row["summary"]
+    assert "llm_truncated" in row["summary"] and "rag_empty" in row["summary"] and "kb_calls" in row["summary"]
     all_body = client.get("/metrics/cases").json()
     all_ids = {c["case_id"] for c in all_body["cases"]}
     assert old_id in all_ids and new_id in all_ids
     assert all_body["since"] is None
+
+
+def test_trace_rag_llm_resume_titles_gaps_and_chat_hide() -> None:
+    """O25/O27/R9, ревизия 43, executions #228559: tokens on success; resume in log not chat."""
+    import sys
+    from pathlib import Path
+
+    kit_root = Path(__file__).resolve().parents[2] / "mas-agent-kit"
+    sys.path.insert(0, str(kit_root))
+    from mas_agent_kit.activity import EVENT_KINDS as KIT_KINDS
+    from app.contracts import EVENT_KINDS as ACT_KINDS
+
+    assert set(KIT_KINDS) <= set(ACT_KINDS)
+    assert "orchestrator.resume" in ACT_KINDS and "orchestrator.resume" not in KIT_KINDS
+    assert "trace.rag" in ACT_KINDS and "trace.llm" in ACT_KINDS
+
+    case_id = "CASE-log-obs"
+    control_plane.create_case(case_id, "Сдвинуть даты", initial_event={"kind": "case.created", "actor": "user", "status": "new", "status_message": "Задача создана"})
+    control_plane.append_event(
+        case_id,
+        kind="orchestrator.decision",
+        actor="orchestrator",
+        status_message="Передаю задачу агенту Excel.",
+        payload={
+            "action_type": "call_agent",
+            "agent_id": "excel_extractor",
+            "step_count": 1,
+            "llm": {"model": "qwen/qwen3.6-27b", "prompt_tokens": 1200, "completion_tokens": 80, "reasoning_tokens": 0, "finish_reason": "stop"},
+            "rag": {"query": "даты ввода скважин", "status": "ready", "cards": [{"knowledge_id": "route-mas-thin-orchestrator", "rrf_score": 0.016, "branches": ["semantic"]}]},
+            **EXEC,
+        },
+    )
+    control_plane.append_event(
+        case_id,
+        kind="trace.rag",
+        actor="orchestrator",
+        status_message="База знаний: ready · 1 карточек",
+        payload={"caller": "orchestrator", "query": "даты ввода скважин", "status": "ready", "findings": [], "cards": [{"knowledge_id": "route-mas-thin-orchestrator", "rrf_score": 0.016, "branches": ["semantic"]}], **EXEC},
+    )
+    control_plane.append_event(
+        case_id,
+        kind="trace.llm",
+        actor="orchestrator",
+        status_message="decision: stop · 1280 tok",
+        payload={"role": "decision", "prompt_tokens": 1200, "completion_tokens": 80, "finish_reason": "stop", **EXEC},
+    )
+    control_plane.append_event(
+        case_id,
+        kind="trace.rag",
+        actor="schedule_builder",
+        agent_id="schedule_builder",
+        status_message="База знаний: unavailable · 0 карточек",
+        payload={"caller": "schedule_builder", "query": "сдвинуть даты", "status": "unavailable", "findings": [{"code": "SCHEMA_KEYWORD_SCOPE_REQUIRED"}], "cards": []},
+    )
+    control_plane.append_event(
+        case_id,
+        kind="orchestrator.resume",
+        actor="agent",
+        agent_id="demo_agent",
+        task_id="TASK-long",
+        status="running",
+        status_message="Продолжение по событию агента или системы",
+        payload={"source": "agent", "task_id": "TASK-long", **EXEC},
+    )
+    assert client.post(f"/cases/{case_id}/events", json={
+        "kind": "trace.rag", "actor": "excel_extractor", "agent_id": "excel_extractor",
+        "status_message": "База знаний: ready · 1 карточек",
+        "payload": {"caller": "excel_extractor", "query": "даты", "status": "ready", "cards": [{"knowledge_id": "excel-agent-trust-boundary"}]},
+    }).status_code == 200
+    assert client.post(f"/cases/{case_id}/events", json={
+        "kind": "trace.llm", "actor": "orchestrator",
+        "status_message": "decision: stop · 10 tok",
+        "payload": {"role": "decision", "prompt_tokens": 8, "completion_tokens": 2, "finish_reason": "stop"},
+    }).status_code == 200
+    assert client.post(f"/cases/{case_id}/events", json={"kind": "trace.bogus", "actor": "x"}).status_code == 422
+
+    log = case_log.build_case_log(case_id, n8n_base="https://n8n.corp")
+    by_kind: dict[str, list] = {}
+    for record in log["records"]:
+        by_kind.setdefault(record["kind"], []).append(record)
+
+    decision = by_kind["orchestrator.decision"][0]
+    assert "1280 tok" in decision["title"] and "stop" in decision["title"]
+    assert decision["level"] == "info"
+    rag_ok = next(r for r in by_kind["trace.rag"] if r["detail"].get("status") == "ready" and r["source"] == "orchestrator")
+    assert rag_ok["level"] == "debug"
+    assert rag_ok["title"].startswith("База знаний: ready · 1 карточек")
+    assert rag_ok["detail"]["cards"][0]["knowledge_id"] == "route-mas-thin-orchestrator"
+    rag_empty = next(r for r in by_kind["trace.rag"] if r["detail"].get("status") == "unavailable")
+    assert rag_empty["level"] == "warn"
+    assert "SCHEMA_KEYWORD_SCOPE_REQUIRED" in rag_empty["title"]
+    llm = by_kind["trace.llm"][0]
+    assert llm["level"] == "debug" and llm["title"].startswith("decision: stop · 1280 tok")
+    resume = by_kind["orchestrator.resume"][0]
+    assert resume["title"].startswith("Возобновление: источник agent")
+    assert resume["execution_url"] == "https://n8n.corp/workflow/wf-orch/executions/4711"
+    assert log["records"][0].get("gap_ms") is None
+
+    feed = client.get(f"/cases/{case_id}").json()
+    assert not any(str(t.get("event_type") or "").startswith("trace.") for t in feed["activity"])
+    assert not any(e.get("kind") == "orchestrator.resume" for e in feed["events"])
+    assert not any(str(e.get("kind") or "").startswith("trace.") for e in feed["events"])
+    events = client.get(f"/cases/{case_id}/events").json()["events"]
+    assert not any(e.get("kind") == "orchestrator.resume" for e in events)
+    assert collapse_duplicate_events([{"kind": "orchestrator.resume", "status_message": "Продолжение по событию агента или системы"}]) == []
+
+    empty_only = [r for r in log["records"] if r["kind"] == "trace.rag" and r["detail"].get("status") == "unavailable"]
+    empty_sum = case_log.summarize(empty_only, status="running")
+    assert empty_sum["warnings"] == 0
+    assert empty_sum["rag_empty"] == 1
+    assert empty_sum["kb_calls"] == 0
+    assert empty_sum["kb_calls_by_agent"] == {}
+    assert case_log.threshold_violations(empty_only, max_warnings=0, max_steps=6, max_tool_calls_per_agent=4) == []
+    assert any(
+        "rag_empty=1 > 0" in p
+        for p in case_log.threshold_violations(
+            empty_only, max_warnings=0, max_steps=6, max_tool_calls_per_agent=4, max_rag_empty=0
+        )
+    )
+    failed_rag = case_log.log_record({"kind": "trace.rag", "payload": {"status": "failed", "cards": []}})
+    assert failed_rag["level"] == "warn"
+    assert case_log.summarize([failed_rag], status="running")["warnings"] == 1
+    abstain_rag = case_log.log_record({
+        "kind": "trace.rag", "agent_id": "schedule_builder",
+        "payload": {"status": "abstain", "phase": "initial", "findings": [{"code": "SCHEMA_KEYWORD_SCOPE_REQUIRED"}], "cards": []},
+    })
+    assert abstain_rag["level"] == "warn"
+    abstain_sum = case_log.summarize([abstain_rag], status="running")
+    assert abstain_sum["warnings"] == 0 and abstain_sum["rag_empty"] == 1 and abstain_sum["kb_calls"] == 0
+    truncated = case_log.log_record({"kind": "trace.llm", "payload": {"role": "decision", "finish_reason": "length", "prompt_tokens": 1, "completion_tokens": 0}})
+    assert truncated["level"] == "warn"
+    trunc_sum = case_log.summarize([truncated], status="running")
+    assert trunc_sum["warnings"] == 0 and trunc_sum["llm_truncated"] == 1
+    trunc_fail = case_log.threshold_violations([truncated], max_warnings=0, max_steps=6, max_tool_calls_per_agent=4)
+    assert any("llm_truncated=1 > 0" in p for p in trunc_fail)
+
+    stamped = case_log.records_from_events([
+        {"kind": "case.created", "created_at": "2026-09-15T10:00:00+00:00", "payload": {}},
+        {"kind": "trace.llm", "created_at": "2026-09-15T10:00:02+00:00", "payload": {"role": "decision", "finish_reason": "stop", "prompt_tokens": 1, "completion_tokens": 1}},
+    ])
+    assert stamped[0]["gap_ms"] is None and stamped[1]["gap_ms"] == 2000
+
+
+def test_knowledge_counts_and_kb_calls_floor() -> None:
+    """8.4: kb_calls counts on-demand retrieve only; Attach (phase=initial) does not green the floor."""
+    orch = case_log.log_record({
+        "kind": "trace.rag", "actor": "orchestrator",
+        "payload": {"caller": "orchestrator", "status": "ready", "phase": "initial", "cards": [{"knowledge_id": "route-mas-thin-orchestrator"}]},
+    })
+    excel = case_log.log_record({
+        "kind": "trace.rag", "actor": "excel_extractor", "agent_id": "excel_extractor",
+        "payload": {"caller": "excel_extractor", "status": "ready", "phase": "initial", "cards": [{"knowledge_id": "excel-agent-trust-boundary"}]},
+    })
+    builder = case_log.log_record({
+        "kind": "trace.rag", "actor": "schedule_builder", "agent_id": "schedule_builder",
+        "payload": {"caller": "schedule_builder", "status": "abstain", "phase": "initial", "findings": [{"code": "SCHEMA_KEYWORD_SCOPE_REQUIRED"}], "cards": []},
+    })
+    demand = case_log.log_record({
+        "kind": "trace.rag", "actor": "schedule_builder", "agent_id": "schedule_builder",
+        "payload": {"caller": "schedule_builder", "status": "ready", "phase": "on_demand", "cards": [{"knowledge_id": "wefac-v1"}]},
+    })
+    decision = case_log.log_record({
+        "kind": "orchestrator.decision", "actor": "orchestrator",
+        "payload": {"action_type": "continue", "llm_parse": {"error": "llm_truncated_empty", "finish_reason": "length"}},
+    })
+    summary = case_log.summarize([orch, excel, builder, demand, decision], status="running")
+    assert summary["kb_calls"] == 1
+    assert summary["kb_calls_by_agent"] == {"schedule_builder": 1}
+    assert summary["rag_empty"] == 1
+    assert summary["rag_empty_by_agent"] == {"schedule_builder": 1}
+    assert summary["llm_truncated"] == 1
+    default = case_log.threshold_violations([orch, excel, builder], max_warnings=0, max_steps=6, max_tool_calls_per_agent=4)
+    assert default == []
+    floor = case_log.threshold_violations(
+        [orch, excel, builder], max_warnings=0, max_steps=6, max_tool_calls_per_agent=4, min_kb_calls=1
+    )
+    assert any("kb_calls=0 < 1" in p for p in floor)
+
+
+def test_records_from_events_traces_before_decision_share_step() -> None:
+    events = [
+        {"kind": "case.created", "created_at": "2026-09-16T00:00:00+00:00"},
+        {"kind": "trace.rag", "actor": "orchestrator", "payload": {"caller": "orchestrator", "status": "ready", "phase": "initial", "step_count": 1, "cards": []}},
+        {"kind": "trace.llm", "actor": "orchestrator", "payload": {"role": "decision", "step_count": 1, "finish_reason": "stop", "prompt_preview": {"messages": [{"role": "system", "content": "x"}]}}},
+        {"kind": "orchestrator.decision", "payload": {"action_type": "finish", "step_count": 1}},
+        {"kind": "case.finished", "created_at": "2026-09-16T00:01:00+00:00"},
+    ]
+    records = case_log.records_from_events(events)
+    assert [r["kind"] for r in records] == ["case.created", "trace.rag", "trace.llm", "orchestrator.decision", "case.finished"]
+    assert records[0]["step"] == 0
+    assert [r["step"] for r in records[1:]] == [1, 1, 1, 1]
+    groups = case_log.step_groups(records)
+    done = next(g for g in groups if g["step"] == 1)
+    assert done["ended_at"] == "2026-09-16T00:01:00+00:00"

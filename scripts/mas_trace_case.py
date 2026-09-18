@@ -51,6 +51,29 @@ def cases() -> list[dict[str, Any]]:
 
 
 def events(case_id: str) -> list[dict[str, Any]]:
+    """Prefer the developer log (includes ``trace.*`` / resume); fall back to the chat feed."""
+    try:
+        log = get_json(f"{ACTIVITY}/cases/{case_id}/log")
+    except Exception:
+        log = None
+    records = log.get("records") if isinstance(log, dict) else None
+    if isinstance(records, list) and records:
+        out: list[dict[str, Any]] = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            detail = record.get("detail") if isinstance(record.get("detail"), dict) else {}
+            out.append({
+                "kind": record.get("kind"),
+                "actor": record.get("actor") or record.get("agent_id") or "",
+                "status": record.get("status") or "",
+                "status_message": record.get("message") or record.get("title") or "",
+                "payload": detail,
+                "agent_id": record.get("agent_id"),
+                "handoff_message": detail.get("handoff_message"),
+                "task_id": record.get("task_id"),
+            })
+        return out
     data = get_json(f"{ACTIVITY}/cases/{case_id}/events")
     return data.get("events", data) if isinstance(data, dict) else data
 
@@ -114,6 +137,26 @@ def print_timeline(evs: list[dict[str, Any]]) -> None:
                 extra += f" guard={payload.get('guard')}"
             if isinstance(payload.get("verification"), dict):
                 extra += f" verified={payload['verification'].get('all_covered')}"
+            llm = payload.get("llm") if isinstance(payload.get("llm"), dict) else {}
+            if llm:
+                extra += f" finish={llm.get('finish_reason')} tok={int(llm.get('prompt_tokens') or 0)+int(llm.get('completion_tokens') or 0)}"
+            rag = payload.get("rag") if isinstance(payload.get("rag"), dict) else {}
+            if rag:
+                extra += f" rag={rag.get('status')} cards={len(rag.get('cards') or [])}"
+        if kind == "trace.rag":
+            payload = e.get("payload") if isinstance(e.get("payload"), dict) else {}
+            cards = payload.get("cards") if isinstance(payload.get("cards"), list) else []
+            ids = [c.get("knowledge_id") for c in cards if isinstance(c, dict) and c.get("knowledge_id")]
+            extra = f"  query={short(payload.get('query'), 80)} status={payload.get('status')} cards={ids}"
+        if kind == "trace.llm":
+            payload = e.get("payload") if isinstance(e.get("payload"), dict) else {}
+            extra = (
+                f"  role={payload.get('role')} finish={payload.get('finish_reason')}"
+                f" tok={int(payload.get('prompt_tokens') or 0)+int(payload.get('completion_tokens') or 0)}"
+            )
+        if kind == "orchestrator.resume":
+            payload = e.get("payload") if isinstance(e.get("payload"), dict) else {}
+            extra = f"  source={payload.get('source')} execution_id={payload.get('execution_id')}"
         print(f"{kind:22s} | {actor:16s} | {status:12s} | {msg}{extra}")
 
 

@@ -6,7 +6,7 @@ orchestrator step and linked to the n8n execution that produced it. One case = o
 
 Record shape (one per event; ``system.node_error`` rows are merged with ``error_traces``)::
 
-    {seq, at, level, source, kind, step, task_id, agent_id, title, message,
+    {seq, at, level, source, kind, step, task_id, agent_id, actor, status, title, message,
      execution_id, execution_url, duration_ms, detail}
 
 ``level`` is derived deterministically from kind + payload (no free-form levels from producers,
@@ -72,6 +72,14 @@ def record_level(kind: str, event: dict[str, Any]) -> str:
     if kind == "trace.note":
         wanted = str(payload.get("level") or "").strip().lower()
         return wanted if wanted in _LEVEL_RANK else "debug"
+    if kind == "trace.rag":
+        rag_status = str(payload.get("status") or "").strip().lower()
+        return "warn" if rag_status in {"unavailable", "failed", "empty", "abstain", "needs_input"} else "debug"
+    if kind == "trace.llm":
+        finish = str(payload.get("finish_reason") or "").strip().lower()
+        if payload.get("error") or finish == "length":
+            return "warn"
+        return "debug"
     if kind == "orchestrator.status" and payload.get("reason") == "orchestrator_timeout":
         return "warn"
     if kind in {"agent.progress", "orchestrator.status"}:
@@ -121,17 +129,23 @@ def record_title(kind: str, event: dict[str, Any]) -> str:
             title += f" → {payload['agent_id']}"
         if payload.get("guard"):
             title += f" · guard {payload['guard']}"
+        llm = payload.get("llm") if isinstance(payload.get("llm"), dict) else {}
         parse = payload.get("llm_parse") if isinstance(payload.get("llm_parse"), dict) else {}
         parse_err = str(parse.get("output_parser") or parse.get("error") or "").strip()
         if parse_err:
             title += f" · {parse_err[:80]}"
-        finish = str(parse.get("finish_reason") or "").strip()
+        finish = str(llm.get("finish_reason") or parse.get("finish_reason") or "").strip()
         if finish:
             title += f" · {finish}"
-        tokens = parse.get("completion_tokens")
-        if tokens not in (None, "", 0):
-            title += f" · {tokens} tok"
-        think = parse.get("reasoning_tokens")
+        prompt = llm.get("prompt_tokens")
+        completion = llm.get("completion_tokens")
+        if prompt not in (None, "") or completion not in (None, ""):
+            title += f" · {int(prompt or 0) + int(completion or 0)} tok"
+        else:
+            tokens = parse.get("completion_tokens")
+            if tokens not in (None, "", 0):
+                title += f" · {tokens} tok"
+        think = llm.get("reasoning_tokens") if llm.get("reasoning_tokens") not in (None, "", 0) else parse.get("reasoning_tokens")
         if think not in (None, "", 0):
             title += f" · think {think}"
         return title
@@ -178,6 +192,34 @@ def record_title(kind: str, event: dict[str, Any]) -> str:
         return f"{agent}: {tool} → {outcome}"
     if kind == "trace.note":
         return f"{agent}: {_short(payload.get('title') or event.get('status_message') or 'заметка', 120)}"
+    if kind == "trace.rag":
+        rag_status = str(payload.get("status") or "?")
+        cards = payload.get("cards") if isinstance(payload.get("cards"), list) else []
+        title = f"База знаний: {rag_status} · {len(cards)} карточек"
+        phase = str(payload.get("phase") or "").strip()
+        if phase:
+            title += f" · {phase}"
+        caller = str(payload.get("caller") or "").strip()
+        if caller:
+            title += f" · {caller}"
+        codes: list[str] = []
+        for finding in (payload.get("findings") if isinstance(payload.get("findings"), list) else [])[:4]:
+            if isinstance(finding, dict) and finding.get("code"):
+                codes.append(str(finding["code"]))
+            elif isinstance(finding, str) and finding.strip():
+                codes.append(finding.strip())
+        if codes:
+            title += f" · {', '.join(codes)}"
+        return title
+    if kind == "trace.llm":
+        role = str(payload.get("role") or "llm")
+        finish = str(payload.get("finish_reason") or "stop")
+        tokens = int(payload.get("prompt_tokens") or 0) + int(payload.get("completion_tokens") or 0)
+        title = f"{role}: {finish} · {tokens} tok"
+        think = payload.get("reasoning_tokens")
+        if think not in (None, "", 0):
+            title += f" · think {think}"
+        return title
     return kind
 
 
@@ -210,6 +252,8 @@ def log_record(event: dict[str, Any], *, step: int | None = None, n8n_base: str 
         "step": step,
         "task_id": event.get("task_id") or None,
         "agent_id": event.get("agent_id") or None,
+        "actor": event.get("actor") or None,
+        "status": event.get("status") or None,
         "title": record_title(kind, event),
         "message": " ".join(str(event.get("status_message") or "").split()),
         "execution_id": str(payload.get("execution_id") or "") or None,
@@ -282,6 +326,15 @@ def _attach_error_traces(records: list[dict[str, Any]], errors: Iterable[dict[st
     return records
 
 
+def _stamp_gaps(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``gap_ms`` from the previous record's ``at`` (None on the first row)."""
+    prev_at = None
+    for record in records:
+        record["gap_ms"] = _duration_ms(prev_at, record.get("at"))
+        prev_at = record.get("at")
+    return records
+
+
 def records_from_events(events: list[dict[str, Any]], *, n8n_base: str = "") -> list[dict[str, Any]]:
     """Level + source + step for every raw event, in event order. Step 0 = before the first decision."""
     records: list[dict[str, Any]] = []
@@ -291,13 +344,19 @@ def records_from_events(events: list[dict[str, Any]], *, n8n_base: str = "") -> 
             continue
         kind = str(event.get("kind") or "")
         payload = _payload(event)
+        sc = payload.get("step_count")
         if kind == "orchestrator.decision":
             try:
-                step = int(payload.get("step_count") or step + 1)
+                step = int(sc if sc is not None else step + 1)
             except (TypeError, ValueError):
                 step += 1
+        elif sc is not None and kind in {"trace.rag", "trace.llm"}:
+            try:
+                step = int(sc)
+            except (TypeError, ValueError):
+                pass
         records.append(log_record(event, step=step, n8n_base=n8n_base))
-    return records
+    return _stamp_gaps(records)
 
 
 def _duration_ms(start: Any, end: Any) -> int | None:
@@ -351,13 +410,109 @@ def tool_calls_by_agent(records: list[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
+_RAG_EMPTY_STATUSES = frozenset({"unavailable", "empty", "abstain"})
+_LLM_TRUNCATED_ERRORS = frozenset({"llm_truncated_empty", "llm_truncated"})
+
+
+def _record_detail(record: dict[str, Any]) -> dict[str, Any]:
+    detail = record.get("detail")
+    if isinstance(detail, dict):
+        return detail
+    payload = record.get("payload")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _is_llm_truncated(record: dict[str, Any]) -> bool:
+    """``finish_reason=length`` or parser ``llm_truncated_empty`` — thinking ate the answer."""
+    kind = str(record.get("kind") or "")
+    detail = _record_detail(record)
+    if kind == "trace.llm":
+        finish = str(detail.get("finish_reason") or "").strip().lower()
+        err = str(detail.get("error") or "").strip().lower()
+        return finish == "length" or err in _LLM_TRUNCATED_ERRORS
+    if kind == "orchestrator.decision":
+        parse = detail.get("llm_parse") if isinstance(detail.get("llm_parse"), dict) else {}
+        llm = detail.get("llm") if isinstance(detail.get("llm"), dict) else {}
+        err = str(parse.get("error") or parse.get("output_parser") or "").strip().lower()
+        finish = str(llm.get("finish_reason") or parse.get("finish_reason") or "").strip().lower()
+        return finish == "length" or err in _LLM_TRUNCATED_ERRORS
+    return False
+
+
+def _is_rag_empty(record: dict[str, Any]) -> bool:
+    if str(record.get("kind") or "") != "trace.rag":
+        return False
+    detail = _record_detail(record)
+    status = str(detail.get("status") or "").strip().lower()
+    if status == "failed":
+        return False
+    cards = detail.get("cards") if isinstance(detail.get("cards"), list) else []
+    if status in _RAG_EMPTY_STATUSES:
+        return True
+    return not cards
+
+
+def _rag_actor(record: dict[str, Any]) -> str:
+    agent = str(record.get("agent_id") or "").strip()
+    if agent:
+        return agent
+    detail = _record_detail(record)
+    caller = str(detail.get("caller") or "").strip()
+    if caller:
+        return caller
+    source = str(record.get("source") or "")
+    if source.startswith("agent:"):
+        return source.split(":", 1)[-1] or ORCHESTRATOR
+    return ORCHESTRATOR
+
+
+def knowledge_counts(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """T5 counters for ``summarize`` / live ``report.json``.
+
+    ``kb_calls`` = agent ``trace.rag`` with ``phase=on_demand`` (``retrieve_knowledge``).
+    The starting Attach is ``phase=initial`` and must not green the phase-8 floor.
+    """
+    empty_by: dict[str, int] = {}
+    kb_by: dict[str, int] = {}
+    truncated = 0
+    empty = 0
+    for record in records:
+        if _is_llm_truncated(record):
+            truncated += 1
+        kind = str(record.get("kind") or "")
+        if kind != "trace.rag":
+            continue
+        actor = _rag_actor(record)
+        if actor != ORCHESTRATOR:
+            phase = str(_record_detail(record).get("phase") or "").strip().lower()
+            if phase == "on_demand":
+                kb_by[actor] = kb_by.get(actor, 0) + 1
+        if _is_rag_empty(record):
+            empty += 1
+            empty_by[actor] = empty_by.get(actor, 0) + 1
+    return {
+        "llm_truncated": truncated,
+        "rag_empty": empty,
+        "rag_empty_by_agent": dict(sorted(empty_by.items())),
+        "kb_calls": sum(kb_by.values()),
+        "kb_calls_by_agent": dict(sorted(kb_by.items())),
+    }
+
+
 def _quality_warning(record: dict[str, Any]) -> bool:
     """α2 warnings: LLM/tool quality, not Activity waiting for a slow webhook ack."""
     if record.get("level") != "warn":
         return False
-    detail = record.get("detail") if isinstance(record.get("detail"), dict) else {}
+    detail = _record_detail(record)
     if record.get("kind") == "orchestrator.status" and detail.get("reason") == "orchestrator_timeout":
         return False
+    # Truncation is ``llm_truncated`` (7.5), not the generic warning bucket.
+    if record.get("kind") == "trace.llm" and _is_llm_truncated(record):
+        return False
+    # Empty / unavailable RAG is expected until phase 8 (Builder commissioning has no keyword scope).
+    # A failed retrieval is a real outage and still counts.
+    if record.get("kind") == "trace.rag":
+        return str(detail.get("status") or "").strip().lower() == "failed"
     return True
 
 
@@ -366,6 +521,7 @@ def summarize(records: list[dict[str, Any]], *, status: str | None) -> dict[str,
     started = records[0]["at"] if records else None
     ended = records[-1]["at"] if records else None
     by_agent = tool_calls_by_agent(records)
+    knowledge = knowledge_counts(records)
     return {
         "status": status,
         "records": len(records),
@@ -376,6 +532,11 @@ def summarize(records: list[dict[str, Any]], *, status: str | None) -> dict[str,
         "handoffs": sum(1 for r in records if r["kind"] == "agent.handoff"),
         "errors": sum(1 for r in records if r["level"] == "error"),
         "warnings": sum(1 for r in records if _quality_warning(r)),
+        "llm_truncated": knowledge["llm_truncated"],
+        "rag_empty": knowledge["rag_empty"],
+        "rag_empty_by_agent": knowledge["rag_empty_by_agent"],
+        "kb_calls": knowledge["kb_calls"],
+        "kb_calls_by_agent": knowledge["kb_calls_by_agent"],
         "agents": agents,
         "started_at": started,
         "ended_at": ended,
@@ -397,11 +558,16 @@ def threshold_violations(
     max_warnings: int | None = 0,
     max_steps: int | None = 6,
     max_tool_calls_per_agent: int | None = 4,
+    max_llm_truncated: int | None = 0,
+    max_rag_empty: int | None = None,
+    min_kb_calls: int | None = None,
 ) -> list[str]:
-    """α2: exceeding a live threshold names the first log record over the limit.
+    """α2 + T5: exceeding a live threshold names the first log record over the limit.
 
     ``None`` skips that check (recovery cases that are *expected* to warn or retry).
     Guard decisions and failed ``trace.tool`` both count as ``warnings`` — same as ``summarize``.
+    Commissioning/datasets live sets ``max_rag_empty=0`` after 8.1.
+    ``min_kb_calls`` is on for ``excel_apply_dataset`` after 8.4 (Builder ``retrieve_knowledge``).
     """
     problems: list[str] = []
     warns = [r for r in records if _quality_warning(r)]
@@ -426,6 +592,17 @@ def threshold_violations(
             if n > max_tool_calls_per_agent:
                 extra = calls[max_tool_calls_per_agent]
                 problems.append(f"tool_calls[{agent_id}]={n} > {max_tool_calls_per_agent}:{_pointer(extra)}")
+    truncated = [r for r in records if _is_llm_truncated(r)]
+    if max_llm_truncated is not None and len(truncated) > max_llm_truncated:
+        extra = truncated[max_llm_truncated] if len(truncated) > max_llm_truncated else truncated[-1]
+        problems.append(f"llm_truncated={len(truncated)} > {max_llm_truncated}:{_pointer(extra)}")
+    empty = [r for r in records if _is_rag_empty(r)]
+    if max_rag_empty is not None and len(empty) > max_rag_empty:
+        extra = empty[max_rag_empty] if len(empty) > max_rag_empty else empty[-1]
+        problems.append(f"rag_empty={len(empty)} > {max_rag_empty}:{_pointer(extra)}")
+    kb = knowledge_counts(records)["kb_calls"]
+    if min_kb_calls is not None and kb < min_kb_calls:
+        problems.append(f"kb_calls={kb} < {min_kb_calls}")
     return problems
 
 
@@ -455,6 +632,9 @@ def metrics_for_cases(*, since: datetime | None = None, n8n_base: str = "") -> d
         "warnings": sum(int((c["summary"] or {}).get("warnings") or 0) for c in cases_out),
         "errors": sum(int((c["summary"] or {}).get("errors") or 0) for c in cases_out),
         "hitl_rounds": sum(int((c["summary"] or {}).get("hitl_rounds") or 0) for c in cases_out),
+        "llm_truncated": sum(int((c["summary"] or {}).get("llm_truncated") or 0) for c in cases_out),
+        "rag_empty": sum(int((c["summary"] or {}).get("rag_empty") or 0) for c in cases_out),
+        "kb_calls": sum(int((c["summary"] or {}).get("kb_calls") or 0) for c in cases_out),
         "duration_ms": sum(
             int(c["summary"]["duration_ms"])
             for c in cases_out
@@ -470,7 +650,7 @@ def build_case_log(case_id: str, *, n8n_base: str = "") -> dict[str, Any] | None
     if row is None:
         return None
     records = records_from_events(list(snap.get("events") or []), n8n_base=n8n_base)
-    records = _attach_error_traces(records, control_plane.list_errors(case_id), n8n_base=n8n_base)
+    records = _stamp_gaps(_attach_error_traces(records, control_plane.list_errors(case_id), n8n_base=n8n_base))
     status = row.get("status")
     return {
         "case_id": case_id,
@@ -501,6 +681,7 @@ __all__ = [
     "record_title",
     "records_from_events",
     "step_groups",
+    "knowledge_counts",
     "summarize",
     "threshold_violations",
     "to_ndjson",

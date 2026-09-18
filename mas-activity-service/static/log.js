@@ -80,6 +80,41 @@
     try { return JSON.stringify(value, null, 2); } catch (_) { return text(value); }
   }
 
+  const PROMPT_ROLE = { system: "система", user: "запрос", assistant: "модель", tool: "инструмент", omitted: "…" };
+
+  function promptMessages(preview) {
+    if (Array.isArray(preview)) return preview;
+    if (preview && typeof preview === "object" && Array.isArray(preview.messages)) return preview.messages;
+    return null;
+  }
+
+  function promptHtml(preview) {
+    const msgs = promptMessages(preview);
+    if (msgs && msgs.length) {
+      return `<div class="log-prompt">${msgs.map((m) => {
+        const role = String((m && m.role) || "");
+        const label = PROMPT_ROLE[role] || role || "сообщение";
+        if (role === "omitted") {
+          return `<div class="log-prompt-msg" data-role="omitted"><span class="log-prompt-role">${esc(label)}</span><p class="log-prompt-text">пропущено ${esc(String((m && m.count) || 0))} сообщ.</p></div>`;
+        }
+        const extra = m && m.tool_calls ? ` · ${m.tool_calls} вызов.` : (m && m.tool_call_id ? ` · ${m.tool_call_id}` : "");
+        return `<div class="log-prompt-msg" data-role="${esc(role)}"><span class="log-prompt-role">${esc(label)}${esc(extra)}</span><pre class="log-prompt-text">${esc(text(m && m.content))}</pre></div>`;
+      }).join("")}</div>`;
+    }
+    if (typeof preview === "string" && preview.trim()) {
+      return `<pre class="log-json">${esc(preview)}</pre>`;
+    }
+    return "";
+  }
+
+  function detailWithoutPrompt(detail) {
+    if (!detail || typeof detail !== "object") return detail;
+    if (detail.prompt_preview == null) return detail;
+    const out = { ...detail };
+    delete out.prompt_preview;
+    return out;
+  }
+
   // ------------------------------------------------------------------ filtering
   function matches(record) {
     if (!state.levels.has(record.level)) return false;
@@ -98,6 +133,9 @@
       { label: "шагов", value: s.steps || 0 },
       { label: "передач агентам", value: s.handoffs || 0 },
       { label: "вызовов инструментов", value: s.tool_calls || 0 },
+      { label: "запросов в базу", value: s.kb_calls || 0 },
+      { label: "пустой RAG", value: s.rag_empty || 0, tone: s.rag_empty ? "warn" : "" },
+      { label: "усечений LLM", value: s.llm_truncated || 0, tone: s.llm_truncated ? "warn" : "" },
       { label: "вопросов инженеру", value: s.hitl_rounds || 0 },
       { label: "предупреждений", value: s.warnings || 0, tone: s.warnings ? "warn" : "" },
       { label: "ошибок", value: s.errors || 0, tone: s.errors ? "error" : "" },
@@ -134,9 +172,22 @@
       ? `<a class="log-exec" href="${esc(record.execution_url)}" target="_blank" rel="noopener" title="Открыть выполнение в n8n">n8n ↗</a>`
       : record.execution_id ? `<span class="log-exec is-plain" title="Идентификатор выполнения n8n">#${esc(record.execution_id)}</span>` : "";
     const dur = record.duration_ms != null ? `<span class="log-dur">${esc(duration(record.duration_ms))}</span>` : "";
+    const gap = record.gap_ms != null && Number(record.gap_ms) > 0 ? `<span class="log-gap">+${esc(duration(record.gap_ms))}</span>` : "";
     const message = record.message && record.message !== record.title ? `<p class="log-msg">${esc(record.message)}</p>` : "";
     const task = record.task_id ? `<span class="log-task" title="Задача агента">${esc(record.task_id)}</span>` : "";
-    const detail = record.detail && Object.keys(record.detail).length ? `<pre class="log-json">${esc(pretty(record.detail))}</pre>` : `<p class="log-msg is-muted">Без деталей.</p>`;
+    const cards = record.detail && Array.isArray(record.detail.cards) ? record.detail.cards : [];
+    const cardChips = cards.length
+      ? `<div class="log-cards">${cards.map((c) => {
+          const id = c && c.knowledge_id ? String(c.knowledge_id) : "";
+          const score = c && c.rrf_score != null && c.rrf_score !== "" ? ` · ${Number(c.rrf_score).toFixed(3)}` : "";
+          const branches = Array.isArray(c && c.branches) && c.branches.length ? ` · ${c.branches.join(",")}` : "";
+          return `<span class="log-card">${esc(id)}${esc(score)}${esc(branches)}</span>`;
+        }).join("")}</div>`
+      : "";
+    const prompt = promptHtml(record.detail && record.detail.prompt_preview);
+    const jsonDetail = detailWithoutPrompt(record.detail);
+    const jsonBlock = jsonDetail && Object.keys(jsonDetail).length ? `<pre class="log-json">${esc(pretty(jsonDetail))}</pre>` : "";
+    const detailBlock = prompt + jsonBlock || `<p class="log-msg is-muted">Без деталей.</p>`;
     return `
       <li class="log-row" data-seq="${esc(seq)}" data-level="${esc(record.level)}" data-kind="${esc(record.kind)}">
         <button type="button" class="log-row-head" aria-expanded="${open}">
@@ -144,12 +195,13 @@
           <span class="log-dot" aria-label="${esc(LEVEL_LABEL[record.level] || record.level)}"></span>
           <span class="log-source" data-source="${esc(record.source)}">${esc(sourceLabel(record.source))}</span>
           <span class="log-title">${esc(record.title)}</span>
-          ${task}${dur}${link}
+          ${task}${gap}${dur}${link}
           <span class="log-kind">${esc(record.kind)}</span>
         </button>
         <div class="log-row-detail" ${open ? "" : "hidden"}>
           ${message}
-          ${detail}
+          ${cardChips}
+          ${detailBlock}
           <div class="log-row-actions">
             <button type="button" class="btn btn-quiet log-copy" data-copy="${esc(seq)}">Копировать JSON</button>
           </div>

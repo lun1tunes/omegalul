@@ -9,22 +9,16 @@ import json
 import uuid
 from pathlib import Path
 
+from mas_knowledge_spaces import KEYWORDS, namespaces_js
+
 RAG_DIR = Path(__file__).resolve().parents[1] / "rag"
 
+NAMESPACES_JS = namespaces_js()
 
-KEYWORDS = [
-    "DATES", "INCLUDE", "GRUPTREE", "WELSPECS", "WELLTRACK", "COMPDATMD",
-    "WCONHIST", "WCONPROD", "WCONINJE", "GCONPROD", "GCONINJE", "GUIDERAT", "GSATPROD", "GSATINJE", "WELLSTRE", "WINJGAS", "GINJGAS", "BRANPROP", "NODEPROP", "GNETDP", "NETBALAN",
-    "FRACTURE_TEMPLATE", "FRACTURE_SPECS", "FRACTURE_STAGE", "WECON", "WTEST",
-    "WELTARG", "WNETDP", "WPIMULT", "WDFAC", "WEFAC", "WELOPEN", "WELDRAW", "WLIST", "WFRACP", "WFRACPL",
-    "VFPPROD", "WVFPDP", "ACTIONX", "DELAYACT", "ENDACTIO", "UDQ", "UDT", "APPLYSCRIPT",
-]
-
-NAMESPACES_JS = r"""
-const NAMESPACES={schedule_mvp:{types:['keyword_instruction','worked_example'],keywordMode:'schedule',requireCoverage:true,requireSchema:true,section:'SCHEDULE'},excel_protocol:{types:['protocol_instruction'],keywordMode:'open',requireCoverage:true,requireSchema:false,section:'EXCEL'},orchestrator_routing:{types:['routing_card'],keywordMode:'open',requireCoverage:false,requireSchema:false,section:'ORCHESTRATOR'},specialist_template:{types:['capability_instruction','worked_example'],keywordMode:'open',requireCoverage:true,requireSchema:false,section:'SPECIALIST'}};
-const COVERAGE_TYPES=new Set(['keyword_instruction','protocol_instruction','capability_instruction']);
-const ALLOWED_BASES=new Set(Object.keys(NAMESPACES));
-""".strip()
+# Field contour embeddings. Do not set n8n Dimensions — provider default (bge-m3 = 1024).
+# New PGVector table: never mix with text-embedding-3-small (1536) in v1.
+VECTOR_TABLE = "tnavigator_schedule_knowledge_v2"
+EMBEDDING_MODEL = "baai/bge-m3"
 
 
 def _credential(name: str) -> dict:
@@ -53,16 +47,18 @@ const knowledgeId=clean(raw.knowledge_id||raw.document_id||m.knowledge_id||m.doc
 const rawKeywords=list(raw.keywords||raw.keyword_families||m.keywords||m.keyword_families);
 const keywords=ns.keywordMode==='schedule'?rawKeywords.map(v=>v.toUpperCase()).filter(v=>allowed.has(v)):rawKeywords.map(v=>v.toUpperCase()).filter(Boolean);
 const topics=list(raw.topics||m.topics),taskPatterns=list(raw.task_patterns||m.task_patterns),examples=arr(raw.examples)?raw.examples.filter(obj).slice(0,100):[];
-const text=clean(raw.text||raw.document_text),title=clean(raw.title||m.title||knowledgeId),author=clean(raw.author||raw.approved_by||m.author||m.approved_by),accessScope=clean(raw.access_scope||m.access_scope||'petroleum-engineering');
+const text=clean(raw.text||raw.document_text),summary=clean(raw.summary||m.summary),title=clean(raw.title||m.title||knowledgeId),author=clean(raw.author||raw.approved_by||m.author||m.approved_by),accessScope=clean(raw.access_scope||m.access_scope||'petroleum-engineering');
 const authority='department_expert',sourceHash=clean(raw.source_hash||m.source_hash).toLowerCase(),page=clean(raw.page||m.page),heading=clean(raw.heading||m.heading||title);
 const simulatorFamily=targetBase==='schedule_mvp'?list(raw.simulator_family||m.simulator_family||['E100','E300','tNavigator']):list(raw.simulator_family||m.simulator_family||[]);
-const body={contract:'schedule_knowledge_block',contract_version:'1.0',target_base:targetBase,knowledge_type:knowledgeType,knowledge_id:knowledgeId,revision,title,keywords,topics,task_patterns:taskPatterns,simulator_family:simulatorFamily,status,author,text,examples,schema_catalogue:catalogueProvided?catalogue:null};
-const searchable=[title,text,keywords.join(' '),topics.join(' '),taskPatterns.join(' '),...examples.flatMap(e=>[clean(e.title),clean(e.task),clean(e.schedule_text),clean(e.explanation)])].filter(Boolean).join('\n\n');
+const body={contract:'schedule_knowledge_block',contract_version:'1.0',target_base:targetBase,knowledge_type:knowledgeType,knowledge_id:knowledgeId,revision,title,keywords,topics,task_patterns:taskPatterns,simulator_family:simulatorFamily,status,author,text,summary,examples,schema_catalogue:catalogueProvided?catalogue:null};
+const searchable=[title,summary,text,keywords.join(' '),topics.join(' '),taskPatterns.join(' '),...examples.flatMap(e=>[clean(e.title),clean(e.task),clean(e.schedule_text),clean(e.explanation)])].filter(Boolean).join('\n\n');
 if(!ALLOWED_BASES.has(targetBase))findings.push({code:'TARGET_BASE_NOT_ALLOWLISTED',severity:'error',target_base:targetBase});
 if(!allowTypes.has(knowledgeType))findings.push({code:'KNOWLEDGE_TYPE_INVALID',severity:'error'});if(!knowledgeId)findings.push({code:'KNOWLEDGE_ID_REQUIRED',severity:'error'});if(!revision)findings.push({code:'REVISION_REQUIRED',severity:'error'});if(!title)findings.push({code:'TITLE_REQUIRED',severity:'error'});if(!author)findings.push({code:'EXPERT_AUTHOR_REQUIRED',severity:'error'});if(!accessScope)findings.push({code:'ACCESS_SCOPE_REQUIRED',severity:'error'});
 if(status!=='active')findings.push({code:'ACTIVE_KNOWLEDGE_REQUIRED',severity:'error'});if(!searchable)findings.push({code:'KNOWLEDGE_TEXT_REQUIRED',severity:'error'});if(searchable.length>2000000)findings.push({code:'KNOWLEDGE_TEXT_TOO_LARGE',severity:'error'});
-if(!keywords.length)findings.push({code:ns.keywordMode==='schedule'?'NO_SCHEDULE_KEYWORD_FOUND':'KNOWLEDGE_TAGS_REQUIRED',severity:'error'});
+if(!keywords.length){const allowEmpty=ns.keywordMode==='schedule'&&knowledgeType==='keyword_instruction'&&!!text;if(!allowEmpty)findings.push({code:ns.keywordMode==='schedule'?'NO_SCHEDULE_KEYWORD_FOUND':'KNOWLEDGE_TAGS_REQUIRED',severity:'error'});}
 if(knowledgeType==='keyword_instruction'&&!text)findings.push({code:'FULL_KEYWORD_INSTRUCTION_REQUIRED',severity:'error'});
+if(knowledgeType==='keyword_instruction'&&!summary)findings.push({code:'KEYWORD_SUMMARY_REQUIRED',severity:'error'});
+if(knowledgeType==='keyword_instruction'&&summary.length>600)findings.push({code:'KEYWORD_SUMMARY_TOO_LONG',severity:'error'});
 if(knowledgeType==='protocol_instruction'&&!text)findings.push({code:'PROTOCOL_INSTRUCTION_REQUIRED',severity:'error'});
 if(knowledgeType==='routing_card'&&!text)findings.push({code:'ROUTING_CARD_TEXT_REQUIRED',severity:'error'});
 if(knowledgeType==='capability_instruction'&&!text)findings.push({code:'CAPABILITY_INSTRUCTION_REQUIRED',severity:'error'});
@@ -84,8 +80,8 @@ INGEST_RESULT = r"""
 const approved=$('Normalize approved SCHEDULE knowledge').all().map(i=>i.json).filter(x=>x&&x.status==='approved_for_ingestion');
 const diff=$('Select new MAS knowledge').first().json||{};
 const skipped=Array.isArray(diff.skipped_ids)?diff.skipped_ids:(diff.sync_meta&&Array.isArray(diff.sync_meta.skipped_ids)?diff.sync_meta.skipped_ids:[]);
-return[{json:{contract:'schedule_knowledge_ingest_result',contract_version:'1.0',status:approved.length?'ingested':'already_present',inserted:approved.length,skipped:skipped.length,skipped_ids:skipped,knowledge_ids:approved.map(x=>x.metadata?.knowledge_id).filter(Boolean),vector_table:'tnavigator_schedule_knowledge_v1',parent_table:'tnavigator_schedule_knowledge_documents_v1',schema_catalogue_table:'tnavigator_schedule_schema_catalogue_v1',embedding_profile:'configure one identical model/dimensions in ingestion and retrieval',findings:[]}}];
-"""
+return[{json:{contract:'schedule_knowledge_ingest_result',contract_version:'1.0',status:approved.length?'ingested':'already_present',inserted:approved.length,skipped:skipped.length,skipped_ids:skipped,knowledge_ids:approved.map(x=>x.metadata?.knowledge_id).filter(Boolean),vector_table:'VECTOR_TABLE_PLACEHOLDER',parent_table:'tnavigator_schedule_knowledge_documents_v1',schema_catalogue_table:'tnavigator_schedule_schema_catalogue_v1',embedding_profile:'EMBEDDING_MODEL_PLACEHOLDER',findings:[]}}];
+""".replace("VECTOR_TABLE_PLACEHOLDER", VECTOR_TABLE).replace("EMBEDDING_MODEL_PLACEHOLDER", EMBEDDING_MODEL)
 
 
 PREPARE_PARENT_PERSIST = r"""
@@ -100,7 +96,7 @@ return items.map(entry=>{
 PARENT_UPSERT_SQL = """WITH superseded AS (UPDATE tnavigator_schedule_knowledge_documents_v1 SET status='superseded',stored_at=now() WHERE target_base=$1 AND knowledge_id=$2 AND revision<>$3 AND status='active' RETURNING 1), inserted AS (INSERT INTO tnavigator_schedule_knowledge_documents_v1
 (target_base,knowledge_id,revision,knowledge_type,status,keywords,topics,task_patterns,title,body_json,searchable_text,content_hash,access_scope,author)
 VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9,$10::jsonb,$11,$12,$13,$14)
-ON CONFLICT(target_base,knowledge_id,revision) DO UPDATE SET knowledge_type=EXCLUDED.knowledge_type,status=EXCLUDED.status,keywords=EXCLUDED.keywords,topics=EXCLUDED.topics,task_patterns=EXCLUDED.task_patterns,title=EXCLUDED.title,body_json=EXCLUDED.body_json,searchable_text=EXCLUDED.searchable_text,content_hash=EXCLUDED.content_hash,access_scope=EXCLUDED.access_scope,author=EXCLUDED.author,stored_at=now() RETURNING 1), chunks AS (UPDATE tnavigator_schedule_knowledge_v1 t SET metadata=jsonb_set(coalesce(t.metadata,'{}'::jsonb),'{knowledge_status}','"superseded"'::jsonb) WHERE t.metadata->>'target_base'=$1 AND t.metadata->>'knowledge_id'=$2 AND coalesce(t.metadata->>'revision','')<>$3 AND coalesce(t.metadata->>'knowledge_status','')='current' RETURNING 1)
+ON CONFLICT(target_base,knowledge_id,revision) DO UPDATE SET knowledge_type=EXCLUDED.knowledge_type,status=EXCLUDED.status,keywords=EXCLUDED.keywords,topics=EXCLUDED.topics,task_patterns=EXCLUDED.task_patterns,title=EXCLUDED.title,body_json=EXCLUDED.body_json,searchable_text=EXCLUDED.searchable_text,content_hash=EXCLUDED.content_hash,access_scope=EXCLUDED.access_scope,author=EXCLUDED.author,stored_at=now() RETURNING 1), chunks AS (UPDATE tnavigator_schedule_knowledge_v2 t SET metadata=jsonb_set(coalesce(t.metadata,'{}'::jsonb),'{knowledge_status}','"superseded"'::jsonb) WHERE t.metadata->>'target_base'=$1 AND t.metadata->>'knowledge_id'=$2 AND coalesce(t.metadata->>'revision','')<>$3 AND coalesce(t.metadata->>'knowledge_status','')='current' RETURNING 1)
 SELECT count(*)::int AS documents_stored FROM inserted"""
 
 
@@ -134,12 +130,25 @@ CREATE TABLE IF NOT EXISTS tnavigator_schedule_schema_catalogue_v1 (
  approved_by text NOT NULL,approval_gate_id text NOT NULL,target_base text NOT NULL DEFAULT 'schedule_mvp',
  schema_catalogue jsonb NOT NULL,stored_at timestamptz NOT NULL DEFAULT now());
 ALTER TABLE tnavigator_schedule_schema_catalogue_v1 ADD COLUMN IF NOT EXISTS target_base text NOT NULL DEFAULT 'schedule_mvp';
+CREATE TABLE IF NOT EXISTS tnavigator_schedule_knowledge_v2 (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ text text,
+ metadata jsonb,
+ embedding vector
+);
 SELECT count(*)::int AS parent_tables_ready FROM tnavigator_schedule_knowledge_documents_v1"""
 
 
-LOOKUP_EXISTING_SQL = """SELECT target_base, knowledge_id, revision, content_hash
-FROM tnavigator_schedule_knowledge_documents_v1
-WHERE status='active'"""
+LOOKUP_EXISTING_SQL = """SELECT d.target_base, d.knowledge_id, d.revision, d.content_hash,
+ EXISTS (
+   SELECT 1 FROM tnavigator_schedule_knowledge_v2 t
+   WHERE t.metadata->>'target_base'=d.target_base
+     AND t.metadata->>'knowledge_id'=d.knowledge_id
+     AND coalesce(t.metadata->>'revision','')=d.revision
+     AND coalesce(t.metadata->>'knowledge_status','')='current'
+ ) AS in_vector
+FROM tnavigator_schedule_knowledge_documents_v1 d
+WHERE d.status='active'"""
 
 
 FINALIZE_INGEST_SQL = """CREATE TABLE IF NOT EXISTS tnavigator_schedule_knowledge_documents_v1 (
@@ -155,9 +164,16 @@ CREATE TABLE IF NOT EXISTS tnavigator_schedule_schema_catalogue_v1 (
  approved_by text NOT NULL,approval_gate_id text NOT NULL,target_base text NOT NULL DEFAULT 'schedule_mvp',
  schema_catalogue jsonb NOT NULL,stored_at timestamptz NOT NULL DEFAULT now());
 ALTER TABLE tnavigator_schedule_schema_catalogue_v1 ADD COLUMN IF NOT EXISTS target_base text NOT NULL DEFAULT 'schedule_mvp';
-CREATE INDEX IF NOT EXISTS tn_sched_kb_metadata_gin ON tnavigator_schedule_knowledge_v1 USING gin (metadata);
-CREATE INDEX IF NOT EXISTS tn_sched_kb_lexical_gin ON tnavigator_schedule_knowledge_v1 USING gin (to_tsvector('simple',coalesce(text,'')));
-WITH ranked AS (SELECT id,row_number() OVER(PARTITION BY metadata->>'ingest_key',md5(text) ORDER BY id::text) rn FROM tnavigator_schedule_knowledge_v1), deleted AS (DELETE FROM tnavigator_schedule_knowledge_v1 t USING ranked r WHERE t.id=r.id AND r.rn>1 RETURNING t.id) SELECT count(*)::int AS duplicates_removed FROM deleted"""
+CREATE TABLE IF NOT EXISTS tnavigator_schedule_knowledge_v2 (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ text text,
+ metadata jsonb,
+ embedding vector
+);
+CREATE INDEX IF NOT EXISTS tn_sched_kb_v2_metadata_gin ON tnavigator_schedule_knowledge_v2 USING gin (metadata);
+CREATE INDEX IF NOT EXISTS tn_sched_kb_v2_lexical_gin ON tnavigator_schedule_knowledge_v2 USING gin (to_tsvector('simple',coalesce(text,'')));
+CREATE INDEX IF NOT EXISTS tn_sched_kb_v2_lexical_russian_gin ON tnavigator_schedule_knowledge_v2 USING gin (to_tsvector('russian',coalesce(text,'')));
+WITH ranked AS (SELECT id,row_number() OVER(PARTITION BY metadata->>'ingest_key',md5(text) ORDER BY id::text) rn FROM tnavigator_schedule_knowledge_v2), deleted AS (DELETE FROM tnavigator_schedule_knowledge_v2 t USING ranked r WHERE t.id=r.id AND r.rn>1 RETURNING t.id) SELECT count(*)::int AS duplicates_removed FROM deleted"""
 
 
 RETRIEVAL_NORMALIZE = (NAMESPACES_JS + r"""
@@ -180,20 +196,45 @@ return[{json:{contract:'schedule_retrieval_query',contract_version:'1.0',status:
 
 
 PREPARE_LEXICAL = r"""const x=$json;const tags=Array.isArray(x.filters?.keyword_families)?x.filters.keyword_families:[];const branchLimit=Math.min(120,Math.max(Number(x.top_k)||10,tags.length*4,24));return[{json:{...x,branch:'lexical',sql_parameters:[x.query,x.filters.target_base,x.filters.access_scope,branchLimit,JSON.stringify(x.filters.keyword_families||[]),JSON.stringify(x.filters.knowledge_types||[])]}}];"""
-LEXICAL_SQL = """WITH authorized AS (SELECT id,text,metadata FROM tnavigator_schedule_knowledge_v1 WHERE metadata->>'target_base'=$2 AND metadata->>'access_scope'=$3 AND metadata->>'knowledge_status'='current' AND metadata->>'knowledge_type' IN (SELECT jsonb_array_elements_text($6::jsonb))), ranked AS (SELECT id::text candidate_id,text page_content,metadata,CASE WHEN EXISTS(SELECT 1 FROM jsonb_array_elements_text($5::jsonb) q WHERE upper(trim(q.value))=ANY(regexp_split_to_array(upper(regexp_replace(coalesce(metadata->>'keyword_families',''),'[\\[\\]\"]','','g')),'\\s*,\\s*'))) THEN 1 ELSE 0 END exact_hit,ts_rank_cd(to_tsvector('simple',coalesce(text,'')),websearch_to_tsquery('simple',$1)) lexical_score FROM authorized WHERE to_tsvector('simple',coalesce(text,''))@@websearch_to_tsquery('simple',$1) OR EXISTS(SELECT 1 FROM jsonb_array_elements_text($5::jsonb) q WHERE upper(trim(q.value))=ANY(regexp_split_to_array(upper(regexp_replace(coalesce(metadata->>'keyword_families',''),'[\\[\\]\"]','','g')),'\\s*,\\s*')))) SELECT candidate_id,page_content,metadata,exact_hit,lexical_score,row_number() OVER(ORDER BY exact_hit DESC,lexical_score DESC,candidate_id) lexical_rank FROM ranked ORDER BY lexical_rank LIMIT $4"""
-PREPARE_TAG = r"""const x=$('Validate SCHEDULE retrieval request').first().json;const tags=Array.isArray(x.filters?.keyword_families)?x.filters.keyword_families:[];const branchLimit=Math.min(120,Math.max(Number(x.top_k)||10,tags.length*4,24));return[{json:{...x,branch:'tag',sql_parameters:[x.filters.target_base,x.filters.access_scope,JSON.stringify(x.filters.keyword_families||[]),JSON.stringify(x.filters.topics||[]),JSON.stringify(x.filters.task_patterns||[]),JSON.stringify(x.filters.knowledge_types||[]),branchLimit]}}];"""
-TAG_SQL = """WITH matched AS (SELECT id,text,metadata,coalesce(metadata->>'knowledge_id','') AS kid FROM tnavigator_schedule_knowledge_v1 WHERE metadata->>'target_base'=$1 AND metadata->>'access_scope'=$2 AND metadata->>'knowledge_status'='current' AND metadata->>'knowledge_type' IN (SELECT jsonb_array_elements_text($6::jsonb)) AND (($3::jsonb<>'[]'::jsonb AND EXISTS(SELECT 1 FROM jsonb_array_elements_text($3::jsonb) q WHERE upper(trim(q.value))=ANY(regexp_split_to_array(upper(regexp_replace(coalesce(metadata->>'keyword_families',''),'[\\[\\]\"]','','g')),'\\s*,\\s*')))) OR ($4::jsonb<>'[]'::jsonb AND EXISTS(SELECT 1 FROM jsonb_array_elements_text($4::jsonb) q WHERE lower(trim(q.value))=ANY(regexp_split_to_array(lower(regexp_replace(coalesce(metadata->>'topics',''),'[\\[\\]\"]','','g')),'\\s*,\\s*')))) OR ($5::jsonb<>'[]'::jsonb AND EXISTS(SELECT 1 FROM jsonb_array_elements_text($5::jsonb) q WHERE lower(trim(q.value))=ANY(regexp_split_to_array(lower(regexp_replace(coalesce(metadata->>'task_patterns',''),'[\\[\\]\"]','','g')),'\\s*,\\s*')))))), per_kid AS (SELECT id::text candidate_id,text page_content,metadata,row_number() OVER(PARTITION BY kid ORDER BY id::text) AS per_kid_rn FROM matched) SELECT candidate_id,page_content,metadata,row_number() OVER(ORDER BY per_kid_rn,candidate_id) AS tag_rank FROM per_kid WHERE per_kid_rn<=3 ORDER BY tag_rank LIMIT $7"""
+LEXICAL_SQL = """WITH authorized AS (SELECT id,text,metadata FROM tnavigator_schedule_knowledge_v2 WHERE metadata->>'target_base'=$2 AND metadata->>'access_scope'=$3 AND metadata->>'knowledge_status'='current' AND metadata->>'knowledge_type' IN (SELECT jsonb_array_elements_text($6::jsonb))), caps AS (SELECT NULLIF(string_agg(upper(trim(q.value)),' | '),'') AS q FROM jsonb_array_elements_text($5::jsonb) q WHERE length(trim(q.value))>=3), ranked AS (SELECT id::text candidate_id,text page_content,metadata,CASE WHEN EXISTS(SELECT 1 FROM jsonb_array_elements_text($5::jsonb) q WHERE upper(trim(q.value))=ANY(regexp_split_to_array(upper(regexp_replace(coalesce(metadata->>'keyword_families',''),'[\\[\\]\"]','','g')),'\\s*,\\s*'))) THEN 1 ELSE 0 END exact_hit,GREATEST(ts_rank_cd(to_tsvector('russian',coalesce(text,'')),plainto_tsquery('russian',left($1,300))),ts_rank_cd(to_tsvector('simple',coalesce(text,'')),COALESCE(to_tsquery('simple',(SELECT q FROM caps)),plainto_tsquery('simple',left($1,300))))) lexical_score FROM authorized WHERE to_tsvector('russian',coalesce(text,''))@@plainto_tsquery('russian',left($1,300)) OR ((SELECT q FROM caps) IS NOT NULL AND to_tsvector('simple',coalesce(text,''))@@to_tsquery('simple',(SELECT q FROM caps))) OR EXISTS(SELECT 1 FROM jsonb_array_elements_text($5::jsonb) q WHERE upper(trim(q.value))=ANY(regexp_split_to_array(upper(regexp_replace(coalesce(metadata->>'keyword_families',''),'[\\[\\]\"]','','g')),'\\s*,\\s*')))) SELECT candidate_id,page_content,metadata,exact_hit,lexical_score,row_number() OVER(ORDER BY exact_hit DESC,lexical_score DESC,candidate_id) lexical_rank FROM ranked ORDER BY lexical_rank LIMIT $4"""
+PREPARE_TAG = r"""const x=$('Validate SCHEDULE retrieval request').first().json;const tags=Array.isArray(x.filters?.keyword_families)?x.filters.keyword_families:[];const STOP=new Set(['этот','этой','этом','этого','для','или','как','при','без','что','это','все','они','она','оно','его','ее','их','над','под','про','если','чтобы','также','только','уже','еще','ещё','нет','да','ли','же','бы','не','ни','на','по','из','от','до','за','со','во','об','ко','the','and','for','with','from','that','this','into','then','are','was']);const queryTokens=[...new Set(String(x.query||'').split(/[^A-Za-z\u0400-\u04FF0-9_]+/).map(t=>t.trim()).filter(t=>t.length>=4&&!STOP.has(t.toLowerCase())))].slice(0,24);const branchLimit=Math.min(120,Math.max(Number(x.top_k)||10,tags.length*4,24));return[{json:{...x,branch:'tag',query_tokens:queryTokens,sql_parameters:[x.filters.target_base,x.filters.access_scope,JSON.stringify(x.filters.keyword_families||[]),JSON.stringify(x.filters.topics||[]),JSON.stringify(x.filters.task_patterns||[]),JSON.stringify(x.filters.knowledge_types||[]),JSON.stringify(queryTokens),branchLimit]}}];"""
+_TAG_SPLIT = "regexp_split_to_array({fn}(regexp_replace(coalesce(metadata->>'{field}',''),'[\\[\\]\"]','','g')),'\\s*,\\s*')"
+_TAG_FILTER = (
+    "({p}::jsonb<>'[]'::jsonb AND EXISTS(SELECT 1 FROM jsonb_array_elements_text({p}::jsonb) q "
+    "WHERE {fn}(trim(q.value))=ANY(" + _TAG_SPLIT + ")))"
+)
+TAG_SQL = (
+    "WITH matched AS (SELECT id,text,metadata,coalesce(metadata->>'knowledge_id','') AS kid "
+    "FROM tnavigator_schedule_knowledge_v2 WHERE metadata->>'target_base'=$1 "
+    "AND metadata->>'access_scope'=$2 AND metadata->>'knowledge_status'='current' "
+    "AND metadata->>'knowledge_type' IN (SELECT jsonb_array_elements_text($6::jsonb)) AND ("
+    + _TAG_FILTER.format(p="$3", fn="upper", field="keyword_families")
+    + " OR " + _TAG_FILTER.format(p="$4", fn="lower", field="topics")
+    + " OR " + _TAG_FILTER.format(p="$5", fn="lower", field="task_patterns")
+    + " OR ($7::jsonb<>'[]'::jsonb AND EXISTS(SELECT 1 FROM jsonb_array_elements_text($7::jsonb) tok "
+    "WHERE length(trim(tok.value))>=4 AND ("
+    "coalesce(metadata->>'keyword_families','') ILIKE ('%'||trim(tok.value)||'%') "
+    "OR coalesce(metadata->>'topics','') ILIKE ('%'||trim(tok.value)||'%') "
+    "OR coalesce(metadata->>'task_patterns','') ILIKE ('%'||trim(tok.value)||'%')"
+    "))))), per_kid AS (SELECT id::text candidate_id,text page_content,metadata,"
+    "row_number() OVER(PARTITION BY kid ORDER BY id::text) AS per_kid_rn FROM matched) "
+    "SELECT candidate_id,page_content,metadata,row_number() OVER(ORDER BY per_kid_rn,candidate_id) AS tag_rank "
+    "FROM per_kid WHERE per_kid_rn<=3 ORDER BY tag_rank LIMIT $8"
+)
 WRAP_LEXICAL = r"""const q=$('Validate SCHEDULE retrieval request').first().json,input=$input.all(),error=input.find(i=>i.json?.error||i.json?.message&&i.json?.level==='error'),candidates=input.filter(i=>i.json?.candidate_id&&i.json?.page_content!==undefined).map((i,n)=>({candidate_id:String(i.json.candidate_id),page_content:String(i.json.page_content||''),metadata:i.json.metadata||{},rank:Number(i.json.lexical_rank||n+1),score:Number(i.json.lexical_score||0),exact_hit:Boolean(Number(i.json.exact_hit||0))}));return[{json:{branch:'lexical',query:q,candidates,branch_findings:error?[{code:'LEXICAL_BRANCH_FAILED',severity:'error',message:String(error.json.error||error.json.message)}]:[]}}];"""
 WRAP_TAG = r"""const q=$('Validate SCHEDULE retrieval request').first().json,input=$input.all(),error=input.find(i=>i.json?.error||i.json?.message&&i.json?.level==='error'),candidates=input.filter(i=>i.json?.candidate_id&&i.json?.page_content!==undefined).map((i,n)=>({candidate_id:String(i.json.candidate_id),page_content:String(i.json.page_content||''),metadata:i.json.metadata||{},rank:Number(i.json.tag_rank||n+1),score:0}));return[{json:{branch:'tag',query:q,candidates,branch_findings:error?[{code:'TAG_BRANCH_FAILED',severity:'error',message:String(error.json.error||error.json.message)}]:[]}}];"""
-WRAP_SEMANTIC = r"""const q=$('Validate SCHEDULE retrieval request').first().json,input=$input.all(),error=input.find(i=>i.json?.error||i.json?.message&&i.json?.level==='error'),candidates=input.map((i,n)=>{const d=i.json.document||{};return{candidate_id:String(d.metadata?.chunk_id||d.metadata?.ingest_key||''),page_content:String(d.pageContent||''),metadata:d.metadata||{},rank:n+1,score:Number(i.json.score||0)}}).filter(c=>c.candidate_id&&c.page_content);return[{json:{branch:'semantic',query:q,candidates,branch_findings:error?[{code:'SEMANTIC_BRANCH_FAILED',severity:'error',message:String(error.json.error||error.json.message)}]:[]}}];"""
+WRAP_SEMANTIC = r"""const q=$('Validate SCHEDULE retrieval request').first().json,input=$input.all(),error=input.find(i=>i.json?.error||i.json?.message&&i.json?.level==='error'),types=new Set((q.filters?.knowledge_types||[]).map(v=>String(v||'').toLowerCase()).filter(Boolean)),candidates=input.map((i,n)=>{const d=i.json.document||{};return{candidate_id:String(d.metadata?.chunk_id||d.metadata?.ingest_key||''),page_content:String(d.pageContent||''),metadata:d.metadata||{},rank:n+1,score:Number(i.json.score||0)}}).filter(c=>c.candidate_id&&c.page_content&&(!types.size||types.has(String(c.metadata.knowledge_type||'').toLowerCase())));return[{json:{branch:'semantic',query:q,candidates,branch_findings:error?[{code:'SEMANTIC_BRANCH_FAILED',severity:'error',message:String(error.json.error||error.json.message)}]:[]}}];"""
 
 
-# Tag match is OR across keyword_families | topics | task_patterns. Hard isolation
+# Tag match is OR across caller filters (keyword_families | topics | task_patterns)
+# plus query tokens ≥4 chars vs those three metadata fields (ILIKE). Hard isolation
 # is target_base + knowledge_types + access_scope (authorized CTE / validMeta).
 # Do not AND those three tag fields — empty topics would drop every card.
 RRF = NAMESPACES_JS + r"""
 const packets=$input.all().map(i=>i.json),q=packets.find(p=>p.query)?.query||{},by=new Map(),k=60,arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'';
-const validMeta=m=>m&&String(m.target_base||'')===String(q.filters?.target_base||'')&&String(m.access_scope||'')===String(q.filters?.access_scope||'')&&String(m.knowledge_status||'')==='current'&&(q.filters?.knowledge_types||[]).includes(String(m.knowledge_type||'')),findings=packets.flatMap(p=>arr(p.branch_findings)?p.branch_findings:[]);
+const topicsOf=m=>{const v=m&&m.topics;if(arr(v))return v.map(x=>String(x||'').toLowerCase());if(typeof v==='string'){try{const p=JSON.parse(v);if(arr(p))return p.map(x=>String(x||'').toLowerCase());}catch(e){}return v.replace(/[\[\]"]/g,'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);}return [];};
+const wantAbsent=(arr(q.filters?.topics)?q.filters.topics:[]).map(v=>String(v||'').toLowerCase()).includes('absent_agent');
+const validMeta=m=>m&&String(m.target_base||'')===String(q.filters?.target_base||'')&&String(m.access_scope||'')===String(q.filters?.access_scope||'')&&String(m.knowledge_status||'')==='current'&&(q.filters?.knowledge_types||[]).includes(String(m.knowledge_type||''))&&(wantAbsent||!topicsOf(m).includes('absent_agent')),findings=packets.flatMap(p=>arr(p.branch_findings)?p.branch_findings:[]);
 for(const p of packets)for(const c of(arr(p.candidates)?p.candidates:[])){if(!validMeta(c.metadata))continue;const id=String(c.candidate_id||''),parent=String(c.metadata.parent_key||`${c.metadata.target_base}:${c.metadata.knowledge_id}:${c.metadata.revision}`);if(!id||!parent)continue;const x=by.get(parent)||{parent_key:parent,representative_chunk_id:id,page_content:String(c.page_content||''),metadata:c.metadata,rrf_score:0,branches:[],chunk_ids:[]};x.rrf_score+=1/(k+Math.max(1,Number(c.rank)||999));if(c.exact_hit)x.rrf_score+=.02;x.branches.push(p.branch);x.chunk_ids.push(id);if(String(c.page_content||'').length>x.page_content.length)x.page_content=String(c.page_content||'');by.set(parent,x)}
 const requested=arr(q.exact_keyword_terms)?q.exact_keyword_terms.map(String).map(x=>x.toUpperCase()):[],keep=Math.max(Number(q.top_k)||10,requested.length||0);
 const ranked=[...by.values()].sort((a,b)=>b.rrf_score-a.rrf_score||a.parent_key.localeCompare(b.parent_key)).slice(0,keep),tags=v=>arr(v)?v.map(String).map(x=>x.trim().toUpperCase()).filter(Boolean):typeof v==='string'?(()=>{try{return tags(JSON.parse(v))}catch{return v.replace(/[\[\]"]/g,'').split(',').map(x=>x.trim().toUpperCase()).filter(Boolean)}})():[];
@@ -219,7 +260,7 @@ PREPARE_SCHEMA_LOOKUP = r"""const e=$json||{},requested=[...new Set((Array.isArr
 CATALOGUE_LOOKUP_SQL = """SELECT catalogue_hash,catalogue_ref,source_hash,access_scope,approved_by,approval_gate_id,schema_catalogue FROM tnavigator_schedule_schema_catalogue_v1 WHERE target_base=$1 AND access_scope=$2 AND ($3::jsonb='[]'::jsonb OR EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(schema_catalogue->'schemas','[]'::jsonb)) s JOIN jsonb_array_elements_text($3::jsonb) q ON upper(trim(coalesce(s->>'keyword','')))=upper(trim(q.value)))) ORDER BY stored_at DESC,catalogue_hash LIMIT 100"""
 ATTACH_SCHEMA_CATALOGUE = r"""
 const prepared=$('Prepare approved schema catalogue lookup').first().json,e=prepared.evidence||{},obj=v=>v&&typeof v==='object'&&!Array.isArray(v),arr=Array.isArray,clean=v=>typeof v==='string'?v.trim():'',parse=v=>{if(obj(v))return v;if(typeof v==='string'){try{const x=JSON.parse(v);return obj(x)?x:{}}catch{return{}}}return{}},findings=arr(e.findings)?e.findings.slice():[],requested=arr(e.filters?.keyword_families)?e.filters.keyword_families.map(v=>clean(v).toUpperCase()).filter(Boolean):[];
-if(e.filters?.require_schema!==true){const hard=findings.some(f=>f.severity==='error')||e.status==='abstain';return[{json:{...e,status:hard?'abstain':(e.status||'succeeded'),results:hard?[]:e.results,citations:hard?[]:e.citations,findings,evidence_ready:!hard&&e.evidence_ready!==false,schema_catalogue:null,retrieval:{...(e.retrieval||{}),full_parent_hydration:true,schema_catalogue_lookup:false,catalogue_hash:null}}}];}
+if(e.filters?.require_schema!==true||!requested.length){const hard=findings.some(f=>f.severity==='error')||e.status==='abstain';return[{json:{...e,status:hard?'abstain':(e.status||'succeeded'),results:hard?[]:e.results,citations:hard?[]:e.citations,findings,evidence_ready:!hard&&e.evidence_ready!==false,schema_catalogue:null,retrieval:{...(e.retrieval||{}),full_parent_hydration:true,schema_catalogue_lookup:false,catalogue_hash:null}}}];}
 const shaRotr=(x,n)=>((x>>>n)|(x<<(32-n)))>>>0,shaUtf8=s=>{const out=[];for(let i=0;i<String(s).length;i++){let c=String(s).charCodeAt(i);if(c<0x80)out.push(c);else if(c<0x800)out.push(0xc0|(c>>6),0x80|(c&63));else if(c>=0xd800&&c<=0xdbff){const u=0x10000+((c&1023)<<10)|(String(s).charCodeAt(++i)&1023);out.push(0xf0|(u>>18),0x80|((u>>12)&63),0x80|((u>>6)&63),0x80|(u&63));}else out.push(0xe0|(c>>12),0x80|((c>>6)&63),0x80|(c&63));}return out;};
 const SHA_K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc0a7f,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
 const sha256=s=>{const b=shaUtf8(s),bit=b.length*8,b2=b.slice();b2.push(0x80);while((b2.length%64)!==56)b2.push(0);for(let i=7;i>=0;i--)b2.push((bit/Math.pow(2,i*8))&255);let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a,h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;for(let off=0;off<b2.length;off+=64){const w=new Array(64);for(let i=0;i<16;i++){const p=off+i*4;w[i]=((b2[p]<<24)|(b2[p+1]<<16)|(b2[p+2]<<8)|b2[p+3])>>>0}for(let i=16;i<64;i++){const a=w[i-15],c=w[i-2],s0=(shaRotr(a,7)^shaRotr(a,18)^(a>>>3))>>>0,s1=(shaRotr(c,17)^shaRotr(c,19)^(c>>>10))>>>0;w[i]=(w[i-16]+s0+w[i-7]+s1)>>>0}let a=h0,bv=h1,c=h2,d=h3,e=h4,f=h5,g=h6,hh=h7;for(let i=0;i<64;i++){const S1=(shaRotr(e,6)^shaRotr(e,11)^shaRotr(e,25))>>>0,ch=((e&f)^((~e)&g))>>>0,t1=(hh+S1+ch+SHA_K[i]+w[i])>>>0,S0=(shaRotr(a,2)^shaRotr(a,13)^shaRotr(a,22))>>>0,maj=((a&bv)^(a&c)^(bv&c))>>>0,t2=(S0+maj)>>>0;hh=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=bv;bv=a;a=(t1+t2)>>>0}h0=(h0+a)>>>0;h1=(h1+bv)>>>0;h2=(h2+c)>>>0;h3=(h3+d)>>>0;h4=(h4+e)>>>0;h5=(h5+f)>>>0;h6=(h6+g)>>>0;h7=(h7+hh)>>>0}return[h0,h1,h2,h3,h4,h5,h6,h7].map(x=>x.toString(16).padStart(8,'0')).join('')};
@@ -244,7 +285,6 @@ for(const row of $input.all().map(i=>i.json||{})){
   }
 }
 const missing=requested.filter(k=>!byKeyword.has(k));
-if(!requested.length)findings.push({code:'SCHEMA_KEYWORD_SCOPE_REQUIRED',severity:'error'});
 if(missing.length)findings.push({code:'EXPERT_SCHEMA_CATALOGUE_NOT_FOUND',severity:'error',keywords:missing});
 const hard=findings.some(f=>f.severity==='error');
 const selected=hard?null:{contract:'schedule_schema_catalogue',contract_version:'1.0',catalogue_ref:`catalogue://tnavigator/22.2/merged/${requested.slice().sort().join('+')||'empty'}`,simulator_profile:{vendor:'Rock Flow Dynamics',simulator:'tNavigator',version:'22.2'},catalogue_hash:mergeHash(catalogueHashes),source_hash:mergeHash(sourceHashes),schemas:requested.flatMap(k=>byKeyword.get(k)||[]),approved:true,approved_by:approvers[0]||'department-hydrodynamic-expert',approval_gate_id:gateIds[0]||'schedule-schema-catalogue-approved',access_scope:clean(e.filters?.access_scope||'petroleum-engineering')};
@@ -255,7 +295,7 @@ return[{json:{...e,status:hard?'abstain':'succeeded',results:hard?[]:e.results,c
 PORTABLE_BLOCK_FIELDS = (
     "contract", "contract_version", "target_base", "knowledge_type", "knowledge_id",
     "revision", "title", "keywords", "topics", "task_patterns", "simulator_family",
-    "status", "author", "access_scope", "text", "examples", "schema_catalogue",
+    "status", "author", "access_scope", "text", "summary", "examples", "schema_catalogue",
 )
 
 
@@ -374,15 +414,16 @@ if(collectError){
 if(lookupRows.some(isErr)){
   return [{json:{ingest_action:'lookup_failed',status:'needs_input',inserted:0,skipped:0,skipped_ids:[],findings:[{code:'EXISTING_KNOWLEDGE_LOOKUP_FAILED',severity:'error'}]}}];
 }
-const existing=new Set();
+const inVector=new Set();
+const truthy=v=>v===true||v===1||v==='t'||v==='true'||v==='True';
 for(const row of lookupRows){
-  if(clean(row.knowledge_id))existing.add(keyOf(row));
+  if(clean(row.knowledge_id)&&truthy(row.in_vector))inVector.add(keyOf(row));
 }
 const candidates=collected.filter(j=>j&&clean(j.knowledge_id));
 const fresh=[],skipped=[],seen=new Set();
 for(const block of candidates){
   const k=keyOf(block);
-  if(seen.has(k)||existing.has(k)){
+  if(seen.has(k)||inVector.has(k)){
     skipped.push({target_base:block.target_base||'schedule_mvp',knowledge_id:block.knowledge_id,revision:block.revision||'1'});
     continue;
   }
@@ -406,7 +447,7 @@ try {
       .filter((id) => id)
   )];
 } catch {}
-const table = 'tnavigator_schedule_knowledge_v1';
+const table = 'VECTOR_TABLE_PLACEHOLDER';
 const query = [
   'WITH inv AS (',
   '  SELECT',
@@ -443,7 +484,7 @@ return [{ json: {
   expected_document_count: expected.length,
   query,
 } }];
-""".strip()
+""".strip().replace("VECTOR_TABLE_PLACEHOLDER", VECTOR_TABLE)
 
 
 INVENTORY_SUMMARIZE_JS = r"""
@@ -541,7 +582,7 @@ def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow, set
     )
     example = {"schema_version": "1.1.0", "title": "MAS knowledge corpus", "documents": [{"contract": "schedule_knowledge_block", "contract_version": "1.0", "target_base": "schedule_mvp", "knowledge_type": "keyword_instruction", "knowledge_id": "wconprod-forecast-v1", "revision": "1", "title": "WCONPROD forecast control", "keywords": ["WCONPROD"], "topics": ["Контроль по скважинам", "Прогноз"], "task_patterns": ["задать лимит по воде"], "status": "active", "author": "department-hydrodynamic-expert", "access_scope": "petroleum-engineering", "text": "Полная самодостаточная инструкция."}]}
     ns = [
-        note("MAS ingestion README", (-1240, -700), "## MAS Knowledge Ingestion — n8n 2.30.8\n\nOne ingest for Excel, Orchestrator, and Schedule (`target_base`). Field path: Activity Knowledge → **Загрузить в RAG** (`POST /webhook/mas-knowledge-ingest`). That posts the live `excel-agent-operating-guide.documents.json` sheet. Form paste and Execute Sub-workflow still work. Manual trigger uses the **Packaged MAS corpus** Set snapshot from import time (not the live file).\n\nThe workflow skips `target_base` + `knowledge_id` + `revision` rows that already exist and ignores `injection_template`. To update text of an existing card, bump `revision`. Use one embedding model/dimensions in ingestion and retrieval. Activate this workflow so the Activity webhook is registered.", 620, 620),
+        note("MAS ingestion README", (-1240, -700), "## MAS Knowledge Ingestion — n8n 2.30.8\n\nOne ingest for Excel, Orchestrator, and Schedule (`target_base`). Field path: Activity Knowledge → **Загрузить в RAG** (`POST /webhook/mas-knowledge-ingest`). That posts the live `excel-agent-operating-guide.documents.json` sheet. Form paste and Execute Sub-workflow still work. Manual trigger uses the **Packaged MAS corpus** Set snapshot from import time (not the live file).\n\nSkip only when current chunks already exist in `tnavigator_schedule_knowledge_v2` (same `target_base` + `knowledge_id` + `revision`). Parent-only rows are re-embedded. Ignores `injection_template`. To update text, bump `revision`. Embeddings: `baai/bge-m3`, Dimensions empty (provider default 1024). Same model on Ingestion and Retrieval. Do not mix with `tnavigator_schedule_knowledge_v1`. Activate this workflow so the Activity webhook is registered.", 620, 620),
         node(
             "Activity knowledge ingest webhook",
             "n8n-nodes-base.webhook",
@@ -568,10 +609,10 @@ def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow, set
         ifnode("New knowledge to insert?", (-40, 80), "={{ $json.ingest_action }}", "insert", "string"),
         code("Normalize approved SCHEDULE knowledge", (200, -40), INGEST_NORMALIZE),
         ifnode("Knowledge approved for ingestion?", (440, -40), "={{ $json.status }}", "approved_for_ingestion", "string"),
-        node("PGVector — insert approved SCHEDULE knowledge", "@n8n/n8n-nodes-langchain.vectorStorePGVector", 1.3, (700, -180), {"mode": "insert", "tableName": "tnavigator_schedule_knowledge_v1", "embeddingBatchSize": 64, "options": {"columnNames": {"values": {"idColumnName": "id", "vectorColumnName": "embedding", "contentColumnName": "text", "metadataColumnName": "metadata"}}}}, credentials=pg),
+        node("PGVector — insert approved SCHEDULE knowledge", "@n8n/n8n-nodes-langchain.vectorStorePGVector", 1.3, (700, -180), {"mode": "insert", "tableName": VECTOR_TABLE, "embeddingBatchSize": 64, "options": {"columnNames": {"values": {"idColumnName": "id", "vectorColumnName": "embedding", "contentColumnName": "text", "metadataColumnName": "metadata"}}}}, credentials=pg),
         node("SCHEDULE Default Data Loader", "@n8n/n8n-nodes-langchain.documentDefaultDataLoader", 1.1, (680, -500), {"dataType": "json", "jsonMode": "expressionData", "jsonData": "={{ $json.text }}", "textSplittingMode": "custom", "options": {"metadata": {"metadataValues": [{"name": k, "value": "={{ $json.metadata." + k + " }}"} for k in ["document_id","document_revision","source_hash","target_base","knowledge_type","knowledge_id","revision","status","access_scope","author","authority_level","approval_status","section","knowledge_status","title","page","heading","keyword_families","topics","task_patterns","parent_key","ingest_key","vendor","simulator","simulator_version"]]}}}),
         node("SCHEDULE Recursive Text Splitter — 1200/180", "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter", 1, (400, -500), {"chunkSize": 1200, "chunkOverlap": 180, "options": {"splitCode": "markdown"}}),
-        node("SCHEDULE Embeddings — configure same model in retrieval", "@n8n/n8n-nodes-langchain.embeddingsOpenAi", 1.2, (940, -500), {"model": "text-embedding-3-small", "options": {"batchSize": 16, "stripNewLines": True, "timeout": 600, "encodingFormat": "float"}}, credentials=_embedding_credential("REPLACE: SCHEDULE embedding credential")),
+        node("SCHEDULE Embeddings — configure same model in retrieval", "@n8n/n8n-nodes-langchain.embeddingsOpenAi", 1.2, (940, -500), {"model": EMBEDDING_MODEL, "options": {"batchSize": 16, "stripNewLines": True, "timeout": -1, "encodingFormat": "float"}}, credentials=_embedding_credential("REPLACE: SCHEDULE embedding credential")),
         node("Finalize indexes and deduplicate chunks", "n8n-nodes-base.postgres", 2.6, (980, -180), {"operation": "executeQuery", "query": FINALIZE_INGEST_SQL, "options": {"queryBatching": "single", "largeNumbersOutput": "text", "replaceEmptyStrings": False}}, credentials=pg, executeOnce=True),
         code("Prepare full parent knowledge persistence", (1220, -180), PREPARE_PARENT_PERSIST, executeOnce=True),
         node("PostgreSQL — upsert full parent knowledge", "n8n-nodes-base.postgres", 2.6, (1460, -180), {"operation": "executeQuery", "query": PARENT_UPSERT_SQL, "options": {"queryReplacement": "={{ $json.sql_parameters }}", "queryBatching": "single", "largeNumbersOutput": "text", "replaceEmptyStrings": False}}, credentials=pg),
@@ -579,7 +620,7 @@ def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow, set
         node("PostgreSQL — upsert approved schema catalogue", "n8n-nodes-base.postgres", 2.6, (1940, -180), {"operation": "executeQuery", "query": CATALOGUE_UPSERT_SQL, "options": {"queryReplacement": "={{ $json.sql_parameters }}", "queryBatching": "single", "largeNumbersOutput": "text", "replaceEmptyStrings": False}}, credentials=pg, alwaysOutputData=True),
         code("Prepare RAG inventory query", (1220, 80), INVENTORY_PREPARE_JS, executeOnce=True),
         node("Postgres — inspect RAG table contents", "n8n-nodes-base.postgres", 2.6, (1460, 80), {"operation": "executeQuery", "query": "={{ $json.query }}", "options": {"queryBatching": "single", "largeNumbersOutput": "text", "replaceEmptyStrings": False}}, credentials=pg, executeOnce=True, alwaysOutputData=True),
-        code("Summarize RAG inventory", (1700, 80), INVENTORY_SUMMARIZE_JS, executeOnce=True, notesInFlow=True, notes="status=rag_inventory_ok means every knowledge_id from this run's Collect is present. skipped_existing lists keys that were already in the parent table."),
+        code("Summarize RAG inventory", (1700, 80), INVENTORY_SUMMARIZE_JS, executeOnce=True, notesInFlow=True, notes="status=rag_inventory_ok means every knowledge_id from this run's Collect is present. skipped_existing lists keys that already have current chunks in the vector table."),
         code("Return SCHEDULE ingestion gate", (440, 140), "return [{json:{contract:'schedule_knowledge_ingest_result',contract_version:'1.0',status:$json.status,findings:$json.findings,vector_write_allowed:false}}];"),
         code("Shape MAS ingest response", (1940, 80), SHAPE_INGEST_RESPONSE_JS, executeOnce=True, notesInFlow=True, notes="Webhook lastNode: added / skipped / total_in_rag. Keep this the terminal node."),
     ]
@@ -611,7 +652,7 @@ def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow, set
     connect(c, "Postgres — inspect RAG table contents", "Summarize RAG inventory")
     connect(c, "Summarize RAG inventory", "Shape MAS ingest response")
     connect(c, "Return SCHEDULE ingestion gate", "Shape MAS ingest response")
-    return workflow("MAS — Knowledge Ingestion", "Single MAS ingest: Activity Knowledge webhook, form paste, or packaged Set snapshot. Skips target_base+knowledge_id+revision rows that already exist; ignores injection_template.", ns, c, "schedule_knowledge_ingest/v1")
+    return workflow("MAS — Knowledge Ingestion", "Single MAS ingest: Activity Knowledge webhook, form paste, or packaged Set snapshot. Skips a card only when current chunks exist in the vector table; ignores injection_template.", ns, c, "schedule_knowledge_ingest/v1")
 
 
 def _postgres(name, pos, query, params):
@@ -626,7 +667,7 @@ def build_retrieval(*, node, note, code, trigger, ifnode, connect, workflow):
     lex=_postgres("PostgreSQL lexical + exact candidates",(-280,-320),LEXICAL_SQL,"={{ $json.sql_parameters }}")
     tag=_postgres("PostgreSQL tag candidates",(-280,40),TAG_SQL,"={{ $json.sql_parameters }}")
     ns=[
-        note("SCHEDULE hybrid retrieval README",(-1280,-700),"## Hybrid retrieval + full parent hydration — n8n 2.30.8\n\nPostgreSQL full-text + PGVector semantic + exact tags → deterministic RRF per parent block → full active parent hydration. `target_base` isolates corpora in one physical table. Schema catalogue lookup is required only for `schedule_mvp`. Empty tag filters do not match the whole namespace. Missing required instruction coverage causes `abstain`.",610,450),
+        note("SCHEDULE hybrid retrieval README",(-1280,-700),"## Hybrid retrieval + full parent hydration — n8n 2.30.8\n\nPostgreSQL full-text (russian+simple) + PGVector semantic + tags (filters OR query tokens) → deterministic RRF per parent block → full active parent hydration. Vector table `tnavigator_schedule_knowledge_v2`, embeddings `baai/bge-m3` (same as ingestion; Dimensions empty). `target_base` isolates corpora in one physical table. Schema catalogue lookup is required for `schedule_mvp` only when keyword families were requested. Empty tag filters do not match the whole namespace. Missing required instruction coverage causes `abstain`.",610,450),
         trigger("Receive SCHEDULE retrieval request",(-1240,-80),ex),
         code("Validate SCHEDULE retrieval request",(-1000,-80),RETRIEVAL_NORMALIZE),
         ifnode("Retrieval request authorized?",(-760,-80),"={{ $json.status }}","query_ready","string"),
@@ -636,8 +677,8 @@ def build_retrieval(*, node, note, code, trigger, ifnode, connect, workflow):
         code("Prepare tag retrieval",(-520,40),PREPARE_TAG),
         node(tag["name"],"n8n-nodes-base.postgres",2.6,tag["pos"],tag["parameters"],credentials=_credential("REPLACE: SCHEDULE PostgreSQL / PGVector credential"),alwaysOutputData=True,onError="continueRegularOutput"),
         code("Wrap tag candidates",(-20,40),WRAP_TAG),
-        node("PGVector semantic candidates","@n8n/n8n-nodes-langchain.vectorStorePGVector",1.3,(-280,-140),{"mode":"load","prompt":"={{ $json.query }}","topK":"={{ $json.top_k }}","includeDocumentMetadata":True,"tableName":"tnavigator_schedule_knowledge_v1","options":{"distanceStrategy":"cosine","columnNames":{"values":{"idColumnName":"id","vectorColumnName":"embedding","contentColumnName":"text","metadataColumnName":"metadata"}},"metadata":{"metadataValues":[{"name":"target_base","value":"={{ $json.filters.target_base }}"},{"name":"access_scope","value":"={{ $json.filters.access_scope }}"},{"name":"knowledge_status","value":"current"}]}}},credentials=_credential("REPLACE: SCHEDULE PostgreSQL / PGVector credential"),alwaysOutputData=True,onError="continueRegularOutput"),
-        node("SCHEDULE Retrieval Embeddings — same model as ingestion","@n8n/n8n-nodes-langchain.embeddingsOpenAi",1.2,(-280,-500),{"model":"text-embedding-3-small","options":{"batchSize":16,"stripNewLines":True,"timeout":600,"encodingFormat":"float"}},credentials=_embedding_credential("REPLACE: SCHEDULE embedding credential")),
+        node("PGVector semantic candidates","@n8n/n8n-nodes-langchain.vectorStorePGVector",1.3,(-280,-140),{"mode":"load","prompt":"={{ $json.query }}","topK":"={{ $json.top_k }}","includeDocumentMetadata":True,"tableName":VECTOR_TABLE,"options":{"distanceStrategy":"cosine","columnNames":{"values":{"idColumnName":"id","vectorColumnName":"embedding","contentColumnName":"text","metadataColumnName":"metadata"}},"metadata":{"metadataValues":[{"name":"target_base","value":"={{ $json.filters.target_base }}"},{"name":"access_scope","value":"={{ $json.filters.access_scope }}"},{"name":"knowledge_status","value":"current"}]}}},credentials=_credential("REPLACE: SCHEDULE PostgreSQL / PGVector credential"),alwaysOutputData=True,onError="continueRegularOutput"),
+        node("SCHEDULE Retrieval Embeddings — same model as ingestion","@n8n/n8n-nodes-langchain.embeddingsOpenAi",1.2,(-280,-500),{"model":EMBEDDING_MODEL,"options":{"batchSize":16,"stripNewLines":True,"timeout":-1,"encodingFormat":"float"}},credentials=_embedding_credential("REPLACE: SCHEDULE embedding credential")),
         code("Wrap semantic candidates",(-20,-140),WRAP_SEMANTIC),
         node("Collect hybrid candidate branches","n8n-nodes-base.merge",3.2,(220,-140),{"numberInputs":3,"mode":"append"}),
         code("Fuse authorized candidates with deterministic RRF",(480,-140),RRF),

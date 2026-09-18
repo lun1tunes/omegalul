@@ -55,6 +55,9 @@ LAB_URLS = (
     # OpenAI-compatible /v1 base (same as the Qwen credential URL). Decision/Verify HTTP
     # append /chat/completions. n8n 2.30.8 HTTP Request cannot read $credentials.url.
     ("chat_base_url", "https://openrouter.ai/api/v1"),
+    # Overlay on SAMPLING / CHAT_THINKING_OFF (JSON object). Empty `{}` = use the template.
+    # Field: vLLM/SGLang extra flags if the corp endpoint needs them; never put secrets here.
+    ("chat_extra_params", "{}"),
     # Phase 2: the orchestrator calls agents by the workflow id stored in agent_registry.invoke.
     # UI "Import from File" assigns new ids, so the field engineer maps agent_id → live workflow id
     # here (JSON object). Empty = trust the registry. Lab (CLI import keeps ids) leaves it empty.
@@ -132,11 +135,15 @@ def main() -> None:
                     "3. Excel Tools и Schedule Builder без Header Auth (как Math).\n\n"
                     "Возвращает "
                     "`activity_base_url`, `excel_tools_url`, `schedule_service_url`, "
-                    "`math_url`, `orchestrator_step_url`, `max_steps`, `chat_model`, `agent_workflow_ids`, `mas_version`. Ничего не оркестрирует.\n\n"
+                    "`math_url`, `orchestrator_step_url`, `max_steps`, `chat_model`, `chat_base_url`, "
+                    "`chat_extra_params`, `agent_workflow_ids`, `mas_version`. Ничего не оркестрирует.\n\n"
                     "`mas_version` — строка из файла VERSION пакета; должна совпадать с `/health` сервисов на Windows.\n\n"
-                    "`chat_model` — id модели для Decision / Verify. "
+                    "`chat_model` — id модели для Decision / Verify / Agent chat. "
                     "`chat_base_url` — Base URL того же OpenAI-compatible API, что в Qwen-credential "
                     "(без `/chat/completions`; lab OpenRouter, поле — корпоративный Qwen).\n\n"
+                    "`chat_extra_params` — JSON-объект поверх сэмплинга и thinking-off "
+                    "(`top_k`, `reasoning`, `enable_thinking`, `chat_template_kwargs`). "
+                    "`{}` — значения из шаблона. Не кладите сюда ключи и `messages`.\n\n"
                     "`max_steps` — бюджет шагов оркестратора на кейс (по умолчанию 12): при достижении "
                     "с готовым результатом инженеру предлагается принять/доработать, без результата — кейс failed.\n\n"
                     "`agent_workflow_ids` — JSON `{\"<agent_id>\": \"<id workflow в этом n8n>\"}`. Оркестратор "

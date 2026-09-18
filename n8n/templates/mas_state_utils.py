@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 
+from llm_runtime_options import PARSE_CHAT_EXTRA_JS, PREVIEW_CHAT_MESSAGES_JS
+
 STATE_SHAPE_MARKER_BEGIN = "/* mas_state_utils begin */"
 STATE_SHAPE_MARKER_END = "/* mas_state_utils end */"
 
@@ -388,22 +390,13 @@ function readUnlistedWellsPolicy(answers){
   }
   return null;
 }
-/* Retrieval query for the routing slice: the task as the engineer, the orchestrator's plan and the journal
-   describe it — plain text for the lexical + semantic branches. No regex-derived tags (O4): the tag branch
-   gets nothing; the plan titles (LLM-written) are the topical hint. */
+/* Retrieval query for the routing slice (O24): goal + plan titles + the open HITL question.
+   Filenames and journal/agent summaries stay out — they made every goal look the same. */
 function buildRetrievalQuery(compact){
   const c=compact&&typeof compact==='object'?compact:{};
   const parts=[String(c.goal||'').trim()];
-  const inputs=Array.isArray(c.inputs)?c.inputs:[];
-  if(inputs.length) parts.push('Приложены файлы: '+inputs.map(i=>i&&(i.filename||i.artifact_id)).filter(Boolean).slice(0,8).join(', '));
   const planTitles=(Array.isArray(c.plan)?c.plan:[]).map(p=>p&&String(p.title||'').trim()).filter(Boolean);
   if(planTitles.length) parts.push('План: '+planTitles.slice(0,6).join('; '));
-  const agents=c.agents&&typeof c.agents==='object'?c.agents:{};
-  for(const [id,a] of Object.entries(agents)){
-    if(a&&a.summary) parts.push(`${id}: ${String(a.summary).slice(0,160)}`);
-  }
-  const dels=Array.isArray(c.deliverables)?c.deliverables:[];
-  if(dels.length) parts.push('Уже получены результаты: '+dels.map(d=>d.filename||d.artifact_id).filter(Boolean).join(', '));
   if(c.hitl_pending&&c.hitl_question) parts.push('Открытый вопрос инженеру: '+String(c.hitl_question).slice(0,160));
   return parts.filter(Boolean).join('\n').slice(0,800)||'маршрутизация инженерной задачи';
 }
@@ -888,23 +881,58 @@ function planLines(plan){
     return `- ${p.id} [${p.status}] ${p.title}${agent}${deps}${note}`;
   });
 }
-/* RAG tag branch from the plan (no regex over the goal): the open plan items name agents, the registry
-   names what those agents consume/produce (input_required / output_provides — artifact roles and data
-   keys). Routing cards carry the same role words in `topics`, so the cards for the agents the model
-   intends to use are boosted. Empty plan → empty tags → lexical/semantic branches only. */
-function planRetrievalTopics(plan, registry){
-  const rows=Array.isArray(registry)?registry:[];
+function parseJsonList(v){
+  if(Array.isArray(v)) return v;
+  if(typeof v==='string'){ try{const p=JSON.parse(v);return Array.isArray(p)?p:[];}catch{return [];} }
+  return [];
+}
+function registryEnabled(row){
+  if(!row||typeof row!=='object') return false;
+  if(row.enabled===false||row.enabled==='false'||row.enabled===0||row.enabled==='0') return false;
+  return true;
+}
+function agentRoleTags(row, inputsOnly){
+  const req=parseJsonList(row&&row.input_required);
+  const keys=inputsOnly?(req.length?['input_required']:['output_provides']):['input_required','output_provides'];
   const out=[];
-  for(const p of planOpenItems(plan)){
-    const row=p.agent_id?rows.find(r=>r&&String(r.agent_id||'')===p.agent_id):null;
-    if(!row) continue;
-    for(const key of ['input_required','output_provides']){
-      let vals=row[key];
-      if(typeof vals==='string'){ try{vals=JSON.parse(vals);}catch{vals=[];} }
-      for(const v of (Array.isArray(vals)?vals:[])){
-        const tag=String(v||'').trim().toLowerCase();
-        if(tag&&!out.includes(tag)) out.push(tag);
-      }
+  for(const key of keys){
+    for(const v of parseJsonList(row&&row[key])){
+      const tag=String(v||'').trim().toLowerCase();
+      if(tag&&tag!=='absent_agent'&&!out.includes(tag)) out.push(tag);
+    }
+  }
+  return out;
+}
+function attachedRoles(compact){
+  const have=new Set();
+  const inputs=Array.isArray(compact&&compact.inputs)?compact.inputs:[];
+  for(const i of inputs){
+    const role=String((i&&i.role)||'').trim().toLowerCase();
+    if(role) have.add(role);
+  }
+  return have;
+}
+function agentInputsCovered(row, compact){
+  const req=parseJsonList(row&&row.input_required).map(v=>String(v||'').trim().toLowerCase()).filter(Boolean);
+  if(!req.length) return true;
+  const have=attachedRoles(compact);
+  return req.every(r=>have.has(r));
+}
+/* RAG tag branch (no regex over the goal). Open plan items → input+output roles of those agents.
+   Empty plan (step 0) → file roles (`input_required`) of enabled agents covered by attached files;
+   agents with empty input_required contribute `output_provides` so a file-less task still sends
+   topics (45% floor on one-branch orchestrator cards). Skip `absent_agent`. */
+function planRetrievalTopics(plan, registry, compact){
+  const rows=(Array.isArray(registry)?registry:[]).filter(registryEnabled);
+  const open=planOpenItems(plan).filter(p=>p&&p.agent_id);
+  const step0=!open.length;
+  const source=step0
+    ?rows.filter(r=>agentInputsCovered(r, compact||{}))
+    :open.map(p=>rows.find(r=>r&&String(r.agent_id||'')===p.agent_id)).filter(Boolean);
+  const out=[];
+  for(const row of source){
+    for(const tag of agentRoleTags(row, step0)){
+      if(!out.includes(tag)) out.push(tag);
     }
   }
   return out.slice(0,12);
@@ -1038,12 +1066,13 @@ function applyAgentResult(state, agentId, taskId, result, registry){
        completed run of the same agent produced. */
     agents[agentId]={...prevSlot,status:'failed',summary:message.slice(0,400),task_id:taskId,step,data:obj(prevSlot.data)?prevSlot.data:{}};
     const issues=Array.isArray(res.issues)?res.issues:[];
-    const unreachable=issues.some(i=>i&&String(i.code||'')==='service_unreachable');
+    const hard=issues.find(i=>i&&(String(i.code||'')==='service_unreachable'||String(i.code||'')==='llm_unavailable'));
+    const hardCode=hard?String(hard.code||''):'';
     events.push({kind:'agent.failed',actor:agentId||'agent',agent_id:agentId,status:'failed',status_message:message,payload:{message,issues,error_count:errorCount,...execRef()}});
-    if(unreachable||errorCount>=3){
+    if(hard||errorCount>=3){
       nextStatus='failed';
       shouldContinue=false;
-      events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:unreachable?message:`Агент «${title}» вернул ошибку ${errorCount} раза подряд`,payload:{agent_id:agentId,error_count:errorCount,...(unreachable?{code:'service_unreachable'}:{}),...execRef()}});
+      events.push({kind:'case.failed',actor:'orchestrator',status:'failed',status_message:hard?message:`Агент «${title}» вернул ошибку ${errorCount} раза подряд`,payload:{agent_id:agentId,error_count:errorCount,...(hardCode?{code:hardCode}:{}),...execRef()}});
     }
   }
   const artifactsAdded=Object.keys(flattenArtifacts(state.artifacts||{})).filter(k=>!artifactsBefore.has(k));
@@ -1098,6 +1127,13 @@ function buildCompact(state){
 /* mas_state_utils end */
 """
 
-STATE_SHAPE_JS = _STATE_SHAPE_JS_TEMPLATE.replace("__PLAN_STATUSES__", json.dumps(list(PLAN_STATUSES))).replace(
-    "__PLAN_OPEN_STATUSES__", json.dumps(list(PLAN_OPEN_STATUSES))
+STATE_SHAPE_JS = (
+    _STATE_SHAPE_JS_TEMPLATE.replace("__PLAN_STATUSES__", json.dumps(list(PLAN_STATUSES))).replace(
+        "__PLAN_OPEN_STATUSES__", json.dumps(list(PLAN_OPEN_STATUSES))
+    )
+    + "\n"
+    + PARSE_CHAT_EXTRA_JS
+    + "\n"
+    + PREVIEW_CHAT_MESSAGES_JS
+    + "\n"
 )

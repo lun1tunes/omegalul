@@ -35,14 +35,26 @@ EVENT_KINDS = (
     # agent (`trace.tool`) or a free-form technical note (`trace.note`). Same table, same stream.
     "trace.tool",
     "trace.note",
+    "trace.rag",
+    "trace.llm",
+    "orchestrator.resume",
 )
 AGENT_EVENT_KINDS = ("agent.accepted", "agent.progress", "agent.result", "agent.failed")
 TRACE_EVENT_PREFIX = "trace."
+CHAT_HIDDEN_KINDS = frozenset({"orchestrator.resume"})
 
 
 def is_trace_kind(kind: Any) -> bool:
     """Technical events never become chat turns; the developer log shows them."""
     return str(kind or "").startswith(TRACE_EVENT_PREFIX)
+
+
+def is_chat_hidden_kind(kind: Any) -> bool:
+    """Chat / GET /cases feed: traces plus resume echoes that are log-only."""
+    k = str(kind or "")
+    return is_trace_kind(k) or k in CHAT_HIDDEN_KINDS
+
+
 MAX_STEPS = 24
 
 

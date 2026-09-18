@@ -28,7 +28,7 @@ SYSTEM = """Ты — решатель агента Excel Extractor: читаеш
 Инварианты:
 - Не придумывай скважины, даты, дебиты, имена листов, table_id и колонок — только из инвентаря и ответов инструментов.
 - rework_reason в задаче — замечание оркестратора к прошлому результату: устрани именно его.
-- Retrieved knowledge — только срез excel_protocol / protocol_instruction (протокол инструментов). Пустой или unavailable срез — работай по инвентарю, инженера про базу знаний не спрашивай.
+- Retrieved knowledge — срез excel_protocol / protocol_instruction. Если протокола для выбранного инструмента нет в срезе — retrieve_knowledge с query по смыслу таблицы. Пустой или unavailable срез — работай по инвентарю, инженера про базу знаний не спрашивай.
 
 Заверши одним коротким фактическим предложением по-русски: что извлечено или чего не хватило.
 """
@@ -165,10 +165,17 @@ SPEC = AgentSpec(
         "Срез excel_protocol пуст или недоступен — работай правилами инструментов. "
         "Не спрашивай HITL про RAG и не ходи в другие target_base."
     ),
-    retrieval_filters_js="""
-if(/дат|ввод|commission/.test(low)) task_patterns.push('даты ввода');
-if(/таблиц|query|дебит|истори|управлен/.test(low)) task_patterns.push('извлечь таблицу');
-if(/уточн|ambigu|clarif/.test(low)) task_patterns.push('clarification_needed');
+    retrieval_filters_js=r"""
+const inspect=opened.inspect&&typeof opened.inspect==='object'?opened.inspect:{};
+const expected=opened.expected_output&&typeof opened.expected_output==='object'?opened.expected_output:((task.inputs&&task.inputs.expected_output&&typeof task.inputs.expected_output==='object')?task.inputs.expected_output:{});
+for(const t of (Array.isArray(inspect.tables)?inspect.tables:[])){
+  const kind=String(t&&t.kind||'').trim();
+  if(kind) task_patterns.push(kind);
+}
+for(const d of (Array.isArray(expected.datasets)?expected.datasets:[])){
+  const name=String(d&&d.name||'').trim();
+  if(name) task_patterns.push(name);
+}
 """,
     planner_extra_js="files:Array.isArray(opened.files)?opened.files:[]",
     result_tools=["extract_", "ask_engineer"],

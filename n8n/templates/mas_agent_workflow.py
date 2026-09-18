@@ -11,15 +11,15 @@ Every agent workflow has the same nodes (names differ only by ``spec.title`` / `
     → Open <slug> session → Session ready?
         ├─ no  → Format missing <slug>
         └─ yes → Activity — <Title> accepted → Activity — <Title> progress → Prepare AI Agent input
-                 → Call Knowledge Retrieval → Attach <slug> RAG evidence → <Title> AI Agent (+ tools)
-                 → Summarize AI steps → Activity — <Title> tools → Result stored?
-                     ├─ no result → Format <slug> result (prose question to the engineer)
-                     └─ result    → Fetch <slug> result → Format <slug> result
+                 → Call Knowledge Retrieval → Attach <slug> RAG evidence → Activity — <Title> RAG
+                 → Restore after <Title> RAG → Build chat request → <Title> Agent chat
+                 → Parse agent chat → loop (tool / retrieve_knowledge / next chat)
+                 → Summarize AI steps → Fetch <slug> result → Format <slug> result
                  → Close <slug> session
 
-Tools are ``n8n-nodes-base.httpRequestTool`` nodes (``mas_tool_nodes.tool_http``): in n8n 2.30.8 the
-langchain ``toolHttpRequest`` is not executable. The service URL comes from ``MAS — Runtime Config``
-(``spec.service_url_key``), so the field engineer changes addresses in the UI, never in JSON.
+``llm_transport=n8n_agent`` keeps the legacy LangChain Agent + httpRequestTool graph for one-revision rollback.
+
+The service URL comes from ``MAS — Runtime Config`` (``spec.service_url_key``).
 """
 
 from __future__ import annotations
@@ -31,14 +31,107 @@ from typing import Any
 
 from generate_mas_error_traces import WF_ID as ERROR_WF_ID
 from generate_mas_runtime_config import runtime_config_execute_params
-from llm_runtime_options import chat_model_options
-from mas_agent_spec import AgentSpec
-from mas_retrieval_client import SELECTORS, attach_retrieval_js, knowledge_retrieval_execute_params
+from llm_runtime_options import (
+    CHAT_THINKING_OFF,
+    LLM_HTTP_TIMEOUT_MS,
+    PARSE_CHAT_EXTRA_JS,
+    PREVIEW_CHAT_MESSAGES_JS,
+    SAMPLING,
+    chat_model_options,
+)
+from mas_agent_spec import AgentSpec, ToolField
+from mas_retrieval_client import SELECTORS, RAG_HELPERS_JS, attach_retrieval_js, knowledge_retrieval_execute_params
 from mas_tool_nodes import HTTP_REQUEST_TOOL_TYPE, HTTP_REQUEST_TOOL_VERSION, http_request_tool_params
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "workflows/core"
 CHAT_MODEL_CREDENTIAL = {"openAiApi": {"id": "REPLACE_IN_UI", "name": "REPLACE: Qwen OpenAI-compatible agent credential"}}
+
+RETRIEVE_KNOWLEDGE_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "retrieve_knowledge",
+        "description": (
+            "Найти карточки в базе знаний по запросу. Вызови, когда в текущем срезе нет инструкции "
+            "по нужному keyword или протоколу — особенно перед первым apply_dataset / apply_operations "
+            "/ extract_table по ним. keywords — имена keyword через запятую."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Поисковый запрос (русская фраза или имена keyword)"},
+                "keywords": {"type": "string", "description": "Необязательно: семейства keyword через запятую"},
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+LOOP_HELPERS_JS = r"""
+function fromNode(name){
+  try{
+    const n=$(name);
+    if(n&&n.item&&n.item.json) return n.item.json;
+    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}
+    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}
+  }catch(e){}
+  return {};
+}
+function obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}
+function stripThink(text){return String(text||'').replace(/<think>[\s\S]*?<\/think>/gi,' ').replace(/\s+/g,' ').trim();}
+function clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}
+function parseArgs(raw){
+  if(obj(raw)) return raw;
+  const s=String(raw||'').trim();
+  if(!s) return {};
+  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}
+}
+function looksMachine(text){
+  const s=String(text||'');
+  if(!s.trim()) return false;
+  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\[\]]|\w\|\w/.test(s)||/\bbaseline\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);
+}
+function loopRouteForPending(pending, over){
+  const list=Array.isArray(pending)?pending:[];
+  if(list.length){
+    const name=String((list[0]&&list[0].name)||'');
+    return name==='retrieve_knowledge'?'retrieve':'tool';
+  }
+  return over?'done':'chat';
+}
+function toolTransportCode(http){
+  if(!http||typeof http.ok==='boolean') return '';
+  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);
+  const status=Number(http.statusCode||http.status||(err&&err.status)||0);
+  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();
+  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';
+  if(status>=500) return 'service_unreachable';
+  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';
+  if(err||status>=400) return 'tool_http_failed';
+  return '';
+}
+""" + PARSE_CHAT_EXTRA_JS + "\n" + PREVIEW_CHAT_MESSAGES_JS
+
+
+def openai_function_tool(name: str, description: str, fields: list[ToolField]) -> dict[str, Any]:
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    for key, typ, req, desc in fields:
+        json_type = "number" if typ == "number" else "string"
+        extra = " Передай JSON-строкой." if typ == "json" else ""
+        properties[key] = {"type": json_type, "description": f"{desc}{extra}"}
+        if req:
+            required.append(key)
+    parameters: dict[str, Any] = {"type": "object", "properties": properties, "additionalProperties": True}
+    if required:
+        parameters["required"] = required
+    return {"type": "function", "function": {"name": name, "description": description, "parameters": parameters}}
+
+
+def openai_tools_for_spec(spec: AgentSpec) -> list[dict[str, Any]]:
+    tools = [openai_function_tool(name, desc, fields) for name, desc, fields in spec.tools]
+    tools.append(dict(RETRIEVE_KNOWLEDGE_TOOL))
+    return tools
 
 
 class AgentWorkflow:
@@ -72,6 +165,23 @@ class AgentWorkflow:
             "prepare": "Prepare AI Agent input",
             "rag": "Call Knowledge Retrieval",
             "attach": f"Attach {s} RAG evidence",
+            "rag_event": f"Activity — {t} RAG",
+            "restore_rag": f"Restore after {t} RAG",
+            "build": "Build chat request",
+            "chat": f"{t} Agent chat",
+            "parse": "Parse agent chat",
+            "llm_event": f"Activity — {t} LLM",
+            "restore_llm": f"Restore after {t} LLM",
+            "router": "Agent loop router",
+            "prep_tool": "Prepare tool call",
+            "skip_tool": "Skip unknown tool?",
+            "call_tool": "Call agent tool",
+            "append_tool": "Append tool result",
+            "prep_retrieve": "Prepare retrieve request",
+            "retrieve": "Retrieve knowledge",
+            "attach_retrieve": "Attach retrieve evidence",
+            "retrieve_event": f"Activity — {t} retrieve",
+            "restore_retrieve": f"Restore after {t} retrieve",
             "agent": f"{t} AI Agent",
             "model": f"{t} Chat Model — Qwen",
             "summarize": "Summarize AI steps",
@@ -129,12 +239,13 @@ class AgentWorkflow:
             },
         )
 
-    def http_json(self, name: str, pos: tuple[int, int], method: str, url: str, body: str | None = None, *, timeout: int = 180000, activity: bool = False, retry: bool = False) -> dict[str, Any]:
+    def http_json(self, name: str, pos: tuple[int, int], method: str, url: str, body: str | None = None, *, timeout: int = 180000, activity: bool = False, retry: bool = False, never_error: bool = False) -> dict[str, Any]:
         """HTTP Request 4.4 with JSON in/out. ``activity=True``: feed line, never fails, 2 s budget, no service auth."""
         response: dict[str, Any] = {"fullResponse": False, "responseFormat": "json"}
-        if activity:
+        if activity or never_error:
             response["neverError"] = True
-            timeout = min(timeout, 2000)
+            if activity:
+                timeout = min(timeout, 2000)
         params: dict[str, Any] = {
             "method": method,
             "url": url,
@@ -152,6 +263,36 @@ class AgentWorkflow:
         if retry:
             extra.update({"retryOnFail": True, "maxTries": 3, "waitBetweenTries": 2000})
         return self.node(name, "n8n-nodes-base.httpRequest", 4.4, pos, params, **extra)
+
+    def openai_chat_http(self, name: str, pos: tuple[int, int]) -> dict[str, Any]:
+        """OpenAI-compatible /chat/completions — same credential and URL pattern as orchestrator Decision chat."""
+        return self.node(
+            name,
+            "n8n-nodes-base.httpRequest",
+            4.4,
+            pos,
+            {
+                "method": "POST",
+                "url": "={{ $json.chat_url }}",
+                "authentication": "predefinedCredentialType",
+                "nodeCredentialType": "openAiApi",
+                "sendHeaders": True,
+                "headerParameters": {"parameters": [{"name": "Content-Type", "value": "application/json"}]},
+                "sendBody": True,
+                "specifyBody": "json",
+                "jsonBody": "={{ $json.chat_request }}",
+                "options": {
+                    "timeout": LLM_HTTP_TIMEOUT_MS,
+                    "response": {"response": {"fullResponse": False, "neverError": True}},
+                },
+            },
+            credentials=CHAT_MODEL_CREDENTIAL,
+            retryOnFail=True,
+            maxTries=3,
+            waitBetweenTries=2000,
+            onError="continueRegularOutput",
+            alwaysOutputData=True,
+        )
 
     # -- expressions ---------------------------------------------------------------------------
 
@@ -255,7 +396,7 @@ class AgentWorkflow:
             "const handoff=String(opened.handoff_message||task.handoff_message||'');\n"
             "const blob=[objective,handoff].join('\\n');\n"
             "const low=blob.toLowerCase();\n"
-            "// Retrieval filters. Hints below only narrow the RAG slice — they never pick a tool.\n"
+            "// Retrieval filters from inspect / expected_output (spec JS). Task text is query only.\n"
             "const keyword_families=[];\n"
             "const topics=RAG_TOPICS.slice();\n"
             "const task_patterns=[];\n"
@@ -373,37 +514,75 @@ class AgentWorkflow:
         t = self.spec.texts
         assert t is not None
         return (
-            "const fetched=$json||{};\n"
-            f"const opened={self.ref(self.n['open'])}.first().json||{{}};\n"
-            "const arts=fetched.artifacts&&typeof fetched.artifacts==='object'?fetched.artifacts:{};\n"
-            "// n8n may coerce an empty artifact text to a boolean; a boolean card is no card.\n"
-            "const artifacts=Object.fromEntries(Object.entries(arts).filter(([,v])=>typeof v!=='boolean'));\n"
-            "if(fetched.status){\n"
-            "  return [{json:{\n"
-            "    task_id:fetched.task_id||opened.task_id||'',\n"
-            f"    agent_id:{json.dumps(self.spec.agent_id)},\n"
-            "    status:fetched.status,\n"
-            "    message:fetched.message||'',\n"
-            "    data:fetched.data||{},\n"
-            "    artifacts,\n"
-            "    issues:fetched.issues||[],\n"
-            "    assumptions:fetched.assumptions||[],\n"
-            "    requests:fetched.requests||[],\n"
-            "    // in_progress (long job): what the feed/monitor may show or poll (CASE-6a9f3bc9-10cb9f: was dropped here).\n"
-            "    ...(fetched.watch&&typeof fetched.watch==='object'?{watch:fetched.watch}:{})\n"
-            "  }}];\n"
-            "}\n"
-            "return [{json:{\n"
-            "  task_id:opened.task_id||'',\n"
-            f"  agent_id:{json.dumps(self.spec.agent_id)},\n"
-            "  status:'failed',\n"
-            f"  message:String(fetched.message||fetched.error||{json.dumps(t.no_result_failed_message, ensure_ascii=False)}),\n"
-            "  data:{},\n"
-            "  artifacts:{},\n"
-            f"  issues:[{{type:{json.dumps(t.no_result_failed_issue)}}}],\n"
-            "  assumptions:[],\n"
-            "  requests:[]\n"
-            "}}];\n"
+            LOOP_HELPERS_JS
+            + f"\nconst AGENT_ID={json.dumps(self.spec.agent_id)};\n"
+            + f"const NO_RESULT_ISSUE={json.dumps(t.no_result_issue)};\n"
+            + f"const QUESTION_ID={json.dumps(t.question_id)};\n"
+            + f"const ACCEPTS_FILES={json.dumps(t.accepts_files)};\n"
+            + f"const FAIL_MSG={json.dumps(t.no_result_failed_message, ensure_ascii=False)};\n"
+            + f"const FAIL_ISSUE={json.dumps(t.no_result_failed_issue)};\n"
+            + f"const OPEN_NAME={json.dumps(self.n['open'])};\n"
+            + f"const DOWN_MSG={json.dumps('Сервис агента „' + self.spec.title + '“ не отвечает по адресу из настроек среды. Проверьте, что он запущен, и перезапустите задачу.', ensure_ascii=False)};\n"
+            + f"const LLM_DOWN_MSG={json.dumps('Модель чата не ответила. Проверьте доступ к модели в настройках среды и перезапустите задачу.', ensure_ascii=False)};\n"
+            + """
+const fetched=$json||{};
+const opened=fromNode(OPEN_NAME);
+const summarized=fromNode('Summarize AI steps');
+const finalText=stripThink(String(summarized.llm_final_text||fetched.llm_final_text||''));
+const arts=fetched.artifacts&&typeof fetched.artifacts==='object'?fetched.artifacts:{};
+const artifacts=Object.fromEntries(Object.entries(arts).filter(([,v])=>typeof v!=='boolean'));
+function pack(src){
+  return {json:{
+    task_id:src.task_id||opened.task_id||'',
+    agent_id:AGENT_ID,
+    status:src.status,
+    message:src.message||'',
+    data:src.data||{},
+    artifacts:src.artifacts&&typeof src.artifacts==='object'?src.artifacts:artifacts,
+    issues:src.issues||[],
+    assumptions:src.assumptions||[],
+    requests:src.requests||[],
+    ...(src.watch&&typeof src.watch==='object'?{watch:src.watch}:{})
+  }};
+}
+if(summarized.service_unreachable||fetched.service_unreachable){
+  return [pack({status:'failed',message:DOWN_MSG,data:{},artifacts:{},issues:[{code:'service_unreachable'}],requests:[]})];
+}
+if(summarized.llm_unavailable||fetched.llm_unavailable){
+  return [pack({status:'failed',message:LLM_DOWN_MSG,data:{},artifacts:{},issues:[{code:'llm_unavailable'}],requests:[]})];
+}
+if(fetched.status){
+  const issues=Array.isArray(fetched.issues)?fetched.issues:[];
+  const generic=issues.some(i=>i&&i.type===NO_RESULT_ISSUE);
+  if(generic&&fetched.status==='needs_input'&&finalText&&!looksMachine(finalText)){
+    const reqs=Array.isArray(fetched.requests)?fetched.requests:[];
+    const requests=reqs.length?reqs.map((r,i)=>i===0?{...r,question:finalText}:r):[{question_id:QUESTION_ID,question:finalText,options:[],accepts:{free_text:true,files:ACCEPTS_FILES}}];
+    return [pack({...fetched,message:finalText,requests,artifacts})];
+  }
+  return [pack({...fetched,artifacts})];
+}
+if(finalText&&!looksMachine(finalText)){
+  return [pack({
+    status:'needs_input',
+    message:finalText,
+    data:{llm_final_text:finalText.slice(0,600)},
+    artifacts:{},
+    issues:[{type:NO_RESULT_ISSUE}],
+    requests:[{question_id:QUESTION_ID,question:finalText,options:[],accepts:{free_text:true,files:ACCEPTS_FILES}}]
+  })];
+}
+return [{json:{
+  task_id:opened.task_id||'',
+  agent_id:AGENT_ID,
+  status:'failed',
+  message:String(fetched.message||FAIL_MSG),
+  data:{},
+  artifacts:{},
+  issues:[{type:FAIL_ISSUE}],
+  assumptions:[],
+  requests:[]
+}}];
+"""
         )
 
     def js_attach_rag(self) -> str:
@@ -413,6 +592,250 @@ class AgentWorkflow:
             fail_open=True,
             ready_note=self.spec.rag_ready_note,
             empty_note=self.spec.rag_empty_note,
+            activity_caller=self.spec.agent_id,
+            phase="initial",
+        )
+
+    def js_build_chat(self) -> str:
+        return (
+            LOOP_HELPERS_JS
+            + "\nconst SYSTEM="
+            + json.dumps(self.spec.system_prompt, ensure_ascii=False)
+            + ";\nconst TOOLS="
+            + json.dumps(openai_tools_for_spec(self.spec), ensure_ascii=False)
+            + ";\nconst THINKING_OFF="
+            + json.dumps(CHAT_THINKING_OFF)
+            + ";\nconst SAMPLING="
+            + json.dumps(SAMPLING["agent"])
+            + ";\nconst DEFAULT_CHAT_MODEL="
+            + json.dumps(self.spec.model)
+            + ";\nconst MAX_ITER="
+            + str(int(self.spec.max_iterations))
+            + """;
+const prev=$json||{};
+let cfg={};
+try{cfg=$('Runtime configuration').first().json||{};}catch(e){cfg={}}
+const model=String(cfg.chat_model||'').trim()||DEFAULT_CHAT_MODEL;
+const base=String(cfg.chat_base_url||'').replace(/[/]+$/,'');
+const chat_url=base?base+'/chat/completions':'';
+let messages=Array.isArray(prev.messages)?prev.messages:[];
+if(!messages.length){
+  messages=[{role:'system',content:SYSTEM},{role:'user',content:String(prev.planner_input||prev.agent_input||'')}];
+}
+const extra=parseChatExtra(cfg);
+const chat_request={model,...SAMPLING,...THINKING_OFF,messages,tools:TOOLS,tool_choice:'auto',...extra};
+return [{json:{...prev,messages,chat_request,chat_url,max_iterations:MAX_ITER,iteration:Number(prev.iteration||0)}}];
+"""
+        )
+
+    def js_parse_chat(self) -> str:
+        return (
+            LOOP_HELPERS_JS
+            + """
+const http=$json||{};
+const prev=fromNode('Build chat request');
+const choice=obj((http.choices||[])[0])?(http.choices||[])[0]:{};
+const msg=obj(choice.message)?choice.message:{};
+const content=stripThink(typeof msg.content==='string'?msg.content:'');
+const usage=obj(http.usage)?http.usage:{};
+const details=obj(usage.completion_tokens_details)?usage.completion_tokens_details:{};
+const finish=String(choice.finish_reason||http.finish_reason||'');
+const errObj=obj(http.error)?http.error:null;
+const errText=typeof http.error==='string'?http.error:String((errObj&&(errObj.message||errObj.code))||'');
+const statusCode=Number(http.statusCode||http.status||(errObj&&errObj.status)||0);
+const toolCalls=Array.isArray(msg.tool_calls)?msg.tool_calls:[];
+const pending=toolCalls.map(tc=>{
+  const fn=obj(tc.function)?tc.function:{};
+  return {id:String(tc.id||''),name:String(fn.name||tc.name||''),arguments:fn.arguments!=null?fn.arguments:tc.arguments};
+}).filter(t=>t.name);
+const iteration=Number(prev.iteration||0)+1;
+const maxIter=Number(prev.max_iterations||8);
+const over=iteration>=maxIter;
+let messages=Array.isArray(prev.messages)?prev.messages.slice():[];
+const assistant={role:'assistant',content:content||null};
+if(toolCalls.length) assistant.tool_calls=toolCalls;
+messages.push(assistant);
+const tool_log=Array.isArray(prev.tool_log)?prev.tool_log.slice():[];
+const llm_unavailable=(!pending.length)&&(Boolean(errText)||statusCode>=400||!Array.isArray(http.choices)||finish==='error');
+const loop_route=llm_unavailable?'done':(pending.length?loopRouteForPending(pending, over):'done');
+const promptMsgs=obj(prev.chat_request)&&Array.isArray(prev.chat_request.messages)?prev.chat_request.messages:[];
+const tokens=Number(usage.prompt_tokens||0)+Number(usage.completion_tokens||0);
+const payload={
+  role:'agent',
+  model:String((obj(prev.chat_request)&&prev.chat_request.model)||''),
+  prompt_tokens:Number(usage.prompt_tokens||0),
+  completion_tokens:Number(usage.completion_tokens||0),
+  reasoning_tokens:Number(details.reasoning_tokens||0),
+  finish_reason:llm_unavailable?(finish||'error'):(finish||(errText?'error':'stop')),
+  tool_calls:pending.map(t=>({name:t.name,args_preview:clip(String(t.arguments||''),400)})),
+  prompt_preview:previewChatMessages(promptMsgs, Number(prev.prompt_len||0)),
+  content_preview:clip(content,2000)
+};
+if(errText) payload.error=errText.slice(0,200);
+return [{json:{
+  ...prev,
+  messages,
+  pending_tools:llm_unavailable?[]:pending,
+  iteration,
+  over,
+  loop_route,
+  llm_final_text:content,
+  llm_unavailable,
+  prompt_len:promptMsgs.length,
+  tool_log,
+  finish_reason:payload.finish_reason,
+  activity_kind:'trace.llm',
+  status_message:`agent: ${payload.finish_reason} · ${tokens} tok`,
+  activity_payload:payload
+}}];
+"""
+        )
+
+    def js_prepare_tool(self) -> str:
+        allowed = json.dumps([name for name, _d, _f in self.spec.tools])
+        key = json.dumps(self.spec.service_url_key)
+        open_name = json.dumps(self.n["open"])
+        return (
+            LOOP_HELPERS_JS
+            + f"\nconst ALLOWED=new Set({allowed});\nconst SERVICE_KEY={key};\nconst OPEN_NAME={open_name};\n"
+            + """
+const prev=$json||{};
+const pending=Array.isArray(prev.pending_tools)?prev.pending_tools:[];
+const call=pending[0]||{};
+const name=String(call.name||'');
+const args=parseArgs(call.arguments);
+const opened=fromNode(OPEN_NAME);
+const sessionId=String(opened.session_id||prev.session_id||'');
+let cfg={};
+try{cfg=$('Runtime configuration').first().json||{};}catch(e){cfg={}}
+const base=String(cfg[SERVICE_KEY]||prev[SERVICE_KEY]||'').replace(/[/]+$/,'');
+const log=Array.isArray(prev.tool_log)?prev.tool_log:[];
+const needKb=name==='apply_dataset'&&ALLOWED.has(name)&&!log.includes('retrieve_knowledge');
+const skip_http=!name||!ALLOWED.has(name)||needKb;
+const skip_result=needKb?{ok:false,code:'knowledge_required',message:'Сначала вызови retrieve_knowledge с query (смысл набора) и keywords (имя keyword), затем get_keyword, затем apply_dataset. Стартовый срез — краткие summary; полный текст — только из retrieve_knowledge.'}:(skip_http?{ok:false,code:'unknown_tool',message:'Нет такого инструмента',available:[...ALLOWED]}:null);
+const tool_url=skip_http?'':(base+'/agent-tools/'+name);
+const tool_body={session_id:sessionId,...args};
+return [{json:{...prev,pending_tool:call,tool_url,tool_body,skip_http,skip_result}}];
+"""
+        )
+
+    def js_append_tool(self) -> str:
+        return (
+            LOOP_HELPERS_JS
+            + """
+const http=$json||{};
+const prev=fromNode('Prepare tool call');
+const call=obj(prev.pending_tool)?prev.pending_tool:{};
+let pending=Array.isArray(prev.pending_tools)?prev.pending_tools.slice(1):[];
+let messages=Array.isArray(prev.messages)?prev.messages.slice():[];
+const transport=prev.skip_http?'':toolTransportCode(http);
+const result=prev.skip_http?prev.skip_result:(transport?{ok:false,code:transport,message:transport==='service_unreachable'?'Сервис агента не отвечает':'Инструмент не ответил'}:http);
+const body=typeof result==='string'?result:JSON.stringify(result==null?{}:result);
+messages.push({role:'tool',tool_call_id:String(call.id||''),content:body});
+const tool_log=Array.isArray(prev.tool_log)?prev.tool_log.slice():[];
+if(call.name) tool_log.push(String(call.name));
+const down=transport==='service_unreachable';
+const loop_route=down?'done':loopRouteForPending(pending, Boolean(prev.over));
+return [{json:{...prev,messages,pending_tools:down?[]:pending,tool_log,loop_route,skip_http:false,skip_result:null,service_unreachable:Boolean(prev.service_unreachable||down)}}];
+"""
+        )
+
+    def js_prepare_retrieve(self) -> str:
+        return (
+            LOOP_HELPERS_JS
+            + """
+const prev=$json||{};
+const pending=Array.isArray(prev.pending_tools)?prev.pending_tools:[];
+const call=pending[0]||{};
+const args=parseArgs(call.arguments);
+const req=obj(prev.schedule_retrieval_request)?{...prev.schedule_retrieval_request}:{};
+const filters=obj(req.filters)?{...req.filters}:{};
+const keywords=String(args.keywords||'').split(/[,;]/).map(s=>s.trim().toUpperCase()).filter(Boolean);
+if(keywords.length) filters.keyword_families=[...new Set(keywords)].slice(0,6);
+else filters.keyword_families=[];
+const query=clip(String(args.query||'').trim()||String(req.query||''),800);
+return [{json:{...prev,pending_tool:call,schedule_retrieval_request:{...req,query,filters}}}];
+"""
+        )
+
+    def js_attach_retrieve(self) -> str:
+        sel = SELECTORS[self.spec.rag_selector]
+        selector_json = json.dumps(
+            {"target_base": sel["target_base"], "knowledge_types": sel["knowledge_types"]},
+            ensure_ascii=False,
+        )
+        caller = json.dumps(self.spec.agent_id)
+        return (
+            LOOP_HELPERS_JS
+            + "\n"
+            + RAG_HELPERS_JS
+            + "\n"
+            + f"const fallbackSelector={selector_json};\n"
+            + f"const caller={caller};\n"
+            + f"const maxCards={int(sel['max_cards'])};\n"
+            + f"const textLimit={int(sel.get('on_demand_text_limit') or max(int(sel['text_limit']), 4000))};\n"
+            + """
+const prev=fromNode('Prepare retrieve request');
+const raw=$json||{};
+const result=unwrapRetrieval(raw);
+const fromPrev=prev.retrieval_selector;
+const selector=(fromPrev&&fromPrev.target_base)?{target_base:String(fromPrev.target_base),knowledge_types:Array.isArray(fromPrev.knowledge_types)&&fromPrev.knowledge_types.length?fromPrev.knowledge_types:fallbackSelector.knowledge_types}:fallbackSelector;
+const outage=retrievalOutage(result,raw);
+const cards=(outage==='failed'||outage==='needs_input')?[]:compactRetrievalCards(result,selector,maxCards,textLimit,true);
+const rag={contract:'mas_rag_evidence',contract_version:'1.0',target_base:selector.target_base,knowledge_types:selector.knowledge_types,status:outage||(cards.length?'ready':'empty'),phase:'on_demand',cards,findings:(Array.isArray(result.findings)?result.findings:[]).slice(0,6).map(f=>f&&f.code).filter(Boolean)};
+const call=obj(prev.pending_tool)?prev.pending_tool:{};
+let pending=Array.isArray(prev.pending_tools)?prev.pending_tools.slice(1):[];
+let messages=Array.isArray(prev.messages)?prev.messages.slice():[];
+messages.push({role:'tool',tool_call_id:String(call.id||''),content:JSON.stringify({status:rag.status,findings:rag.findings,cards:rag.cards})});
+const tool_log=Array.isArray(prev.tool_log)?prev.tool_log.slice():[];
+tool_log.push('retrieve_knowledge');
+const loop_route=loopRouteForPending(pending, Boolean(prev.over));
+const req=obj(prev.schedule_retrieval_request)?prev.schedule_retrieval_request:{};
+const logCards=(Array.isArray(cards)?cards:[]).map(c=>({knowledge_id:String((c&&c.knowledge_id)||''),revision:(c&&c.revision)!=null?c.revision:null,rrf_score:Number.isFinite(Number(c&&c.rrf_score))?Number(c.rrf_score):null,branches:Array.isArray(c&&c.branches)?c.branches.slice(0,6):[]}));
+const logFindings=(Array.isArray(result.findings)?result.findings:[]).slice(0,8).map(f=>{if(obj(f)&&f.code)return{code:String(f.code)};const code=String(f||'').trim();return code?{code}:null}).filter(Boolean);
+return [{json:{
+  ...prev,
+  messages,
+  pending_tools:pending,
+  tool_log,
+  loop_route,
+  rag,
+  activity_kind:'trace.rag',
+  status_message:`База знаний: ${rag.status} · ${logCards.length} карточек`,
+  activity_payload:{caller,query:String(req.query||result.query||'').slice(0,800),filters:obj(req.filters)?req.filters:{},status:rag.status,phase:rag.phase,findings:logFindings,cards:logCards}
+}}];
+"""
+        )
+
+    def js_summarize_loop(self) -> str:
+        return (
+            LOOP_HELPERS_JS
+            + f"\nconst OPEN_NAME={json.dumps(self.n['open'])};\n"
+            + """
+const prev=$json||{};
+const opened=fromNode(OPEN_NAME);
+const tools=Array.isArray(prev.tool_log)?prev.tool_log.filter(Boolean):[];
+const unique=[...new Set(tools)];
+const finalText=stripThink(String(prev.llm_final_text||''));
+const counts={};
+for(const name of tools) counts[name]=(counts[name]||0)+1;
+const repeated=Object.keys(counts).some(name=>name!=='retrieve_knowledge'&&counts[name]>3);
+const total=tools.filter(n=>n!=='retrieve_knowledge').length;
+const human=finalText.trim();
+const status_message=(human&&!looksMachine(human))?clip(human,400):'Агент завершил шаг.';
+return [{json:{
+  ...prev,
+  llm_final_text:finalText,
+  tools_used:unique,
+  total_calls:total,
+  repeated,
+  activity_kind:'agent.progress',
+  status_message,
+  activity_payload:{source:"""
+            + json.dumps(self.source_tag)
+            + """,total_calls:total,tools_used:unique,iterations:Number(prev.iteration||0)}
+}}];
+"""
         )
 
     # -- assembly ------------------------------------------------------------------------------
@@ -442,6 +865,54 @@ class AgentWorkflow:
         self.code(n["prepare"], (1480, 160), self.js_prepare())
         self.node(n["rag"], "n8n-nodes-base.executeWorkflow", 1.3, (1480, 300), knowledge_retrieval_execute_params(), onError="continueRegularOutput")
         self.code(n["attach"], (1680, 300), self.js_attach_rag())
+        self.activity_event_dynamic(n["rag_event"], (1880, 300))
+        self.restore(n["restore_rag"], (2040, 300), n["attach"])
+        if spec.llm_transport == "n8n_agent":
+            self._add_n8n_agent_nodes(spec, n)
+        else:
+            self._add_http_loop_nodes(spec, n)
+        self.http_json(n["fetch"], (2100, 0), "GET", f"={{{{ {self.service_url} + '/sessions/' + {self.session_id_expr} + '/result' }}}}", None, timeout=120000, retry=True)
+        self.code(n["format"], (2320, 0), self.js_format_result())
+        self.http_json(n["close"], (2480, 0), "POST", f"={{{{ {self.service_url} + '/sessions/' + {self.session_id_expr} + '/close' }}}}", "={{ ({}) }}", timeout=5000)
+        if spec.llm_transport == "n8n_agent":
+            self._connect_n8n_agent(n)
+        else:
+            self._connect_http_loop(n)
+
+        return {
+            "id": spec.resolved_workflow_id,
+            "name": spec.workflow_name,
+            "active": False,
+            "isArchived": False,
+            "nodes": self.nodes,
+            "connections": self.connections,
+            "settings": {"executionOrder": "v1", "saveManualExecutions": True, "callerPolicy": "workflowsFromSameOwner", "errorWorkflow": ERROR_WF_ID, "executionTimeout": 1800},
+            "meta": {"templateCredsSetupCompleted": True, "targetN8nVersion": "2.30.8"},
+            "tags": [],
+            "pinData": {},
+            "versionId": str(uuid.uuid4()),
+        }
+
+    def _shared_head_connections(self, n: dict[str, str]) -> None:
+        c = self.connect
+        c(n["trigger"], n["config"])
+        c(n["config"], n["normalize"])
+        c(n["normalize"], n["open"])
+        c(n["open"], n["ready"])
+        c(n["ready"], n["accepted"], si=0)
+        c(n["ready"], n["missing"], si=1)
+        c(n["accepted"], n["restore_accepted"])
+        c(n["restore_accepted"], n["progress"])
+        c(n["progress"], n["restore_progress"])
+        c(n["restore_progress"], n["prepare"])
+        c(n["prepare"], n["rag"])
+        c(n["rag"], n["attach"])
+        c(n["attach"], n["rag_event"])
+        c(n["rag_event"], n["restore_rag"])
+        c(n["format"], n["close"])
+        c(n["close"], n["restore_final"])
+
+    def _add_n8n_agent_nodes(self, spec: AgentSpec, n: dict[str, str]) -> None:
         self.node(
             n["agent"],
             "@n8n/n8n-nodes-langchain.agent",
@@ -474,30 +945,16 @@ class AgentWorkflow:
         self.activity_event_dynamic(n["tools_event"], (1960, 300))
         self.restore(n["restore_tools"], (2160, 300), n["summarize"])
         self.if_true(n["stored"], (2160, 160), "={{ Boolean($json.skip_fetch) }}")
-        self.http_json(n["fetch"], (2100, 0), "GET", f"={{{{ {self.service_url} + '/sessions/' + {self.session_id_expr} + '/result' }}}}", None, timeout=120000, retry=True)
-        self.code(n["format"], (2320, 0), self.js_format_result())
-        self.http_json(n["close"], (2480, 0), "POST", f"={{{{ {self.service_url} + '/sessions/' + {self.session_id_expr} + '/close' }}}}", "={{ ({}) }}", timeout=5000)
         cols = max(1, spec.tool_grid_columns)
         for i, (name, desc, fields) in enumerate(spec.tools):
             self.tool_http(name, (760 + (i % cols) * 220, -420 + (i // cols) * 160), desc, fields)
 
+    def _connect_n8n_agent(self, n: dict[str, str]) -> None:
+        self._shared_head_connections(n)
         c = self.connect
-        c(n["trigger"], n["config"])
-        c(n["config"], n["normalize"])
-        c(n["normalize"], n["open"])
-        c(n["open"], n["ready"])
-        c(n["ready"], n["accepted"], si=0)
-        c(n["ready"], n["missing"], si=1)
-        c(n["accepted"], n["restore_accepted"])
-        c(n["restore_accepted"], n["progress"])
-        c(n["progress"], n["restore_progress"])
-        # No capability router: every task goes through the LLM, which picks the tool.
-        c(n["restore_progress"], n["prepare"])
-        c(n["prepare"], n["rag"])
-        c(n["rag"], n["attach"])
-        c(n["attach"], n["agent"])
+        c(n["restore_rag"], n["agent"])
         c(n["model"], n["agent"], out="ai_languageModel", tin="ai_languageModel")
-        for name, _desc, _fields in spec.tools:
+        for name, _desc, _fields in self.spec.tools:
             c(name, n["agent"], out="ai_tool", tin="ai_tool")
         c(n["agent"], n["summarize"])
         c(n["summarize"], n["tools_event"])
@@ -506,23 +963,69 @@ class AgentWorkflow:
         c(n["stored"], n["format"], si=0)
         c(n["stored"], n["fetch"], si=1)
         c(n["fetch"], n["format"])
-        c(n["format"], n["close"])
-        # agent.result is emitted once, by the orchestrator when it merges this result into case state.
-        c(n["close"], n["restore_final"])
 
-        return {
-            "id": spec.resolved_workflow_id,
-            "name": spec.workflow_name,
-            "active": False,
-            "isArchived": False,
-            "nodes": self.nodes,
-            "connections": self.connections,
-            "settings": {"executionOrder": "v1", "saveManualExecutions": True, "callerPolicy": "workflowsFromSameOwner", "errorWorkflow": ERROR_WF_ID, "executionTimeout": 1800},
-            "meta": {"templateCredsSetupCompleted": True, "targetN8nVersion": "2.30.8"},
-            "tags": [],
-            "pinData": {},
-            "versionId": str(uuid.uuid4()),
-        }
+    def _add_http_loop_nodes(self, spec: AgentSpec, n: dict[str, str]) -> None:
+        self.code(n["build"], (2240, 160), self.js_build_chat())
+        self.openai_chat_http(n["chat"], (2480, 160))
+        self.code(n["parse"], (2720, 160), self.js_parse_chat())
+        self.activity_event_dynamic(n["llm_event"], (2720, 320))
+        self.restore(n["restore_llm"], (2920, 320), n["parse"])
+        self.node(
+            n["router"],
+            "n8n-nodes-base.switch",
+            3.4,
+            (3120, 160),
+            {"mode": "expression", "numberOutputs": 4, "output": "={{ ({chat:0,tool:1,retrieve:2,done:3})[$json.loop_route] ?? 3 }}"},
+        )
+        self.code(n["prep_tool"], (3360, -80), self.js_prepare_tool())
+        self.if_true(n["skip_tool"], (3560, -80), "={{ Boolean($json.skip_http) }}")
+        self.http_json(
+            n["call_tool"],
+            (3760, 40),
+            "POST",
+            "={{ $json.tool_url }}",
+            "={{ $json.tool_body }}",
+            timeout=120000,
+            retry=True,
+            never_error=True,
+        )
+        self.code(n["append_tool"], (3960, -80), self.js_append_tool())
+        self.code(n["prep_retrieve"], (3360, 320), self.js_prepare_retrieve())
+        self.node(n["retrieve"], "n8n-nodes-base.executeWorkflow", 1.3, (3560, 320), knowledge_retrieval_execute_params(), onError="continueRegularOutput")
+        self.code(n["attach_retrieve"], (3760, 320), self.js_attach_retrieve())
+        self.activity_event_dynamic(n["retrieve_event"], (3960, 320))
+        self.restore(n["restore_retrieve"], (4160, 320), n["attach_retrieve"])
+        self.code(n["summarize"], (3360, 520), self.js_summarize_loop())
+        self.activity_event_dynamic(n["tools_event"], (3560, 520))
+        self.restore(n["restore_tools"], (3760, 520), n["summarize"])
+
+    def _connect_http_loop(self, n: dict[str, str]) -> None:
+        self._shared_head_connections(n)
+        c = self.connect
+        c(n["restore_rag"], n["build"])
+        c(n["build"], n["chat"])
+        c(n["chat"], n["parse"])
+        c(n["parse"], n["llm_event"])
+        c(n["llm_event"], n["restore_llm"])
+        c(n["restore_llm"], n["router"])
+        c(n["router"], n["build"], si=0)
+        c(n["router"], n["prep_tool"], si=1)
+        c(n["router"], n["prep_retrieve"], si=2)
+        c(n["router"], n["summarize"], si=3)
+        c(n["prep_tool"], n["skip_tool"])
+        c(n["skip_tool"], n["append_tool"], si=0)
+        c(n["skip_tool"], n["call_tool"], si=1)
+        c(n["call_tool"], n["append_tool"])
+        c(n["append_tool"], n["router"])
+        c(n["prep_retrieve"], n["retrieve"])
+        c(n["retrieve"], n["attach_retrieve"])
+        c(n["attach_retrieve"], n["retrieve_event"])
+        c(n["retrieve_event"], n["restore_retrieve"])
+        c(n["restore_retrieve"], n["router"])
+        c(n["summarize"], n["tools_event"])
+        c(n["tools_event"], n["restore_tools"])
+        c(n["restore_tools"], n["fetch"])
+        c(n["fetch"], n["format"])
 
     def default_sticky(self) -> str:
         spec = self.spec
@@ -532,7 +1035,8 @@ class AgentWorkflow:
         return (
             "## edit after import\n\n"
             f"**{spec.workflow_name}** — один LLM + FastAPI tools (сгенерировано из `agents/{spec.agent_id}.py`).\n\n"
-            f"1. Bind **Qwen** credential on {self.n['model']}\n"
+            f"1. Bind **Qwen** credential on **{self.n['chat'] if spec.llm_transport != 'n8n_agent' else self.n['model']}** "
+            "(тот же OpenAI-compatible, что у Decision chat оркестратора).\n"
             f"2. Bind **Runtime configuration** → `MAS — Runtime Config` (поле `{spec.service_url_key}` = URL сервиса)." + auth
             + f"3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `{SELECTORS[spec.rag_selector]['target_base']}`).\n"
             "4. Оркестратор вызывает этот workflow через универсальный `Call agent (n8n)` по id из `agent_registry.invoke`. "

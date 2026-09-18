@@ -630,7 +630,7 @@ def test_n8n_session_endpoints_open_extract_and_tool_alias(client: TestClient) -
     assert "suggested_capability" not in body, "no regex router: the LLM picks table and columns from the inventory"
     session_id = body["session_id"]
     table = body["inspect"]["tables"][0]
-    assert {"table_id", "sheet", "columns", "sample", "file"} <= set(table)
+    assert {"table_id", "sheet", "columns", "sample", "file", "kind"} <= set(table)
     alias = client.post(
         "/agent-tools/detect_tables",
         headers={"X-API-Key": "test-key"},

@@ -1,3 +1,242 @@
+      "keywords": [
+        "HITL",
+        "REQUIRED-EVIDENCE"
+      ],
+      "topics": [
+        "HITL",
+        "required-evidence",
+        "completion"
+      ],
+      "task_patterns": [
+        "не хватает исходных данных",
+        "уточнить у инженера"
+      ],
+      "status": "active",
+      "author": "orchestrator-routing-maintainer",
+      "access_scope": "petroleum-engineering",
+      "text": "Когда спрашивать инженера. Значения по умолчанию заданы: единицы METRIC, симулятор tNavigator 22.2, область — нефтегазовая инженерия — их не подтверждают. ask_user только за факты, без которых нельзя выбрать агента или продолжить: нет цели; правка SCHEDULE без исходного файла schedule (.inc); расчёт геометрии без траектории .dev или поверхности CPS3; данные, которых нет ни в приложенных файлах, ни в результатах агентов, и ни один агент реестра их не даст. Не спрашивай про содержимое таблиц Excel, листы, колонки, единицы, систему координат — это делает агент с hitl_policy agent_asks. Пустой срез знаний — не вопрос инженеру. Если для части задачи в реестре нет агента — спроси инженера, как поступить, или заверши с честным итогом. Вопрос инженеру — русская проза с вариантами ответа, без идентификаторов и JSON.",
+      "id": "route-hitl-required-evidence"
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "specialist_template",
+      "knowledge_type": "capability_instruction",
+      "knowledge_id": "specialist-template-bounded-work",
+      "revision": "3",
+      "title": "Bounded specialist capability protocol",
+      "keywords": [
+        "ENGINEERING_CALCULATION_SPECIALIST",
+        "ENGINEERING_SPECIALIST"
+      ],
+      "topics": [
+        "specialist",
+        "capability"
+      ],
+      "task_patterns": [
+        "выполнить bounded specialist task"
+      ],
+      "status": "active",
+      "author": "specialist-template-maintainer",
+      "access_scope": "petroleum-engineering",
+      "text": "Выполняйте только bounded task из agent_task (objective, handoff_message, inputs). Используйте rag_evidence как протокол возможности. Не расширяйте scope, не утверждайте high-risk, не выдавайте self-check за independent verification. Крупные артефакты — только ссылки. Missing material fact → needs_input.",
+      "id": "specialist-template-bounded-work",
+      "source_hash": "sha256:09fd4ca3dd48d8fdc5a659b43cf993dd1e79714445e4b458d0da8025f07473e4",
+      "metadata": {
+        "revision": "3",
+        "document_revision": "2",
+        "source_hash": "sha256:09fd4ca3dd48d8fdc5a659b43cf993dd1e79714445e4b458d0da8025f07473e4",
+        "knowledge_id": "specialist-template-bounded-work",
+        "document_id": "specialist-template-bounded-work",
+        "target_base": "specialist_template",
+        "knowledge_type": "capability_instruction"
+      }
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "worked_example",
+      "knowledge_id": "worked-commissioning-dates-v1",
+      "revision": "1",
+      "title": "Пример: сдвиг дат ввода по Excel",
+      "keywords": [
+        "DATES",
+        "WELSPECS",
+        "WCONPROD"
+      ],
+      "topics": [
+        "даты ввода",
+        "commissioning",
+        "worked-example"
+      ],
+      "task_patterns": [
+        "новые даты ввода скважин",
+        "даты ввода",
+        "сдвиг дат",
+        "собрать новый schedule.inc",
+        "сдвинь даты ввода"
+      ],
+      "simulator_family": [
+        "E100",
+        "E300",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
+      "text": "Работающий пример: новые даты ввода из Excel.\n\nКогда применять. Цель — сдвинуть даты ввода скважин по таблице «скважина — дата»; в сессии уже есть facts после Excel.\n\nКанон. Excel Extractor вызывает extract_commissioning. Schedule Builder — apply_commissioning без retrieve_knowledge. Даты пишет инструмент, не модель. Скважины вне Excel — по ответу инженера (оставить/убрать), не по догадке.\n\nАнтипаттерны. Писать WELSPECS/WCONPROD руками; спрашивать дату шага DATES; звать apply_dataset на таблицу дат ввода.",
+      "examples": [
+        {
+          "title": "Четыре скважины сдвинуты",
+          "task": "Во вложении excel с новыми датами ввода. Обнови прогнозный schedule.",
+          "schedule_text": "extract_commissioning → apply_commissioning → schedule_out",
+          "explanation": "Сначала факты «скважина — дата», затем apply_commissioning. retrieve_knowledge не нужен."
+        },
+        {
+          "title": "Скважины вне Excel",
+          "task": "В excel указаны не все скважины прогноза.",
+          "schedule_text": "ask_engineer оставить/убрать → apply_commissioning",
+          "explanation": "Не выдумывайте даты для скважин, которых нет в таблице."
+        }
+      ],
+      "id": "worked-commissioning-dates-v1",
+      "summary": "Когда применять. Сдвиг дат ввода по Excel: extract_commissioning, затем apply_commissioning. Антипаттерны. Писать .INC руками; apply_dataset вместо commissioning; retrieve на даты ввода."
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "worked_example",
+      "knowledge_id": "worked-group-rebind-v1",
+      "revision": "1",
+      "title": "Пример: скважины в группу и групповой контроль",
+      "keywords": [
+        "GRUPTREE",
+        "GCONPROD",
+        "WELSPECS"
+      ],
+      "topics": [
+        "группы",
+        "групповой контроль",
+        "worked-example"
+      ],
+      "task_patterns": [
+        "помести в отдельную группу",
+        "перепривязка групп",
+        "групповой контроль",
+        "групповой контроль 200 тыс"
+      ],
+      "simulator_family": [
+        "E100",
+        "E300",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
+      "text": "Работающий пример: перепривязка скважин в группу и GCONPROD.\n\nКогда применять. Цель называет скважины, имя группы и групповой контроль (дебит газа и т.п.); исходный SCHEDULE уже приложен. Таблица Excel не нужна.\n\nКанон. inspect_schedule (дерево GRUPTREE) → apply_group_rebind со spec: wells, parent_group, control, gas_rate в м3/сут. Родителя новой группы берите из дерева, если инженер не сказал иначе.\n\nАнтипаттерны. Звать Excel Extractor «на всякий случай»; писать GRUPTREE руками; путать 200 тыс. м3/сут и 200.",
+      "examples": [
+        {
+          "title": "1601/1602 в DKS",
+          "task": "Скважины 1601 и 1602 помести в группу DKS, групповой контроль 200 тыс. м3 газа в сут.",
+          "schedule_text": "inspect_schedule → apply_group_rebind(wells, parent_group, control=GRAT, gas_rate=200000)",
+          "explanation": "200 тыс. м3/сут → 200000. Даты ввода этих скважин не спрашивают — они в исходном файле."
+        },
+        {
+          "title": "Родитель из дерева",
+          "task": "Новая группа, родитель не назван",
+          "schedule_text": "inspect_schedule GRUPTREE → parent_of_parent из корня FIELD",
+          "explanation": "Не выдумывайте родителя. Нет в дереве — ask_engineer."
+        }
+      ],
+      "id": "worked-group-rebind-v1",
+      "summary": "Когда применять. Перепривязка в группу и GCONPROD: inspect_schedule, затем apply_group_rebind. Антипаттерны. Звать Excel; писать GRUPTREE руками; 200 вместо 200000 м3/сут."
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "worked_example",
+      "knowledge_id": "worked-dataset-wefac-v1",
+      "revision": "1",
+      "title": "Пример: таблица коэффициентов → WEFAC",
+      "keywords": [
+        "WEFAC"
+      ],
+      "topics": [
+        "коэффициент эксплуатации",
+        "dataset",
+        "worked-example"
+      ],
+      "task_patterns": [
+        "коэффициенты эксплуатации",
+        "внести коэффициенты в прогнозный schedule",
+        "extract_table apply_dataset WEFAC"
+      ],
+      "simulator_family": [
+        "E100",
+        "E300",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
+      "text": "Работающий пример: именованный набор из Excel в keyword WEFAC.\n\nКогда применять. В книге коэффициенты эксплуатации (не даты ввода). Excel — extract_table (kind:dataset). Builder — inspect_dataset → retrieve_knowledge (query и keywords=WEFAC) → get_keyword → apply_dataset. Нет поля даты в наборе — не спрашивать дату шага, date_field не передавать.\n\nАнтипаттерны. apply_commissioning на коэффициенты; apply_dataset без retrieve_knowledge; выдумать дату DATES.",
+      "examples": [
+        {
+          "title": "WEFAC 1601/1602",
+          "task": "В книге коэффициенты эксплуатации по скважинам. Внеси их в прогнозный schedule.",
+          "schedule_text": "extract_table → retrieve_knowledge(WEFAC) → get_keyword → apply_dataset",
+          "explanation": "Стартовый срез Builder — чужие keyword. Полный when-to-use WEFAC только из retrieve_knowledge."
+        },
+        {
+          "title": "Пустые коэффициенты",
+          "task": "Колонка значений пустая",
+          "schedule_text": "ask_engineer, не выдумывать WEFAC",
+          "explanation": "dataset_values_missing → вопрос инженеру. Не подставляйте 1.0."
+        }
+      ],
+      "id": "worked-dataset-wefac-v1",
+      "summary": "Когда применять. Таблица коэффициентов: extract_table, retrieve_knowledge WEFAC, get_keyword, apply_dataset. Антипаттерны. apply без retrieve; commissioning; выдумать дату."
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "schedule_mvp",
+      "knowledge_type": "keyword_instruction",
+      "knowledge_id": "dates-schedule-clock-v1",
+      "revision": "3",
+      "title": "DATES — календарь и перевод simulation clock",
+      "keywords": [
+        "DATES"
+      ],
+      "topics": [
+        "календарь",
+        "отчетные шаги",
+        "simulation clock",
+        "прогноз",
+        "история",
+        "cutover",
+        "временной шаг"
+      ],
+      "task_patterns": [
+        "задать даты расчета",
+        "добавить отчетный шаг",
+        "перевести simulation clock",
+        "календарь прогноза",
+        "даты history matching",
+        "поставить DATES на 1 января",
+        "последовательность дат SCHEDULE"
+      ],
+      "simulator_family": [
+        "E100",
+        "E300",
+        "tNavigator"
+      ],
+      "status": "active",
+      "author": "department-hydrodynamic-expert",
+      "access_scope": "petroleum-engineering",
       "text": "DATES — календарь секции SCHEDULE и перевод simulation clock.\n\nНазначение. DATES задаёт даты ввода и вывода в секции SCHEDULE: на эту дату симулятор доводит расчёт (report / time block), после чего действуют все последующие ключевые слова до следующего DATES или TSTEP. Это не контроль скважины и не экономика. Форматы: tN, E1, E3. Секция: только SCHEDULE. Не путайте с ECDATES (список дат экономических параметров в RUNSPEC) и с START (дата начала моделирования в RUNSPEC).\n\nКогда применять. Любой CREATE/REVISE, где нужен календарь расчёта, граница history/forecast (cutover), дата ввода скважины, смена WCONPROD/WCONHIST/WELSPECS/COMPDAT, рестартный прогнозный .inc. Каждое событие скважины/группы живёт на текущих часах: сначала DATES, затем записи, которые должны вступить в силу на эту дату.\n\nRecord layout. Ключевое слово, затем одна или несколько строк-записей, каждая запись заканчивается /. Блок заканчивается отдельным /. Renderer этого корпуса выпускает один DATES-блок на одну дату (один IR-event, variant default). Несколько дат в одном блоке в tNavigator допустимы, но семантически эквивалентны последовательности отдельных DATES; не склеивайте чужие даты в один блок при REVISE.\n\nПоля одной записи (порядок фиксирован):\n1. DAY — число, день месяца (1–31, с ведущим нулём или без: 1 и 01 равноправны).\n2. MONTH — ровно один из токенов JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC; JLY тоже июль, но в выпуск пишите JUL, не JLY.\n3. YEAR — год, 4 цифры.\n4. TIME — в мануале необязательное 4-е поле, HH:MM:SS.SSSS, по умолчанию 00:00:00. Утверждённый schema variant default этого корпуса содержит только DATE: полуночное время не пишите. Если время суток — материальное требование (не полночь) — needs_input, не добавляйте поле вне schema и не подставляйте TIME в default-запись.\n\nКаноническая запись METRIC/ECLIPSE: `DATES` / `  1 JAN 2025 /` / `/`. Месяц без кавычек (кавычки вокруг месяца — синтаксис START, не DATES). Локализованные имена (март, Mar, 03) и форматы ДД.ММ.ГГГГ / MM/DD/YYYY запрещены. В IR поле DATE хранится как ISO `YYYY-MM-DD`; renderer печатает `D MON YYYY`.\n\nЧасы и монотонность.\n- Последовательность дат должна быть строго возрастающей (дата и время). Равенство предыдущей дате — ошибка, не «тот же шаг».\n- Primary keyword section: §12.20.127 DATES. Все DATES должны быть позднее START (RUNSPEC, §12.1.19). START в этот MVP не рендерится; если START есть в source_facts/baseline — проверяйте; если START неизвестен, не выдумывайте его, но DATES внутри пакета всё равно строго возрастают.\n- DATES переводит clock: semantics.clock.sets_from_field=DATE, period=ANY. Сам keyword не является HISTORY или FORECAST; период следующих WCONHIST/WCONPROD задаёт cutover-политика пакета, а не DATES.\n- Не ставьте forecast-контроль раньше утверждённого forecast_start и history-контроль после history_end. Если cutover не дан — needs_input, не угадывайте.\n- После TSTEP следующий DATES обязан быть позже конца предыдущего шага. TSTEP в allowlist Builder нет: не эмитьте TSTEP. Если пользователь просит «шаг N дней» без календарных дат — либо посчитайте целевую дату от известного clock, либо needs_input.\n\nСвязанные правила из мануала (не эмитьте эти keywords, если их нет в requested_keyword_scope).\n- События скважины (WELSPECS, COMPDAT, WCONPROD, WPIMULT, WWAG, RUNCTRL, трещины и т.д.) вступают в силу на текущей дате; смена контроля через два месяца — новый DATES, затем новый WCONPROD.\n- Между двумя изменениями одного и того же множителя/сепаратора (WPIMULT, SEPVALS) должен быть хотя бы один DATES или TSTEP, иначе эффект не фиксируется на шаге.\n- Внутри ACTION / ACTIONG / ACTIONR / ACTIONW / ACTIONX … ENDACTIO нельзя ставить DATES и TSTEP.\n- Для DCQ/газовых контрактов GASYEAR и GASPERIO заменяют DATES/TSTEP; не подменяйте контрактный календарь обычным DATES, если задача явно про контрактный период.\n- Рестарт (RESTART / RESTARTDATE): в прогнозном .inc часто сначала текущие WCONPROD/WCONINJE на дате рестарта, и только потом DATES следующих отчётных шагов. Не вставляйте DATES раньше текущих контролей, если рестартный пакет так устроен в baseline.\n- MASTER/SLAVE: для синхронизации задают одинаковые DATES во всех моделях на всю SCHEDULE.\n- Циклический WAG (WWAG TIME): отчётный DATES должен быть мельче периода переключения, иначе на графиках цикла не видно. Не измельчайте календарь сами без факта.\n- Не путать DATES с ECDATES.\n\nВалидация перед выпуском.\n- Дата существует в григорианском календаре (не 31 FEB).\n- MONTH только из английского трёхбуквенного набора выше.\n- YEAR ровно 4 цифры.\n- Строгое возрастание относительно предыдущего clock (и START, если известен).\n- Запись непустая; завершающий / блока есть.\n- DATES не вложен в ACTION.\n- Имена скважин, дебиты и прочие поля соседних keywords не живут внутри DATES.\n\nАнтипаттерны.\n- Выдумать ежемесячный календарь, если в фактах одна дата cutover.\n- Писать 01.01.2025, 2025/01/01, «1 января 2025», MAR. с точкой, кавычки вокруг JAN.\n- Поставить DATES на ту же дату, что уже есть в baseline, «для порядка».\n- Заменить DATES на TSTEP или наоборот без факта о длительности.\n- Считать DATES контролем скважины или копировать примерные скважины 1043/1054 в продуктив.\n- Использовать ECDATES вместо DATES.\n\nНехватка факта → needs_input, не угадывать: нет конкретной даты; дата не парсится однозначно; неясно, после какой существующей даты вставлять; нужен TIME суток без значения; нужен TSTEP в днях без якорной даты; DATES просят внутри ACTION; неизвестно, history это или forecast, а от этого зависит, какие события ставить на дату.\n\nКарточка самодостаточна: renderer использует только schema_catalogue этой записи (variant default, поле DATE). Не добавляйте TIME, TSTEP и чужие keywords в DATES-запись.",
       "examples": [
         {
@@ -93,7 +332,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "dates-schedule-clock-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -119,7 +358,8 @@
           "поставить DATES на 1 января",
           "последовательность дат SCHEDULE"
         ]
-      }
+      },
+      "summary": "Когда применять. Любой CREATE/REVISE, где нужен календарь расчёта, граница history/forecast (cutover), дата ввода скважины, смена WCONPROD/WCONHIST/WELSPECS/COMPDAT, рестартный прогнозный .inc. Каждое событие скважины/группы живёт на текущих часах: сначала DATES, затем записи, которые должны вступить в силу на эту дату. Антипаттерны. - Выдумать ежемесячный календарь, если в фактах одна дата cutover. - Писать 01.01.2025, 2025/01/01, «1 января 2025», MAR. с точкой, кавычки вокруг JAN. -…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -127,7 +367,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "include-schedule-package-v1",
-      "revision": "5",
+      "revision": "6",
       "title": "INCLUDE — вставка SCHEDULE-фрагментов пакета",
       "keywords": [
         "INCLUDE"
@@ -276,7 +516,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "include-schedule-package-v1",
-        "revision": "5",
+        "revision": "6",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -314,7 +554,8 @@
           "не прикреплять INCLUDE — оставить как есть",
           "прочитать содержимое INCLUDE из пакета"
         ]
-      }
+      },
+      "summary": "Когда применять. CREATE с multi-file package (корневой schedule.inc тянет timeblocks/*.inc); REVISE, где baseline уже содержит INCLUDE graph; рестартный прогнозный .inc, который .data подключает через INCLUDE после RESTART/RESTARTDATE; любой фрагмент, который должен остаться отдельным файлом с hash в manifest. Не используйте INCLUDE… Антипаттерны. - Сдвинуть INCLUDE на другую DATES без явной инструкции по этому файлу. - Игнорировать тело included-файла, который есть в package/include_files, и править…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -322,7 +563,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "gruptree-group-hierarchy-v1",
-      "revision": "1",
+      "revision": "3",
       "title": "GRUPTREE — иерархия групп скважин",
       "keywords": [
         "GRUPTREE"
@@ -473,7 +714,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "gruptree-group-hierarchy-v1",
-        "revision": "1",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -497,7 +738,8 @@
           "child parent группы скважин",
           "объявить группы перед WELSPECS"
         ]
-      }
+      },
+      "summary": "Когда применять. Дерево групп скважин до WELSPECS и группового контроля. Антипаттерны. - Повесить скважины на группу, у которой уже есть дочерние группы. - Сделать две материнские группы для одной дочерней. - Цикл `A→B` и `B→A`. - Выдумать…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -505,7 +747,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "welspecs-well-declaration-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "WELSPECS — объявление скважины и группы",
       "keywords": [
         "WELSPECS"
@@ -868,7 +1110,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "welspecs-well-declaration-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -892,7 +1134,8 @@
           "добавить новую скважину в SCHEDULE",
           "запретить crossflow"
         ]
-      }
+      },
+      "summary": "Когда применять. CREATE/REVISE при вводе новой скважины или смене группы/геометрии устья; всегда до WCONPROD/WCONHIST/COMPDAT (если IJ берутся по умолчанию из WELSPECS) / WELLTRACK+COMPDATMD на той же сущности. Обычно после DATES текущего time block и после GRUPTREE, если GROUP ≠ FIELD и группа объявлена деревом. Антипаттерны. - WELSPECL/WELLSPEC вместо WELSPECS без LGR-authority. - Скважина на GAS1, если GAS1 — parent для G1/G2. - Забыть WELL перед WCONPROD. - Выдумать I/J, если в…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -900,7 +1143,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "welltrack-trajectory-v1",
-      "revision": "2",
+      "revision": "4",
       "title": "WELLTRACK — траектория скважины X Y Z MD",
       "keywords": [
         "WELLTRACK"
@@ -1079,7 +1322,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "welltrack-trajectory-v1",
-        "revision": "2",
+        "revision": "4",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -1103,7 +1346,8 @@
           "траектория перед перфорацией MD",
           "многозабойная траектория"
         ]
-      }
+      },
+      "summary": "Когда применять. Траектория скважины по MD, обычно вместе с COMPDATMD. Антипаттерны. - Маска скважин в WELLTRACK. - Траектория без WELSPECS/COMPDATMD-плана, когда перфорации по MD обязательны. - Убывающий или повторяющийся MD. - Копировать…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -1111,7 +1355,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "compdatmd-perforation-md-v1",
-      "revision": "2",
+      "revision": "4",
       "title": "COMPDATMD — перфорации по MD/TVD/STAGE",
       "keywords": [
         "COMPDATMD"
@@ -1722,7 +1966,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "compdatmd-perforation-md-v1",
-        "revision": "2",
+        "revision": "4",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -1746,7 +1990,8 @@
           "COMPDATMD после WELLTRACK",
           "диаметр скважины в перфорации"
         ]
-      }
+      },
+      "summary": "Когда применять. Перфорации по измеренной глубине после WELSPECS/WELLTRACK. Антипаттерны. - COMPDATMD до WELSPECS/WELLTRACK. - STAGE без FRACTURE_STAGE / без имени стадии в фактах. - Выдумать CF/KH вместо default (1* / omit). - Путать MDL (поле 3…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -1754,7 +1999,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "wconprod-forecast-control-v1",
-      "revision": "3",
+      "revision": "4",
       "title": "WCONPROD — прогнозный контроль добывающей скважины",
       "keywords": [
         "WCONPROD"
@@ -2969,7 +3214,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "wconprod-forecast-control-v1",
-        "revision": "2",
+        "revision": "4",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -2993,7 +3238,8 @@
           "контроль по BHP",
           "открыть добывающую скважину на прогнозе"
         ]
-      }
+      },
+      "summary": "Когда применять. FORECAST / после cutover: целевые дебиты и давления прогноза. Не эмитьте WCONPROD в history interval — там WCONHIST. Не подменяйте WCONHIST «похожим» WCONPROD. VFP_TABLE — номер существующего VFPPROD (Prosper/baseline); 0 → THP не считается; тело таблицы не выдумывать. Обычно после DATES текущего time block и после… Антипаттерны. - WCONHIST вместо WCONPROD на прогнозе (и наоборот). - CONTROL=ORAT без ORAT / CONTROL=BHP без BHP. - THP без VFP при требовании расчёта устья. - Подставить… WELTARG меняет цель без полного WCONPROD."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -3001,7 +3247,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "wconinje-forecast-inject-v1",
-      "revision": "4",
+      "revision": "5",
       "title": "WCONINJE — прогнозный контроль нагнетания",
       "keywords": [
         "WCONINJE"
@@ -3587,7 +3833,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "wconinje-forecast-inject-v1",
-        "revision": "4",
+        "revision": "5",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -3610,7 +3856,8 @@
           "MULTI закачка",
           "WCONINJE вместо WCONPROD"
         ]
-      }
+      },
+      "summary": "Когда применять. FORECAST / после cutover для injector. После WELSPECS (+ перфорации к осмысленной закачке). Не эмитьте WCONINJE в history interval — там WCONINJH. GROUP-контроль GRUP требует GCONINJE (эмитьте GCONINJE из allowlist или KEEP baseline; без групповой цели → needs_input). E3 GAS/HCGAS/HCOIL часто требуют WINJGAS… Антипаттерны. - WCONPROD вместо WCONINJE на injector. - WCONINJE в HISTORY. - GRUP без GCONINJE (и без baseline group-inject-control). - GAS E3 без WINJGAS/фактов состава и… WELTARG меняет цель без полного WCONPROD."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -3618,7 +3865,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "gconprod-group-forecast-v1",
-      "revision": "3",
+      "revision": "4",
       "title": "GCONPROD — прогнозный контроль группы / FIELD",
       "keywords": [
         "GCONPROD"
@@ -4720,7 +4967,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "gconprod-group-forecast-v1",
-        "revision": "2",
+        "revision": "4",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -4744,7 +4991,8 @@
           "групповой RATE при превышении",
           "GCONPROD после GRUPTREE"
         ]
-      }
+      },
+      "summary": "Когда применять. FORECAST / после cutover: групповые ORAT/WRAT/GRAT/LRAT/… лимиты. Не раньше утверждённого cutover. Обычно после DATES и после того, как группа существует: FIELD всегда; иначе группа из GRUPTREE и/или leaf-группа со скважинами WELSPECS. Скважины с CONTROL=GRUP в WCONPROD опираются на GCONPROD своей группы. Антипаттерны. - WCONPROD вместо GCONPROD для группового лимита. - CONTROL=ORAT без ORAT / LRAT без LRAT. - GUIDE_PHASE=FORM без коэффициентов GUIDERAT / без baseline…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -4752,7 +5000,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "branprop-network-branch-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "BRANPROP — ветви расширенной сети",
       "keywords": [
         "BRANPROP"
@@ -5183,7 +5431,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "branprop-network-branch-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -5207,7 +5455,8 @@
           "закрыть ветвь сети",
           "сеть после GRUPTREE"
         ]
-      }
+      },
+      "summary": "Когда применять. Задача про extended network / автоматические штуцеры / компрессоры (§2.14.11). Требуется: NETWORK уже в base/.data (feature enabled). Если NETWORK нет в профиле/baseline → needs_input, не эмитьте NETWORK из этой карточки. BRANPROP до NODEPROP. Обычно после DATES; leaf-группы согласованы с GRUPTREE/WELSPECS. Антипаттерны. - Эмитить NETWORK из Schedule Builder. - NODEPROP до BRANPROP. - VFP≠9999 на штуцерной ветви. - Выдумать номер VFP. - Leaf сети ≠ leaf GRUPTREE."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -5215,7 +5464,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "nodeprop-network-node-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "NODEPROP — свойства узлов расширенной сети",
       "keywords": [
         "NODEPROP"
@@ -5681,7 +5930,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "nodeprop-network-node-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -5705,7 +5954,8 @@
           "NODEPROP после BRANPROP",
           "штуцер на leaf-группе"
         ]
-      }
+      },
+      "summary": "Когда применять. Extended network / автоштуцеры / компрессоры (§2.14.11). NETWORK в base обязателен; иначе needs_input. Leaf-узлы согласованы с GRUPTREE leaf-группами со скважинами. Антипаттерны. - Только NODEPROP без ветвей. - CHOKE=YES на FIELD/terminal. - Выдумать давление концевого узла. - Путать NODEPROP с NETCHOKE."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -5713,7 +5963,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "wecon-economic-limits-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "WECON — экономические пределы добывающей скважины",
       "keywords": [
         "WECON"
@@ -6289,7 +6539,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "wecon-economic-limits-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -6313,7 +6563,8 @@
           "economic limit producer",
           "закрыть скважину по экономике"
         ]
-      }
+      },
+      "summary": "Когда применять. CREATE/REVISE, где нужны economic limits на производителе. После WELSPECS той же скважины. SHUT vs STOP при закрытии скважины берётся из WELSPECS param 9 (ECON_ACTION). Совместно с WTEST анализируйте риск shut/reopen циклов (roadmap). Использование WECON может давать различия tNavigator на разном числе ядер / vs… Антипаттерны. - WECONX вместо WECON «потому что гибче». - Путать MAX_WCT=0.95 (доля) с процентами 95. - Игнорировать WELSPECS§9 при ACTION=WELL. - Слепо копировать CON при…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -6321,7 +6572,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "wtest-reopen-policy-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "WTEST — проверка и переоткрытие закрытых скважин",
       "keywords": [
         "WTEST"
@@ -6864,7 +7115,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "wtest-reopen-policy-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -6888,7 +7139,8 @@
           "интервал проверки скважины",
           "постепенный запуск STARTUP"
         ]
-      }
+      },
+      "summary": "Когда применять. Скважина может быть закрыта по BHP/THP, экономике или group/FIELD limits, и нужна политика перепроверки. После WELSPECS. Для reason E обычно уже есть WECON (или CECON/WECONINJ — вне allowlist). Антипаттерны. - Путать WTEST с ручным OPEN в WCONPROD. - REASON без P/E/G. - INTERVAL в месяцах без перевода в days. - Выдумать NTEST/STARTUP."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -6896,7 +7148,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "weltarg-target-override-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "WELTARG — точечная смена контроля/лимита скважины",
       "keywords": [
         "WELTARG"
@@ -8042,7 +8294,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "weltarg-target-override-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -8066,7 +8318,8 @@
           "точечно изменить лимит скважины",
           "TARGTHP для hist"
         ]
-      }
+      },
+      "summary": "Когда применять. Нужно сменить ORAT/BHP/VFP/… на текущих часах после существующего WCONPROD (прогноз) или скорректировать BHP/TARGTHP/VFP/LIFT после WCONHIST. После WELSPECS. Для набора скважин — WLIST + WELL=`*LIST`; сырые маски без WLIST → needs_input. . - WCONPROD / WCONHIST — база контроля. - VFPPROD/VFPINJ — таблицы для VFP/THP/LIFT. - WNETDP — отдельный network ΔP, не путать с THP. WELTARG меняет цель без полного WCONPROD."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -8074,7 +8327,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "wnetdp-network-delta-p-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "WNETDP — ΔP между узлом сети и устьем скважины",
       "keywords": [
         "WNETDP"
@@ -8229,7 +8482,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "wnetdp-network-delta-p-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -8251,7 +8504,8 @@
           "фиксированное падение давления скважины",
           "WNETDP после NETWORK"
         ]
-      }
+      },
+      "summary": "Когда применять. Extended network включён; нужно явное фиксированное падение давления wellhead↔network node. После WELSPECS; сеть (BRANPROP/NODEPROP) обычно уже задана. Если NETWORK нет в base → needs_input. . - BRANPROP / NODEPROP — топология сети. - WCONPROD THP / WELTARG THP|TARGTHP — устьевое давление контроля, не этот ΔP. - WEFAC — не…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -8259,7 +8513,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "wconhist-history-control-v1",
-      "revision": "3",
+      "revision": "4",
       "title": "WCONHIST — исторический контроль добывающей скважины",
       "keywords": [
         "WCONHIST"
@@ -9565,7 +9819,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "wconhist-history-control-v1",
-        "revision": "2",
+        "revision": "4",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -9587,7 +9841,8 @@
           "LRAT по истории",
           "hist BHP в WCONHIST"
         ]
-      }
+      },
+      "summary": "Когда применять. HISTORY / до cutover. Не эмитьте WCONHIST в FORECAST — там WCONPROD. После WELSPECS. VFP_TABLE (поле 7) — номер VFPPROD из package/Prosper (0 → THP не считается); ALQ в единицах той таблицы. BHP/THP в записи — исторические наблюдения, не лимиты; лимит BHP задавайте WELTARG, иначе default patm + предупреждение."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -9595,7 +9850,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "vfpprod-table-ref-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "VFPPROD — номер VFP-таблицы и связь с контролем",
       "keywords": [
         "VFPPROD"
@@ -9747,7 +10002,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "vfpprod-table-ref-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -9770,7 +10025,8 @@
           "Prosper VFP",
           "THP контроль VFP"
         ]
-      }
+      },
+      "summary": "Когда применять. - Ссылка: факт/baseline даёт TABLE_ID → проставить VFP_TABLE=N в WCONPROD (forecast) или WCONHIST (history); 0 = THP не считается. - Артефакт: новый/заменённый Prosper-файл → INCLUDE/baseline package, не «нарисовать» таблицу в IR. - CREATE без таблицы при THP/ALQ-контроле → needs_input (нужен VFPPROD artifact). Антипаттерны. - Выдумать FLO/THP сетку или BHP-значения. - Сослаться на N, которого нет в baseline/артефактах. - Подменить VFPPROD на VFPCORR «на глаз». - Использовать… WELTARG меняет цель без полного WCONPROD."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -9778,7 +10034,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "fracture-template-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "FRACTURE_TEMPLATE — шаблон трещины ГРП",
       "keywords": [
         "FRACTURE_TEMPLATE"
@@ -10121,7 +10377,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "fracture-template-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -10143,7 +10399,8 @@
           "UP DOWN SRV трещины",
           "FRACTURE_TEMPLATE vs SPECS"
         ]
-      }
+      },
+      "summary": "Когда применять. Пакет ГРП через LGR (§5.8). Нужны FRACTURE_PLANE/PATH для PLANE. WELLTRACK в GRID для последующего FRACTURE_SPECS. Неструктурированное измельчение по умолчанию (TNAVCTRL FRACTURE_BUILD_LOGIC); тогда NX/NY/NZ, REFINEMENT, LEVEL_* недоступны."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -10151,7 +10408,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "fracture-specs-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "FRACTURE_SPECS — привязка трещин к WELLTRACK",
       "keywords": [
         "FRACTURE_SPECS"
@@ -10467,7 +10724,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "fracture-specs-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -10490,7 +10747,8 @@
           "STAGE_ONE TEMPLATE MD",
           "FRACTURE_WELL как SPECS"
         ]
-      }
+      },
+      "summary": "Когда применять. После WELLTRACK (GRID) и FRACTURE_TEMPLATE. Затем FRACTURE_STAGE в SCHEDULE активирует STAGE."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -10498,7 +10756,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "fracture-stage-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "FRACTURE_STAGE — активация стадии трещин",
       "keywords": [
         "FRACTURE_STAGE"
@@ -10834,7 +11092,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "fracture-stage-v1",
-        "revision": "1",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -10855,7 +11113,8 @@
           "FRACTURE_STAGE ON",
           "выключить стадию ГРП"
         ]
-      }
+      },
+      "summary": "Когда применять. После FRACTURE_SPECS (+ TEMPLATE/PLANE/WELLTRACK в GRID). Для COMPDATMD DEPTH_TYPE=STAGE стадия должна быть активирована. Proppant volume только с GEOMECH FE + ROCKFAIL; иначе параметр игнорируется."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -10863,7 +11122,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "wpimult-connection-factor-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "WPIMULT — множитель connection factor перфорации",
       "keywords": [
         "WPIMULT"
@@ -11277,7 +11536,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "wpimult-connection-factor-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -11299,7 +11558,8 @@
           "WPIMULT по IJK",
           "снизить PI перфорации"
         ]
-      }
+      },
+      "summary": "Когда применять. Нужно масштабировать CF существующей перфорации на текущих DATES. После WELSPECS и перфораций (COMPDAT/COMPDATMD). Между повторными WPIMULT на тот же интервал должны быть DATES/TSTEP — эффект кумулятивный. Если COMPDAT пересчитывает CF — множитель сбрасывается в 1.0. Антипаттерны. - WPIMULT вместо пересчёта перфорации в COMPDAT. - Забыть DATES между кумулятивными множителями. - WPIMULTL-логика без LGR authority."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -11307,7 +11567,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "wdfac-well-dfactor-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "WDFAC — D-фактор скважины (газ)",
       "keywords": [
         "WDFAC"
@@ -11464,7 +11724,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "wdfac-well-dfactor-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -11487,7 +11747,8 @@
           "non Darcy D",
           "WDFAC вместо WDFACCOR"
         ]
-      }
+      },
+      "summary": "Когда применять. Нужен non-Darcy D для газа на скважине после WELSPECS (+ перфорации). Если D задан на интервале COMPDATMD/COMPDAT param 12 — для этих перфораций WDFAC игнорируется (§12.20.10 / §12.20.172). Антипаттерны. - Путать WDFAC с WPIMULT / SKIN в COMPDATMD. - Задать D на скважине и на всех интервалах «на всякий случай». - Выдумать WDFACCOR коэффициенты."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -11495,7 +11756,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "wlist-well-list-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "WLIST — именованный список скважин",
       "keywords": [
         "WLIST"
@@ -12011,7 +12272,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "wlist-well-list-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -12033,7 +12294,8 @@
           "batch WCONPROD по списку",
           "имена скважин списком"
         ]
-      }
+      },
+      "summary": "Когда применять. Нужно одно и то же действие на набор уже объявленных WELSPECS скважин. Сначала WELSPECS членов, затем WLIST, затем consumer (`WCONPROD`/`WCONHIST`/`WECON`/… с WELL=`*L1`). Антипаттерны. - Имя списка без ведущего `*`. - NEW/ADD скважины, уже в другом списке. - DEL с маской. - Ссылка на `*LIST` в consumer до WLIST NEW. - Путать с группой…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -12041,7 +12303,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "wfracp-plane-fracture-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "WFRACP — плоскостной гидроразрыв пласта",
       "keywords": [
         "WFRACP"
@@ -12968,7 +13230,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "wfracp-plane-fracture-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -12991,7 +13253,8 @@
           "гидроразрыв на перфорациях",
           "WFRACP с пропантом"
         ]
-      }
+      },
+      "summary": "Когда применять. Классический plane-frac на существующей скважине с перфорациями. После WELSPECS + COMPDAT/COMPDATMD. На DATES события ГРП. Для LGR-скважин — WFRACPL, не WFRACP. Антипаттерны. - WFRACP на LGR-скважине — эмитьте WFRACPL. - Путать с FRACTURE_STAGE. - Выдумать PROPANTNAMES/FLOWFUNC. - WIDTH omit без PROPANT_VOL+perm."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -12999,7 +13262,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "wfracpl-lgr-plane-fracture-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "WFRACPL — плоскостной ГРП в LGR",
       "keywords": [
         "WFRACPL"
@@ -13653,7 +13916,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "wfracpl-lgr-plane-fracture-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -13676,7 +13939,8 @@
           "WFRACPL вместо WFRACP",
           "гидроразрыв LGR скважины"
         ]
-      }
+      },
+      "summary": "Когда применять. Скважина в LGR, объявлена WELSPECL + COMPDATL (§12.20.4 / §12.20.7). Имя LGR — из CARFIN (§12.2.99). Для скважины вне LGR — WFRACP, не WFRACPL. WELSPECL/COMPDATL/CARFIN вне allowlist MVP: если их нет в baseline/артефактах → needs_input (не подменяйте WELSPECS/COMPDATMD). Антипаттерны. - WFRACPL без имени LGR / без LGR-скважины. - Подмена WELSPECL→WELSPECS или COMPDATL→COMPDATMD. - Путать с FRACTURE_STAGE. - Выдумать PROPANTNAMES/FLOWFUNC/имя…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -13684,7 +13948,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "guiderat-guide-rate-formula-v1",
-      "revision": "1",
+      "revision": "3",
       "title": "GUIDERAT — формула направляющих дебитов",
       "keywords": [
         "GUIDERAT"
@@ -14717,7 +14981,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "guiderat-guide-rate-formula-v1",
-        "revision": "1",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -14739,7 +15003,8 @@
           "FORM в GCONPROD",
           "снизить долю высокообводнённых"
         ]
-      }
+      },
+      "summary": "Когда применять. Формула guide rate при GUIDE_PHASE=FORM в GCONPROD. Антипаттерны. - FORM в GCONPROD без GUIDERAT (и без baseline формулы). - Подмена GUIDERAT постоянными WGRUPCON без фактов / вне allowlist. - PHASE=NONE при явной формуле в…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -14747,7 +15012,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "gconinje-group-inject-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "GCONINJE — прогнозный контроль закачки группы / FIELD",
       "keywords": [
         "GCONINJE"
@@ -15562,7 +15827,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "gconinje-group-inject-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -15584,7 +15849,8 @@
           "REIN повторная закачка группы",
           "GCONINJE после GRUPTREE"
         ]
-      }
+      },
+      "summary": "Когда применять. FORECAST / после cutover: групповые RATE/RESV/REIN/VREP для injectors. Обычно после DATES и после того, как группа существует: FIELD всегда; иначе группа из GRUPTREE и/или leaf-группа со скважинами WELSPECS. Скважины с CONTROL=GRUP в WCONINJE опираются на GCONINJE своей группы. E3 GAS: состав нагнетаемого газа —… Антипаттерны. - WCONINJE вместо GCONINJE для группового лимита. - CONTROL=RATE без SURFACE_RATE / VREP без VREP_RATIO / REIN без REIN_RATIO. - Wildcard GROUP в CREATE без…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -15592,7 +15858,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "gsatprod-satellite-prod-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "GSATPROD — дебиты вспомогательных групп",
       "keywords": [
         "GSATPROD"
@@ -16196,7 +16462,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "gsatprod-satellite-prod-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -16218,7 +16484,8 @@
           "внешний отбор в GRUPTREE",
           "PRODSAT вода"
         ]
-      }
+      },
+      "summary": "Когда применять. Нужен известный внешний offtake в иерархии групп. Первое появление имени в GSATPROD/GSATINJE объявляет группу вспомогательной. В многоуровневой иерархии сначала объявите её в GRUPTREE (иначе симулятор подвешивает под FIELD). Значения держатся до следующего GSATPROD. Если группа нагнетает — приёмистость задаёт GSATINJE… Антипаттерны. - GCONPROD вместо GSATPROD для внешней offtake-группы без скважин. - Satellite + WELSPECS wells на ту же группу. - E3 поток без GSATCOMP/baseline состава. -…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -16226,7 +16493,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "gsatinje-satellite-inject-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "GSATINJE — приемистость вспомогательных групп",
       "keywords": [
         "GSATINJE"
@@ -16800,7 +17067,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "gsatinje-satellite-inject-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -16822,7 +17089,8 @@
           "внешняя закачка в GRUPTREE",
           "INJSAT вода газ"
         ]
-      }
+      },
+      "summary": "Когда применять. Нужен известный внешний inject sink в иерархии групп. Первое появление имени в GSATPROD/GSATINJE объявляет группу вспомогательной. В многоуровневой иерархии сначала GRUPTREE (иначе parent=FIELD). Значения держатся до следующего GSATINJE. Добыча той же satellite — GSATPROD. Несколько фаз → отдельная запись на каждую… Антипаттерны. - GCONINJE/WCONINJE вместо GSATINJE для внешней inject-группы без скважин. - PHASE=WATER вместо WAT. - Несколько фаз в одной записи. - E3 поток без…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -16830,7 +17098,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "wellstre-inject-stream-v1",
-      "revision": "3",
+      "revision": "4",
       "title": "WELLSTRE — именованный поток закачки (мольные доли)",
       "keywords": [
         "WELLSTRE"
@@ -16982,7 +17250,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "wellstre-inject-stream-v1",
-        "revision": "3",
+        "revision": "4",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -17004,7 +17272,8 @@
           "WELLSTRE перед WINJGAS",
           "именованный inject stream"
         ]
-      }
+      },
+      "summary": "Когда применять. E3/tN compositional inject: сначала WELLSTRE с именем и долями, затем WINJGAS/GINJGAS (allowlist) и/или GSATCOMP (вне allowlist → needs_input на wiring без baseline). Nc = число компонентов модели; сумма мольных долей = 1. UDQ допустим в симуляторе; MVP — числа из фактов. Антипаттерны. - E1-профиль. - Nc ≠ числу долей / сумма ≠ 1. - Путать с WELLSTRW. - Выдумать доли «примерно как в примере». - Считать WELLSTRE достаточным для закачки без…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -17012,7 +17281,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "gnetdp-pressure-band-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "GNETDP — динамическая корректировка фиксированного давления",
       "keywords": [
         "GNETDP"
@@ -17498,7 +17767,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "gnetdp-pressure-band-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -17520,7 +17789,8 @@
           "корректировка давления узла сети",
           "GNETDP после GCONPROD"
         ]
-      }
+      },
+      "summary": "Когда применять. Нужна автоподстройка давления по rate band (часто вместе с GCONPROD на GAS/…). GROUP/NODE уже существует (GRUPTREE/NODEPROP/baseline). Для NETWORK-пути: NETWORK + BRANPROP/NODEPROP в baseline; не эмитьте NETWORK. Обычно после DATES и после объявления группы/узла. Антипаттерны. - WNETDP вместо GNETDP. - PHASE=WATER вместо WAT. - E3 без authority. - Эмитить NETWORK/GNETINJE из этой карточки. - Полоса без DP_DOWN/DP_UP при явной…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -17528,7 +17798,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "weldraw-max-drawdown-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "WELDRAW — максимальная допустимая депрессия",
       "keywords": [
         "WELDRAW"
@@ -17921,7 +18191,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "weldraw-max-drawdown-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -17943,7 +18213,8 @@
           "депрессия в потенциале",
           "WELDRAW AVG MAX"
         ]
-      }
+      },
+      "summary": "Когда применять. Нужен cap по депрессии на скважине, WLIST, группе или FIELD. После WELSPECS (для well) / WLIST / GRUPTREE (для группы). Если уже есть ORAT/… лимит той же фазы в WCONPROD/WELTARG — симулятор берёт min(QMax, заданный лимит). Антипаттерны. - Подмена WCONPROD дебитом «из головы» вместо WELDRAW+формулы. - PHASE вне {LIQ,GAS}. - USE_IN_POTENTIAL без YES/NO. - WELDRAW на injector без фактов (слово —…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -17951,7 +18222,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "netbalan-network-balance-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "NETBALAN — параметры балансирования NETWORK",
       "keywords": [
         "NETBALAN"
@@ -18201,7 +18472,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "netbalan-network-balance-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -18223,7 +18494,8 @@
           "сходимость давления узлов",
           "погрешность штуцера группы"
         ]
-      }
+      },
+      "summary": "Когда применять. Extended network уже включён в base (NETWORK). Нужно ужесточить/ослабить сходимость давления узлов, число итераций или допуск автоштуцеров по дебиту группы. Если NETWORK нет → needs_input, не эмитьте NETWORK. Обычно после DATES; рядом с BRANPROP/NODEPROP. Антипаттерны. - Эмитить NETWORK из этой карточки. - Придавать смысл полю INTERVAL. - CHOKE_TOL > 1 как «проценты» без перевода в долю. - NETBALAN без NETWORK authority."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -18231,7 +18503,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "actionx-conditional-block-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "ACTIONX — условный блок SCHEDULE",
       "keywords": [
         "ACTIONX"
@@ -18479,7 +18751,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "actionx-conditional-block-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -18501,7 +18773,8 @@
           "условный GSATPROD",
           "закрыть ENDACTIO"
         ]
-      }
+      },
+      "summary": "Когда применять. Нужна реакция на условие (дата, WLPR, RPR, …) без ручного DATES-ветвления. Повтор с тем же именем действия заменяет предыдущее. Тело — почти любой SCHEDULE keyword **кроме** DATES/TSTEP и др. time-step слов. MVP: каждое keyword в теле должно быть в allowlist Builder; иначе needs_input (примеры мануала с… Антипаттерны. - ACTION вместо ACTIONX «для простоты». - ENDACTION. - Тело с вне-allowlist keyword. - DATES/TSTEP внутри блока. - ALWAYS / LGR-perf / aquifer / block условия."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -18509,7 +18782,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "endactio-action-close-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "ENDACTIO — конец условного блока ACTION*",
       "keywords": [
         "ENDACTIO"
@@ -18621,7 +18894,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "endactio-action-close-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -18639,7 +18912,8 @@
           "ENDACTIO",
           "конец условного блока"
         ]
-      }
+      },
+      "summary": "Когда применять. Сразу после тела блока, начатого ACTIONX или DELAYACT (или другим ACTION*, если они войдут в allowlist). Без ENDACTIO блок некорректен. Антипаттерны. - ENDACTION. - ENDACTIO без открытого ACTIONX/DELAYACT. - Ключевые слова после ENDACTIO, относящиеся к тому же действию."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -18647,7 +18921,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "delayact-delayed-action-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "DELAYACT — отложенное действие после trigger",
       "keywords": [
         "DELAYACT"
@@ -18822,7 +19096,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "delayact-delayed-action-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -18844,7 +19118,8 @@
           "повторная активация с инкрементом",
           "DELAYACT ENDACTIO"
         ]
-      }
+      },
+      "summary": "Когда применять. Нужна реакция через N дней после уже объявленного действия (обычно ACTIONX с тем же trigger-именем). Повтор DELAYACT с тем же DELAYED_NAME перезаписывает. MVP: keywords в теле ⊆ allowlist; иначе needs_input. Нет DATES/TSTEP в теле. Антипаттерны. - DELAYACT без trigger-имени / без ENDACTIO. - Тело вне allowlist. - DATES/TSTEP в теле. - Путать DELAYED_NAME с TRIGGER_NAME. WELTARG меняет цель без полного WCONPROD."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -18852,7 +19127,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "udq-user-defined-quantity-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "UDQ — пользовательские выражения SCHEDULE",
       "keywords": [
         "UDQ"
@@ -19166,7 +19441,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "udq-user-defined-quantity-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -19188,7 +19463,8 @@
           "WUGOR условие",
           "UPDATE UDQ OFF"
         ]
-      }
+      },
+      "summary": "Когда применять. Нужно вычисляемое условие/величина из фактов (напр. WGOR vs FGOR). DEFINE пересчитывается каждый шаг после текущего; ASSIGN — при инициализации записи; UPDATE — ON|OFF|NEXT для уже определённого имени. Имя ≤8 символов (для регионов ≤5) и должно начинаться с: CU (completion), FU (FIELD), GU (group), RU (region), WU… Антипаттерны. - Имя без CU/FU/GU/RU/WU или длиннее лимита. - Выдумать SUMMARY-мнемонику / формулу. - TU*[] без объявленной UDT / без фактов таблицы. - Подмена UDQ словом… WELTARG меняет цель без полного WCONPROD."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -19196,7 +19472,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "udt-lookup-table-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "UDT — таблицы поиска для UDQ",
       "keywords": [
         "UDT"
@@ -19464,7 +19740,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "udt-lookup-table-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -19486,7 +19762,8 @@
           "интерполяция LC",
           "UDT перед DEFINE"
         ]
-      }
+      },
+      "summary": "Когда применять. Нужна табличная зависимость (напр. множитель от давления) и факты дают оси + сетку значений. Не выдумывайте узлы/значения. После объявления UDT обычно DEFINE в UDQ ссылается на таблицу. Антипаттерны. - Имя не с TU. - NUMDIM ≠ числу axis-строк. - Узлы не по возрастанию / INTERP вне enum. - Выдумать сетку «примерно». - UDQ TU*[] до UDT / без matching NAME."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -19494,7 +19771,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "applyscript-python-hook-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "APPLYSCRIPT — Python-хук на timestep",
       "keywords": [
         "APPLYSCRIPT"
@@ -19635,7 +19912,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "applyscript-python-hook-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -19657,7 +19934,8 @@
           "script.py function",
           "APPLYSCRIPT без тела"
         ]
-      }
+      },
+      "summary": "Когда применять. Нужен per-step Python hook и факты дают путь к `.py` + имя функции. Builder эмитит только запись APPLYSCRIPT — никогда не сочиняет тело скрипта, `__init_script__()`, вызовы API или формулы внутри Python. Файл скрипта должен быть артефактом пакета (как INCLUDE/VFPPROD body discipline). Несколько APPLYSCRIPT могут… Антипаттерны. - Выдумать `.py` / function name «примерно». - Путать с GUI Python calculator. - Эмитить тело скрипта как SCHEDULE keywords. - APPLYSCRIPT без файла в пакете /… WELTARG меняет цель без полного WCONPROD."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -19665,7 +19943,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "ginjgas-group-inject-gas-v1",
-      "revision": "3",
+      "revision": "4",
       "title": "GINJGAS — состав газа закачки группы",
       "keywords": [
         "GINJGAS"
@@ -19864,7 +20142,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "ginjgas-group-inject-gas-v1",
-        "revision": "3",
+        "revision": "4",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -19886,7 +20164,8 @@
           "газ с сепаратора группы",
           "makeup WELLSTRE"
         ]
-      }
+      },
+      "summary": "Когда применять. E3/tN + GCONINJE GAS: нужен явный состав на группе (или маске `NAME*`). STREAM → сначала WELLSTRE с тем же именем. MIX → WINJMIX вне allowlist → needs_input, если смеси нет в baseline. GV/WV — имя группы/скважины-источника из фактов. GAS — сепаратор месторождения. GRUP — состав вышележащей группы (default)… Антипаттерны. - GINJGAS без GCONINJE GAS / без группы. - STREAM без WELLSTRE. - MIX без WINJMIX facts/baseline. - Подмена скважинного WINJGAS групповым GINJGAS без факта. -…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -19894,7 +20173,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "winjgas-well-inject-gas-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "WINJGAS — состав газа закачки скважины",
       "keywords": [
         "WINJGAS"
@@ -20093,7 +20372,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "winjgas-well-inject-gas-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -20115,7 +20394,8 @@
           "газ сепаратора на скважине",
           "makeup WELLSTRE"
         ]
-      }
+      },
+      "summary": "Когда применять. E3/tN + WCONINJE GAS: нужен явный состав на скважине или `*LIST` после WLIST. STREAM → сначала WELLSTRE с тем же именем. MIX → WINJMIX вне allowlist → needs_input, если смеси нет в baseline. GV/WV — имя группы/скважины-источника из фактов. GAS — сепаратор месторождения. GRUP — состав вышележащей группы (default)… Антипаттерны. - WINJGAS без WCONINJE GAS / без скважины. - STREAM без WELLSTRE. - MIX без WINJMIX facts/baseline. - Подмена группового GINJGAS скважинным WINJGAS без факта…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -20123,7 +20403,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "wvfpdp-vfp-pressure-correction-v1",
-      "revision": "2",
+      "revision": "3",
       "title": "WVFPDP — коррекция BHP к VFP",
       "keywords": [
         "WVFPDP"
@@ -20285,7 +20565,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "wvfpdp-vfp-pressure-correction-v1",
-        "revision": "2",
+        "revision": "3",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -20307,7 +20587,8 @@
           "калибровка THP BHP",
           "WVFPDP bars"
         ]
-      }
+      },
+      "summary": "Когда применять. Нужна явная калибровка ΔP/fp из фактов при VFP/THP-контроле. Значения не угадывайте. Автоматическая гидростатическая поправка REF_DEPTH WELSPECS ↔ datum VFPPROD выполняется симулятором и без WVFPDP — не дублируйте её «на глаз». Антипаттерны. - Эмитить `VFPDP` вместо `WVFPDP`. - Выдумать DP_CORR/FP_SCALE «примерно». - Подмена калибровкой отсутствующей VFP-таблицы. - E3-профиль без факта поддержки."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -20315,12 +20596,9 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "schedule-model-file-comments-v1",
-      "revision": "1",
+      "revision": "4",
       "title": "Комментарии `--` в .data / .inc / файлах модели",
-      "keywords": [
-        "INCLUDE",
-        "DATES"
-      ],
+      "keywords": [],
       "topics": [
         "комментарии",
         "--",
@@ -20373,15 +20651,12 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "schedule-model-file-comments-v1",
-        "revision": "1",
+        "revision": "4",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
         "approved_by": "department-hydrodynamic-expert",
-        "keyword_families": [
-          "INCLUDE",
-          "DATES"
-        ],
+        "keyword_families": [],
         "topics": [
           "комментарии",
           "--",
@@ -20398,7 +20673,8 @@
           "не трогать комментарии при REVISE",
           "заметки инженера в schedule"
         ]
-      }
+      },
+      "summary": "Когда применять. Комментарии -- в SCHEDULE: не ключевые слова и не числа фактов. Антипаттерны. Считать `-- WCONPROD` ключевым словом; брать числа только из комментария; удалять все `--` при «чистке» файла; подменять comment текстом как schedule_text без…"
     },
     {
       "contract": "schedule_knowledge_block",
@@ -20406,7 +20682,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "wefac-well-efficiency-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "WEFAC — коэффициент эксплуатации скважины",
       "keywords": [
         "WEFAC"
@@ -20575,7 +20851,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "wefac-well-efficiency-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -20583,7 +20859,8 @@
         "keyword_families": [
           "WEFAC"
         ]
-      }
+      },
+      "summary": "Когда применять. Нужен uptime/efficiency на скважине или маске/`*LIST` после WELSPECS. В прогнозных Petrel-файлах часто `'*' 0.95` на весь фонд, затем точечные значения на скважинах. Антипаттерны. - Путать с GEFAC / WECON / WCONPROD STOP. - Забыть блок `/` после записей. - Выдумать NETWORK_AVG без факта (оставьте default YES)."
     },
     {
       "contract": "schedule_knowledge_block",
@@ -20591,7 +20868,7 @@
       "target_base": "schedule_mvp",
       "knowledge_type": "keyword_instruction",
       "knowledge_id": "welopen-well-status-v1",
-      "revision": "1",
+      "revision": "2",
       "title": "WELOPEN — открытие/закрытие скважины и перфораций",
       "keywords": [
         "WELOPEN"
@@ -20874,7 +21151,7 @@
         "target_base": "schedule_mvp",
         "knowledge_type": "keyword_instruction",
         "knowledge_id": "welopen-well-status-v1",
-        "revision": "1",
+        "revision": "2",
         "status": "active",
         "access_scope": "petroleum-engineering",
         "author": "department-hydrodynamic-expert",
@@ -20882,7 +21159,8 @@
         "keyword_families": [
           "WELOPEN"
         ]
-      }
+      },
+      "summary": "Когда применять. Нужно открыть/закрыть скважину целиком (только WELL+STATUS) или точечно по IJK / COMPLUMP. В прогнозных файлах часто `WELL OPEN` после DATES ввода. Антипаттерны. - WELOPENL для LGR без allowlist. - Путать со STATUS в WCONPROD. - Закрыть глобальные перфорации, оставив LGR открытыми, без WELOPENL."
     },
     {
       "role": "injection_template",
@@ -21275,7 +21553,8 @@
           "source_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "page": "SCHEDULE / WCONPROD",
           "heading": "WCONPROD forecast control"
-        }
+        },
+        "summary": "Когда применять. WCONPROD — прогнозный контроль скважины (пример инжекта после развёртывания схемы). Применяйте WCONPROD только в FORECAST после WELSPECS для той же скважины. Не подменяйте WCONHIST: история пишется отдельным keyword. CONTROL задаёт режим (ORAT/WRAT/GRAT/BHP/THP/LRAT/RESV); заполняйте только поля, которые соответствуют выбранному CONTROL, остальные оставляйте закрытыми по экспертной схеме. Числовые дебиты неотрицательны. Имя скважины копируйте буквально из WELSPECS, не нормализуйте и не… WELTARG меняет цель без полного WCONPROD."
       }
     }
   ]
@@ -21420,7 +21699,7 @@ SPEC = AgentSpec(
 )
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/agents/excel_extractor.py	13778	utf8
+===BEGIN_FILE===	n8n/templates/agents/excel_extractor.py	14223	utf8
 """Agent — Excel Extractor: reads the case's Excel books, the LLM picks table/columns, tools extract deterministically."""
 
 from __future__ import annotations
@@ -21451,7 +21730,7 @@ SYSTEM = """Ты — решатель агента Excel Extractor: читаеш
 Инварианты:
 - Не придумывай скважины, даты, дебиты, имена листов, table_id и колонок — только из инвентаря и ответов инструментов.
 - rework_reason в задаче — замечание оркестратора к прошлому результату: устрани именно его.
-- Retrieved knowledge — только срез excel_protocol / protocol_instruction (протокол инструментов). Пустой или unavailable срез — работай по инвентарю, инженера про базу знаний не спрашивай.
+- Retrieved knowledge — срез excel_protocol / protocol_instruction. Если протокола для выбранного инструмента нет в срезе — retrieve_knowledge с query по смыслу таблицы. Пустой или unavailable срез — работай по инвентарю, инженера про базу знаний не спрашивай.
 
 Заверши одним коротким фактическим предложением по-русски: что извлечено или чего не хватило.
 """
@@ -21588,10 +21867,17 @@ SPEC = AgentSpec(
         "Срез excel_protocol пуст или недоступен — работай правилами инструментов. "
         "Не спрашивай HITL про RAG и не ходи в другие target_base."
     ),
-    retrieval_filters_js="""
-if(/дат|ввод|commission/.test(low)) task_patterns.push('даты ввода');
-if(/таблиц|query|дебит|истори|управлен/.test(low)) task_patterns.push('извлечь таблицу');
-if(/уточн|ambigu|clarif/.test(low)) task_patterns.push('clarification_needed');
+    retrieval_filters_js=r"""
+const inspect=opened.inspect&&typeof opened.inspect==='object'?opened.inspect:{};
+const expected=opened.expected_output&&typeof opened.expected_output==='object'?opened.expected_output:((task.inputs&&task.inputs.expected_output&&typeof task.inputs.expected_output==='object')?task.inputs.expected_output:{});
+for(const t of (Array.isArray(inspect.tables)?inspect.tables:[])){
+  const kind=String(t&&t.kind||'').trim();
+  if(kind) task_patterns.push(kind);
+}
+for(const d of (Array.isArray(expected.datasets)?expected.datasets:[])){
+  const name=String(d&&d.name||'').trim();
+  if(name) task_patterns.push(name);
+}
 """,
     planner_extra_js="files:Array.isArray(opened.files)?opened.files:[]",
     result_tools=["extract_", "ask_engineer"],
@@ -21621,7 +21907,7 @@ if(/уточн|ambigu|clarif/.test(low)) task_patterns.push('clarification_neede
 )
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/agents/schedule_builder.py	14975	utf8
+===BEGIN_FILE===	n8n/templates/agents/schedule_builder.py	16822	utf8
 """Agent — Schedule Builder: deterministic SCHEDULE tools (parse/apply/emit); the LLM only picks the tool and its arguments."""
 
 from __future__ import annotations
@@ -21638,17 +21924,18 @@ SYSTEM = """Ты — инженер-решатель агента Schedule Build
 Какой инструмент когда:
 - Задача про НОВЫЕ ДАТЫ ВВОДА скважин (Excel «скважина — дата», fact_count > 0) → apply_commissioning. Факты, решение по скважинам вне Excel и параметры новых скважин уже в сессии — аргументов не нужно. Другие apply_* для такой задачи не вызывай.
 - Задача про ГРУППЫ (поместить скважины в группу, групповой контроль GCONPROD) → inspect_schedule (имена скважин, дерево GRUPTREE), затем apply_group_rebind с полным spec: wells, parent_group, parent_of_parent, control (ORAT/WRAT/GRAT/LRAT/RESV), gas_rate числом в м3/сут («200 тыс. м3 газа в сут.» → 200000). Родителя новой группы бери из дерева исходного файла (корень — FIELD или как в inspect), если инженер не сказал иначе.
-- В сессии есть именованные наборы (dataset_count > 0, не пары «скважина — дата ввода»): inspect_dataset по имени → search_keywords / get_keyword (имя keyword только из каталога и retrieved knowledge) → apply_dataset с field_map (поле набора → параметр keyword из get_keyword.details.parameters). Сопоставление полей — твоё, по смыслу набора и схемы; не выдумывай keyword и не подставляй пустые значения. apply_commissioning сюда не подходит.
-- Точечные правки режимов/keywords без набора → search_keywords → get_keyword (details.parameters) → apply_operations или render_ir.
+- В сессии есть именованные наборы (dataset_count > 0, не пары «скважина — дата ввода»): inspect_dataset по имени → retrieve_knowledge (query — смысл набора, keywords — имя keyword) → get_keyword → apply_dataset с field_map. retrieve_knowledge не пропускай: стартовый срез — краткие summary чужих keyword, полный when-to-use только из retrieve. Нет поля даты в наборе — не спрашивай инженера про дату; apply_dataset без date_field обновляет существующие записи скважины. inspect_schedule и search_keywords не вызывай, если retrieve + get_keyword уже дали keyword и поля. Не выдумывай keyword и не подставляй пустые значения. apply_commissioning сюда не подходит.
+- Точечные правки режимов/keywords без набора: если keyword нет в текущих карточках — retrieve_knowledge, затем get_keyword (details.parameters) → apply_operations или render_ir. search_keywords — только если retrieve пуст.
 - inspect_well / analyze_forecast_controls / list_records — чтобы посмотреть скважину перед правкой. Не вызывай их «на всякий случай» и не больше трёх раз подряд.
 - build_schedule — только если apply уже менял сессию; validate_result — проверки emit.
-- ask_engineer — единственный способ спросить инженера. Только когда данных нет ни в задаче, ни в исходном файле, ни в ответах инженера (engineer_answers), ни в наборе. Один вопрос обычной русской фразой: что нужно и зачем; варианты (options) — как их называет инженер: имена групп из исходного файла, «оставить»/«убрать». Никаких имён полей, JSON, enum, кодов. Инженер отвечает фактами, таблицами и файлами — не строками .INC.
+- ask_engineer — единственный способ спросить инженера. Только когда данных нет ни в задаче, ни в исходном файле, ни в ответах инженера (engineer_answers), ни в наборе. Не спрашивай дату шага, если в наборе нет поля даты. Один вопрос обычной русской фразой: что нужно и зачем; варианты (options) — как их называет инженер: имена групп из исходного файла, «оставить»/«убрать». Никаких имён полей, JSON, enum, кодов. Инженер отвечает фактами, таблицами и файлами — не строками .INC.
 
 Ответы инструментов:
 - ok:false, code:spec_incomplete — это тебе, не инженеру: заполни missing из текста задачи, inspect_schedule и inspect_dataset (where_to_find подсказывает откуда) и вызови инструмент снова. Спрашивай инженера, только если данных действительно нет.
 - ok:false, code:dataset_values_missing — в наборе пустые обязательные поля: спроси инженера через ask_engineer, не подставляй значения сам.
 - ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.
 - ok:false, code:well_not_in_schedule / operations_required / unknown_dataset / unknown_keyword — ошибка твоего вызова; исправь аргументы.
+- ok:false, code:knowledge_required — сначала retrieve_knowledge (query и keywords набора), затем get_keyword, затем apply_dataset.
 - ok:false, code:result_already_stored — результат этого запуска уже зафиксирован (apply или вопрос инженеру). Больше инструменты не вызывай, заверши ответ.
 - status completed или needs_input от apply_* / ask_engineer — результат зафиксирован. STOP: не вызывай build и другие apply.
 
@@ -21660,7 +21947,7 @@ SYSTEM = """Ты — инженер-решатель агента Schedule Build
 - apply_operations принимает JSON-массив [{keyword, operation, fields}], не объект с ключами "0","1".
 - Если analyze_forecast_controls вернул needs_input по границе history/forecast — не применяй операцию, спроси инженера.
 - rework_reason в задаче — замечание оркестратора к прошлому результату: устрани именно его.
-- Retrieved knowledge — только срез schedule_mvp (keyword_instruction / worked_example): when-to-use и pitfalls. Расклад полей — из get_keyword.details / render_ir. Пустой или unavailable срез — работай инструментами, не спрашивай про базу знаний.
+- Retrieved knowledge — срез schedule_mvp (keyword_instruction / worked_example): стартовый Attach — краткие summary. Перед apply_dataset всегда retrieve_knowledge, затем get_keyword. Нет даты в наборе — не спрашивай HITL про дату шага, date_field не передавай. Перед первым apply_operations / render_ir по keyword, которого нет в карточках, — тоже retrieve_knowledge. apply_commissioning для дат ввода — без retrieve. Расклад полей — get_keyword.details. Пустой или unavailable срез — работай инструментами, не спрашивай про базу знаний.
 
 Заверши одним коротким фактическим предложением по-русски о том, что сделано или чего не хватило.
 """
@@ -21707,12 +21994,12 @@ TOOLS = [
     ),
     (
         "apply_dataset",
-        "Записать именованный набор в SCHEDULE. Keyword — из search_keywords/get_keyword/карточки знаний, не выдумывать. field_map — поле набора → параметр схемы. Пустые значения не подставляй.",
+        "Записать именованный набор в SCHEDULE. Keyword — из retrieve_knowledge/get_keyword, не выдумывать. field_map — поле набора → параметр схемы. Пустые значения не подставляй.",
         [
             ("dataset", "string", True, "Имя набора из inspect_dataset / open_session.datasets"),
-            ("keyword", "string", True, "Имя keyword из каталога (search_keywords / get_keyword)"),
+            ("keyword", "string", True, "Имя keyword из retrieve_knowledge / get_keyword"),
             ("field_map", "json", True, "Объект: поле набора → параметр keyword из get_keyword.details.parameters"),
-            ("date_field", "string", False, "Поле набора с датой шага DATES, если строки привязаны к дате исходного файла; пусто — обновить существующие записи скважины"),
+            ("date_field", "string", False, "Поле набора с датой шага DATES, только если в строках есть дата; пусто/не передавай — обновить существующие записи скважины, не спрашивать инженера про дату"),
         ],
     ),
     (
@@ -21770,906 +22057,3 @@ SPEC = AgentSpec(
         "параметрам; перепривязка скважин в группу (GRUPTREE/GCONPROD); запись именованного набора из Excel в keyword "
         "по схеме (карточка знаний + get_keyword, не словарь в коде). Факты, наборы и параметры новых скважин берёт из "
         "результатов агента, который читал Excel, и из ответов инженера — сам Excel не читает; для перепривязки групп "
-        "Excel не нужен. Не выдумывает keyword, даты и имена, которых нет в задаче, наборе или исходном файле. Отдаёт "
-        "новый .INC и список изменений."
-    ),
-    input_required=["schedule_source"],
-    output_provides=["schedule_out", "diff"],
-    input_schema={
-        "artifacts": {"schedule_source": "исходный SCHEDULE .inc и его INCLUDE-файлы"},
-        "data": {
-            "facts": "даты ввода «скважина — дата» (нужны для новых дат ввода)",
-            "new_wells": "параметры новых скважин (нужны, если добавляются скважины)",
-            "datasets": "именованные наборы строк из Excel (нужны, если задача — не даты ввода и не перепривязка, а другая таблица в SCHEDULE)",
-        },
-        "handoff_message": "что изменить в SCHEDULE и на основании чего",
-    },
-    output_schema={"artifacts": {"schedule_out": "новый SCHEDULE .inc", "diff": "изменения относительно исходного файла"}},
-    service_url_key="schedule_service_url",
-    lab_url="http://schedule-builder:8090",
-    slug="schedule",
-    system_prompt=SYSTEM,
-    tools=TOOLS,
-    rag_selector="schedule",
-    rag_ready_note=(
-        "Карточки — срез schedule_mvp (keyword_instruction / worked_example), "
-        "не excel_protocol и не orchestrator_routing. "
-        "Это when-to-use и pitfalls. Расклад полей — get_keyword.details / render_ir, "
-        "не schema_catalogue из RAG."
-    ),
-    rag_empty_note=(
-        "Срез schedule_mvp пуст или недоступен — работай инструментами. "
-        "Не спрашивай HITL про RAG и не ходи в другие target_base."
-    ),
-    # Keyword families / topics narrow the RAG slice to the cards about the keywords the task names.
-    retrieval_filters_js="const ALLOWED_KEYWORDS=" + json.dumps(SCHEDULE_KEYWORDS) + ";\n" + r"""
-const allowed=new Set(ALLOWED_KEYWORDS);
-for(const k of (blob.match(/\b[A-Z][A-Z0-9_]{2,}\b/g)||[])) if(allowed.has(k)) keyword_families.push(k);
-""",
-    planner_extra_js=(
-        "fact_count:opened.fact_count||0,\n"
-        "  facts_preview:opened.facts_preview||[],\n"
-        "  dataset_count:opened.dataset_count||0,\n"
-        "  datasets:opened.datasets||[]"
-    ),
-    result_tools=["apply_", "build_", "ask_engineer"],
-    texts=FallbackTexts(
-        no_result_question=(
-            "Schedule Builder не внёс изменений в SCHEDULE: не хватило данных, чтобы понять задачу. "
-            "Опишите, что именно нужно изменить (скважины, даты, режимы) и откуда взять значения (Excel, текст, исходный файл)."
-        ),
-        repeated_question=(
-            "Schedule Builder не смог продвинуться по задаче: несколько раз проверял SCHEDULE, но не понял, что именно изменить. "
-            "Опишите задачу подробнее: какие скважины, какие даты или режимы работы и откуда взять значения."
-        ),
-        done_message="Schedule Builder завершил работу с инструментами.",
-        no_result_issue="no_apply",
-        question_id="Q-apply",
-        accepts_files=["xlsx", ".inc"],
-        missing_input_message="Нет исходного SCHEDULE",
-        missing_input_issue="missing_schedule_source",
-        missing_input_question="К задаче не приложен исходный файл schedule. Приложите прогнозный .inc, который нужно изменить.",
-        no_result_failed_message="Schedule Builder не вернул SCHEDULE",
-        no_result_failed_issue="schedule_agent_no_result",
-    ),
-    accepted_message="Schedule Builder принял задачу и анализирует исходный schedule.",
-    progress_message="Schedule Builder проверяет структуру скважин, даты и прогнозные controls.",
-    node_id_namespace="mas-sched-agent",
-    workflow_id="c8d5f3b2-6e91-5d22-8a7b-1f0c4e9a2d55",
-    example_objective="Сдвинь даты ввода по Excel",
-    tool_grid_columns=3,
-)
-
-===END_FILE===
-===BEGIN_FILE===	n8n/templates/generate_demo_agent.py	501	utf8
-#!/usr/bin/env python3
-"""Generate Agent — Demo Agent from its spec (``agents/demo_agent.py``).
-
-The template agent is optional: it lands in ``n8n/workflows/support`` (imported, but not part of the
-runtime order) and its registry row is ``enabled=false`` until an engineer switches it on.
-"""
-
-from agents import DEMO_AGENT
-from mas_agent_workflow import OUT_DIR, write_workflow
-
-SUPPORT_DIR = OUT_DIR.parent / "support"
-
-if __name__ == "__main__":
-    write_workflow(DEMO_AGENT, out_dir=SUPPORT_DIR)
-
-===END_FILE===
-===BEGIN_FILE===	n8n/templates/generate_excel_extractor_agent.py	255	utf8
-#!/usr/bin/env python3
-"""Generate Agent — Excel Extractor from its spec (``agents/excel_extractor.py``)."""
-
-from agents import EXCEL_EXTRACTOR
-from mas_agent_workflow import write_workflow
-
-if __name__ == "__main__":
-    write_workflow(EXCEL_EXTRACTOR)
-
-===END_FILE===
-===BEGIN_FILE===	n8n/templates/generate_mas_control_plane_proxy.py	25029	utf8
-#!/usr/bin/env python3
-"""Generate ``MAS — Control Plane Proxy`` and the control-plane SQL files from one source.
-
-The proxy is the only way Activity (Python on Windows) reaches Postgres: one webhook, one
-``operation`` per call (``schema``, ``snapshot``, ``upsert_agent`` …). Until Phase 2 its JSON was
-edited by hand; now the ``agent_registry`` DDL / seed / ``list_agents`` / ``upsert_agent`` come
-from ``mas_agent_registry.py`` and the same source writes:
-
-- ``n8n/workflows/core/mas-control-plane-proxy.workflow.json``
-- ``postgres-init/02-mas-control-plane.sql`` (fresh volume + lab ``psql``)
-- ``postgres-init/03-schedule-builder-registry.sql``
-- ``mas-activity-service/app/sql/control_plane.sql`` (= 02 + 03, checked by ``test_cases_api.py``)
-- ``mas-activity-service/app/sql/agent_registry_seed.json`` (Activity's in-memory registry when no proxy is configured)
-"""
-
-from __future__ import annotations
-
-import json
-from pathlib import Path
-
-from mas_agent_registry import (
-    COLUMN_NAMES,
-    JSON_COLUMNS,
-    create_table_sql,
-    list_agents_sql,
-    seed_as_python,
-    seed_rows_sql,
-    upsert_agent_sql,
-)
-
-ROOT = Path(__file__).resolve().parents[1]
-REPO = ROOT.parent
-OUT = ROOT / "workflows/core/mas-control-plane-proxy.workflow.json"
-SQL_02 = REPO / "postgres-init/02-mas-control-plane.sql"
-SQL_03 = REPO / "postgres-init/03-schedule-builder-registry.sql"
-SQL_ACTIVITY = REPO / "mas-activity-service/app/sql/control_plane.sql"
-SEED_JSON = REPO / "mas-activity-service/app/sql/agent_registry_seed.json"
-
-WF_ID = "mas-control-plane-proxy-v1"
-WF_NAME = "MAS — Control Plane Proxy"
-
-STICKY = (
-    "## edit after import\n\n"
-    "**MAS — Control Plane Proxy** — after UI import, complete bindings before activate:\n\n"
-    "- Set webhook auth credentials on **MAS control-plane webhook**\n"
-    "- Set Postgres credentials on **Execute control-plane SQL**\n\n"
-    "Do not rely on env()/Globals for corporate UI import.\n"
-    "- **Wipe checkbox:** **Operator flags** → boolean `clear`. Leave `false`. To wipe cases: set `clear` = true → Save → "
-    "**Test workflow** (pinned body is `{operation:schema}`). Then set `clear` back to `false` and Save. Production `/webhook/` "
-    "ignores the checkbox so Activity boot cannot wipe. HTTP wipe: `{\"operation\":\"schema\",\"clear\":true}` or `{\"operation\":\"wipe\"}`.\n"
-    "- Reads: SSE shares one snapshot poller; `batch` runs several single-row SQL in one execution.\n"
-    "- `schema` also upgrades `agent_registry` in place (Phase 2 columns `invoke`, `input_schema`, `output_schema`, "
-    "`hitl_policy`, `enabled`, `version`) and fills them for the seeded agents without touching engineer edits.\n"
-)
-
-# --- SQL fragments shared by the proxy `schema` operation and the SQL init files -------------------
-
-# Case statuses the orchestrator persists (Python twin: mas-activity-service/app/contracts.py CASE_STATUSES).
-# `waiting_agent` = a long-running agent returned in_progress (Phase 4). The CHECK constraint is re-created on
-# every `schema` run so an existing lab/field database picks up new statuses (CASE-6a9f3a76-38506f: the first
-# in_progress result hit the old constraint in `Update case after agent`).
-CASE_STATUSES = ("new", "running", "waiting_user", "waiting_agent", "done", "failed", "cancelled")
-_STATUS_LIST = ",".join(f"'{s}'" for s in CASE_STATUSES)
-CASES_STATUS_CHECK_SQL = (
-    "ALTER TABLE cases DROP CONSTRAINT IF EXISTS cases_status_check;"
-    f"ALTER TABLE cases ADD CONSTRAINT cases_status_check CHECK (status IN ({_STATUS_LIST}));"
-)
-CORE_TABLES_SQL = (
-    "CREATE TABLE IF NOT EXISTS cases (case_id TEXT PRIMARY KEY,state JSONB NOT NULL DEFAULT '{}'::jsonb,status TEXT NOT NULL,"
-    f"updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),CONSTRAINT cases_status_check CHECK (status IN ({_STATUS_LIST})));"
-    + CASES_STATUS_CHECK_SQL +
-    "CREATE TABLE IF NOT EXISTS events (event_id BIGSERIAL PRIMARY KEY,case_id TEXT NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE,task_id TEXT,"
-    "kind TEXT NOT NULL,actor TEXT NOT NULL,agent_id TEXT,status TEXT,status_message TEXT,handoff_message TEXT,payload JSONB NOT NULL DEFAULT '{}'::jsonb,"
-    "created_at TIMESTAMPTZ NOT NULL DEFAULT now());"
-    "CREATE INDEX IF NOT EXISTS events_case_id_event_id_idx ON events(case_id);"
-    "CREATE TABLE IF NOT EXISTS error_traces (error_id BIGSERIAL PRIMARY KEY,case_id TEXT,execution_id TEXT,workflow_name TEXT,node_name TEXT,error_message TEXT,"
-    "error_type TEXT,stack TEXT,input_snapshot JSONB,created_at TIMESTAMPTZ NOT NULL DEFAULT now());"
-    "CREATE INDEX IF NOT EXISTS error_traces_case_id_idx ON error_traces(case_id);"
-    "CREATE TABLE IF NOT EXISTS executions (execution_id TEXT PRIMARY KEY,case_id TEXT,workflow_name TEXT,started_at TIMESTAMPTZ NOT NULL DEFAULT now());"
-    "CREATE INDEX IF NOT EXISTS executions_case_id_idx ON executions(case_id);"
-)
-ARTIFACTS_TABLE_SQL = (
-    "CREATE TABLE IF NOT EXISTS mas_artifacts (case_id TEXT NOT NULL,artifact_id TEXT NOT NULL,filename TEXT NOT NULL,"
-    "mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',content BYTEA NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
-    "updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(case_id,artifact_id));"
-    "CREATE INDEX IF NOT EXISTS mas_artifacts_case_id_idx ON mas_artifacts(case_id);"
-)
-SCHEMA_SQL = CORE_TABLES_SQL + create_table_sql() + ARTIFACTS_TABLE_SQL + seed_rows_sql(mode="fill")
-
-WIPE_SQL = (
-    "TRUNCATE TABLE events RESTART IDENTITY CASCADE;TRUNCATE TABLE error_traces RESTART IDENTITY CASCADE;"
-    "TRUNCATE TABLE executions RESTART IDENTITY CASCADE;TRUNCATE TABLE mas_artifacts RESTART IDENTITY CASCADE;"
-    "TRUNCATE TABLE cases RESTART IDENTITY CASCADE;"
-)
-
-
-def _upsert_params_js() -> str:
-    """JS array of upsert parameters in COLUMN_NAMES order (strings; JSON columns serialised)."""
-    parts = []
-    for name in COLUMN_NAMES:
-        if name == "agent_id":
-            parts.append("s(r.agent_id)")
-        elif name in JSON_COLUMNS:
-            default = "[]" if name in ("input_required", "output_provides") else "{}"
-            parts.append(f"j(r.{name}||{default})")
-        elif name == "enabled":
-            parts.append("(r.enabled===false||r.enabled==='false'||r.enabled===0)?'false':'true'")
-        elif name == "hitl_policy":
-            parts.append("s(r.hitl_policy||'agent_asks')")
-        elif name == "version":
-            parts.append("s(r.version||'1')")
-        else:
-            parts.append(f"r.{name}||null")
-    return "[" + ",".join(parts) + "]"
-
-
-NORMALIZE_JS = (
-    r"""const incomingBase=$json.body&&typeof $json.body==='object'?$json.body:$json;const incoming=(!String(incomingBase.operation||'').trim()&&(String((typeof $execution!=='undefined'&&$execution.mode)||'')==='manual'||String($json.webhookUrl||'').includes('webhook-test'))&&($json.clear===true||$json.clear===1||$json.clear==='true'||$json.wipe_data===true))?{...incomingBase,operation:'schema'}:incomingBase;
-function buildItem(raw){
-const op=String(raw.operation||'').trim();
-const allowed=new Set(['schema','wipe','create_case','get_case','list_cases','update_case','append_event','list_events','snapshot','append_error','list_errors','record_execution','case_id_for_execution','list_agents','upsert_agent','artifact_put','artifact_get']);
-if(!allowed.has(op)||op==='batch') throw new Error('unsupported operation');
-const s=v=>String(v??'');
-const j=v=>JSON.stringify(v??{});
-const caseId=s(raw.case_id).trim();
-const artifactId=s(raw.artifact_id).trim();
-if(['create_case','get_case','update_case','append_event','list_events','snapshot','list_errors','artifact_put','artifact_get'].includes(op)&&!caseId) throw new Error('case_id is required');
-if(['artifact_put','artifact_get'].includes(op)&&!artifactId) throw new Error('artifact_id is required');
-function truthy(v){return v===true||v===1||v==='1'||v==='true'||String(v??'').toLowerCase()==='true';}
-const flagClear=truthy($json.clear)||truthy($json.wipe_data);
-const bodyClear=truthy(raw.clear)||truthy(raw.wipe)||truthy(raw.clear_data);
-const execMode=String((typeof $execution!=='undefined'&&$execution.mode)||'');
-const editorTest=execMode==='manual'||String($json.webhookUrl||'').includes('webhook-test');
-const wipe=op==='wipe'||(op==='schema'&&(bodyClear||(editorTest&&flagClear)));
-const wipeSql="""
-    + json.dumps(WIPE_SQL)
-    + r""";
-const common={operation:op,case_id:caseId,artifact_id:artifactId,wiped:wipe};
-let query='',params=[];
-if(op==='schema'||op==='wipe') query="""
-    + json.dumps(SCHEMA_SQL, ensure_ascii=False)
-    + r"""+(wipe?wipeSql:'')+`SELECT true AS schema_ok;`;
-else if(op==='create_case'){query='INSERT INTO cases(case_id,state,status,updated_at) VALUES($1,$2::jsonb,$3,now()) ON CONFLICT(case_id) DO NOTHING RETURNING case_id,state,status,updated_at';params=[caseId,j(raw.state),s(raw.status||'new')];}
-else if(op==='get_case'){query='SELECT case_id,state,status,updated_at FROM cases WHERE case_id=$1';params=[caseId];}
-else if(op==='list_cases'){query="SELECT c.case_id,c.status,c.updated_at,c.state,(SELECT COUNT(*) FROM events e WHERE e.case_id=c.case_id) AS event_count,COALESCE((SELECT jsonb_agg(jsonb_build_object('kind',e.kind,'actor',e.actor,'agent_id',e.agent_id,'task_id',e.task_id,'status_message',e.status_message,'handoff_message',e.handoff_message) ORDER BY e.event_id) FROM events e WHERE e.case_id=c.case_id),'[]'::jsonb) AS events FROM cases c ORDER BY c.updated_at DESC LIMIT $1";params=[Number(raw.limit||200)];}
-else if(op==='update_case'){query='UPDATE cases SET state=$1::jsonb,status=$2,updated_at=now() WHERE case_id=$3 RETURNING case_id,state,status,updated_at';params=[j(raw.state),s(raw.status),caseId];}
-else if(op==='append_event'){query="WITH locked AS (SELECT case_id FROM cases WHERE case_id=$1 FOR UPDATE), last_event AS (SELECT e.* FROM events e JOIN locked l ON l.case_id=e.case_id WHERE e.case_id=$1 ORDER BY e.event_id DESC LIMIT 1), inserted AS (INSERT INTO events(case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE NOT EXISTS (SELECT 1 FROM last_event WHERE kind=$3 AND actor=$4 AND COALESCE(agent_id,'')=COALESCE($5,'') AND COALESCE(status,'')=COALESCE($6,'') AND regexp_replace(COALESCE(status_message,''),'\\s+',' ','g')=regexp_replace(COALESCE($7,''),'\\s+',' ','g') AND regexp_replace(COALESCE(handoff_message,''),'\\s+',' ','g')=regexp_replace(COALESCE($8,''),'\\s+',' ','g') AND COALESCE(task_id,'')=COALESCE($2,'')) RETURNING event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at) SELECT *,false AS idempotent FROM inserted UNION ALL SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at,true AS idempotent FROM last_event WHERE NOT EXISTS (SELECT 1 FROM inserted)";params=[caseId,s(raw.task_id),s(raw.kind),s(raw.actor),raw.agent_id||null,raw.status||null,raw.status_message||null,raw.handoff_message||null,j(raw.payload)];}
-else if(op==='list_events'){query='SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at FROM events WHERE case_id=$1 AND event_id>$2 ORDER BY event_id ASC';params=[caseId,Number(raw.after_seq||0)];}
-else if(op==='snapshot'){query=`SELECT (SELECT jsonb_build_object('case_id',case_id,'state',state,'status',status,'updated_at',updated_at) FROM cases WHERE case_id=$1) AS case_row, COALESCE((SELECT jsonb_agg(to_jsonb(e) ORDER BY e.event_id) FROM (SELECT event_id,case_id,task_id,kind,actor,agent_id,status,status_message,handoff_message,payload,created_at FROM events WHERE case_id=$1 AND event_id>$2 ORDER BY event_id ASC) e),'[]'::jsonb) AS events`;params=[caseId,Number(raw.after_seq||0)];}
-else if(op==='append_error'){query='INSERT INTO error_traces(case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING error_id,case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot,created_at';params=[raw.case_id||null,raw.execution_id||null,raw.workflow_name||null,raw.node_name||null,raw.error_message||null,raw.error_type||null,raw.stack||null,j(raw.input_snapshot)];}
-else if(op==='list_errors'){query='SELECT error_id,case_id,execution_id,workflow_name,node_name,error_message,error_type,stack,input_snapshot,created_at FROM error_traces WHERE case_id=$1 ORDER BY error_id ASC';params=[caseId];}
-else if(op==='record_execution'){query='INSERT INTO executions(execution_id,case_id,workflow_name) VALUES($1,$2,$3) ON CONFLICT(execution_id) DO UPDATE SET case_id=EXCLUDED.case_id,workflow_name=EXCLUDED.workflow_name RETURNING execution_id,case_id,workflow_name';params=[s(raw.execution_id),caseId,s(raw.workflow_name||'orchestrator')];}
-else if(op==='case_id_for_execution'){query='SELECT case_id FROM executions WHERE execution_id=$1';params=[s(raw.execution_id)];}
-else if(op==='list_agents'){query="""
-    + json.dumps(list_agents_sql())
-    + r""";}
-else if(op==='upsert_agent'){const r=raw.row||{};if(!s(r.agent_id).trim()) throw new Error('row.agent_id is required');query="""
-    + json.dumps(upsert_agent_sql())
-    + r""";params="""
-    + _upsert_params_js()
-    + r""";}
-else if(op==='artifact_put'){query="INSERT INTO mas_artifacts(case_id,artifact_id,filename,mime_type,content,updated_at) VALUES($1,$2,$3,$4,decode($5,'base64'),now()) ON CONFLICT(case_id,artifact_id) DO UPDATE SET filename=EXCLUDED.filename,mime_type=EXCLUDED.mime_type,content=EXCLUDED.content,updated_at=now() RETURNING case_id,artifact_id,filename,mime_type,octet_length(content)::bigint AS bytes";params=[caseId,artifactId,s(raw.filename||artifactId).slice(0,512),s(raw.mime_type||'application/octet-stream').slice(0,255),s(raw.content_base64)];}
-else if(op==='artifact_get'){query="SELECT case_id,artifact_id,filename,mime_type,encode(content,'base64') AS content_base64,octet_length(content)::bigint AS bytes FROM mas_artifacts WHERE case_id=$1 AND artifact_id=$2";params=[caseId,artifactId];}
-return {json:{...common,query,params}};
-}
-const topOp=String(incoming.operation||'').trim();
-if(topOp==='batch'){
-  const calls=Array.isArray(incoming.calls)?incoming.calls.slice(0,16):[];
-  if(!calls.length) throw new Error('batch requires calls');
-  const batchable=new Set(['create_case','get_case','update_case','append_event','snapshot','append_error','record_execution','case_id_for_execution','upsert_agent','artifact_put','artifact_get']);
-  return calls.map((c,i)=>{
-    const item=c&&typeof c==='object'?c:{};
-    const innerOp=String(item.operation||'').trim();
-    if(!batchable.has(innerOp)) throw new Error('batch only supports single-row operations');
-    const built=buildItem(item);
-    built.json.batch=true;
-    built.json.batch_index=i;
-    return built;
-  });
-}
-return [buildItem(incoming)];
-"""
-)
-
-FORMAT_JS = r"""function parseMaybe(v){
-  if(v==null||v==='') return v;
-  if(typeof v==='string'){try{return JSON.parse(v);}catch(_){return v;}}
-  return v;
-}
-function nonemptyRow(r){
-  return !!(r && typeof r==='object' && !Array.isArray(r) && Object.keys(r).length);
-}
-function isEchoedRequest(r){
-  return !!(r && r.query!=null && r.params!=null && r.operation);
-}
-function dataRows(items){
-  return items.map(x=>x.json||{}).filter(r=>nonemptyRow(r)&&!isEchoedRequest(r));
-}
-function formatOne(req, rows){
-  const op=req.operation;
-  let result;
-  if(op==='list_cases') result=rows;
-  else if(op==='list_events') result=rows;
-  else if(op==='list_errors') result=rows;
-  else if(op==='list_agents') result=rows;
-  else if(op==='case_id_for_execution') result=rows[0]?.case_id||null;
-  else if(op==='artifact_get') result=rows[0]?{found:true,...rows[0]}:{found:false,case_id:req.case_id,artifact_id:req.artifact_id};
-  else if(op==='schema'||op==='wipe') result={schema_ok:true,wiped:req.wiped===true};
-  else if(op==='snapshot'){
-    const row=rows[0]||{};
-    result={case:parseMaybe(row.case_row)||null,events:parseMaybe(row.events)||[]};
-    if(!Array.isArray(result.events)) result.events=[];
-  }
-  else result=rows[0]||{};
-  return result;
-}
-function itemIndex(item, fallback){
-  const p=item.pairedItem;
-  if(typeof p==='number') return p;
-  if(p&&typeof p.item==='number') return p.item;
-  if(typeof item.json?.batch_index==='number') return item.json.batch_index;
-  return fallback;
-}
-const prepared=$('Normalize control-plane request').all().map(i=>i.json||{});
-const incoming=$input.all();
-const grouped=new Map();
-incoming.forEach((item,i)=>{
-  const row=item.json||{};
-  if(!nonemptyRow(row)||isEchoedRequest(row)) return;
-  const idx=itemIndex(item, prepared.length===1?0:i);
-  if(!grouped.has(idx)) grouped.set(idx, []);
-  grouped.get(idx).push(row);
-});
-if(prepared.length===1 && !prepared[0].batch){
-  const rows=dataRows(incoming);
-  const result=formatOne(prepared[0], rows);
-  return [{json:{ok:true,operation:prepared[0].operation,result}}];
-}
-const results=prepared.map((req,i)=>formatOne(req, grouped.get(i)||[]));
-return [{json:{ok:true,operation:'batch',result:results}}];
-"""
-
-
-def node(nid: str, name: str, ntype: str, ver: float | int, pos: tuple[int, int], params: dict, **extra) -> dict:
-    out = {"parameters": params, "id": nid, "name": name, "type": ntype, "typeVersion": ver, "position": list(pos)}
-    out.update(extra)
-    return out
-
-
-def build_workflow() -> dict:
-    nodes = [
-        node(
-            "3897f8af-b2a0-5ba7-9674-e2a3938e5def",
-            "edit after import",
-            "n8n-nodes-base.stickyNote",
-            1,
-            (-40, -380),
-            {"content": STICKY, "height": 360, "width": 440, "color": 1},
-        ),
-        node(
-            "mas-control-plane-webhook-v1",
-            "MAS control-plane webhook",
-            "n8n-nodes-base.webhook",
-            2.1,
-            (0, 0),
-            {"httpMethod": "POST", "path": "mas-control-plane", "authentication": "headerAuth", "responseMode": "responseNode", "options": {}},
-            webhookId="mas-control-plane-proxy-v1",
-            credentials={"httpHeaderAuth": {"id": "REPLACE_IN_UI", "name": "REPLACE: MAS Control Plane Header Auth"}},
-        ),
-        node(
-            "mas-control-plane-flags-v1",
-            "Operator flags",
-            "n8n-nodes-base.set",
-            3.4,
-            (280, 0),
-            {
-                "assignments": {"assignments": [{"id": "mas-control-plane-clear-flag", "name": "clear", "value": False, "type": "boolean"}]},
-                "options": {},
-                "includeOtherFields": True,
-            },
-        ),
-        node("mas-control-plane-normalize-v1", "Normalize control-plane request", "n8n-nodes-base.code", 2, (560, 0), {"jsCode": NORMALIZE_JS}),
-        node(
-            "mas-control-plane-postgres-v1",
-            "Execute control-plane SQL",
-            "n8n-nodes-base.postgres",
-            2.6,
-            (840, 0),
-            {
-                "operation": "executeQuery",
-                "query": "={{ $json.query }}",
-                "options": {"queryReplacement": "={{ $json.params }}", "queryBatching": "independently", "largeNumbersOutput": "text", "replaceEmptyStrings": False},
-            },
-            alwaysOutputData=True,
-            credentials={"postgres": {"id": "REPLACE_IN_UI", "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"}},
-        ),
-        node("mas-control-plane-format-v1", "Format control-plane response", "n8n-nodes-base.code", 2, (1120, 0), {"jsCode": FORMAT_JS}),
-        node(
-            "mas-control-plane-response-v1",
-            "Respond control-plane",
-            "n8n-nodes-base.respondToWebhook",
-            1.4,
-            (1400, 0),
-            {"respondWith": "json", "responseBody": "={{ $json }}", "options": {}},
-        ),
-    ]
-    connections = {
-        "MAS control-plane webhook": {"main": [[{"node": "Operator flags", "type": "main", "index": 0}]]},
-        "Normalize control-plane request": {"main": [[{"node": "Execute control-plane SQL", "type": "main", "index": 0}]]},
-        "Execute control-plane SQL": {"main": [[{"node": "Format control-plane response", "type": "main", "index": 0}]]},
-        "Format control-plane response": {"main": [[{"node": "Respond control-plane", "type": "main", "index": 0}]]},
-        "Operator flags": {"main": [[{"node": "Normalize control-plane request", "type": "main", "index": 0}]]},
-    }
-    return {
-        "id": WF_ID,
-        "name": WF_NAME,
-        "active": False,
-        "isArchived": False,
-        "settings": {
-            "executionOrder": "v1",
-            "saveDataSuccessExecution": "none",
-            "saveDataErrorExecution": "all",
-            "saveManualExecutions": True,
-            "saveExecutionProgress": False,
-        },
-        "nodes": nodes,
-        "connections": connections,
-        "pinData": {
-            "MAS control-plane webhook": [
-                {"json": {"body": {"operation": "schema"}, "webhookUrl": "http://localhost:5678/webhook-test/mas-control-plane"}}
-            ]
-        },
-    }
-
-
-SQL_HEADER_02 = """-- Additive MAS control plane. Safe on a live n8n database: CREATE IF NOT EXISTS only.
--- Never DROP n8n tables. postgres-init runs only on a fresh volume. Lab also applies this via psql.
--- Generated by n8n/templates/generate_mas_control_plane_proxy.py (agent_registry from mas_agent_registry.py) — do not edit by hand.
-"""
-
-SQL_02_TABLES = """
-CREATE TABLE IF NOT EXISTS cases (
-    case_id TEXT PRIMARY KEY,
-    state JSONB NOT NULL DEFAULT '{}'::jsonb,
-    status TEXT NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT cases_status_check CHECK (
-        status IN (__CASE_STATUSES__)
-    )
-);
-
--- Existing databases: re-create the CHECK so new statuses (waiting_agent) are accepted.
-ALTER TABLE cases DROP CONSTRAINT IF EXISTS cases_status_check;
-ALTER TABLE cases ADD CONSTRAINT cases_status_check CHECK (
-    status IN (__CASE_STATUSES__)
-);
-
-CREATE TABLE IF NOT EXISTS events (
-    event_id BIGSERIAL PRIMARY KEY,
-    case_id TEXT NOT NULL REFERENCES cases (case_id) ON DELETE CASCADE,
-    task_id TEXT,
-    kind TEXT NOT NULL,
-    actor TEXT NOT NULL,
-    agent_id TEXT,
-    status TEXT,
-    status_message TEXT,
-    handoff_message TEXT,
-    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS events_case_id_event_id_idx ON events (case_id, event_id);
-
-CREATE TABLE IF NOT EXISTS error_traces (
-    error_id BIGSERIAL PRIMARY KEY,
-    case_id TEXT,
-    execution_id TEXT,
-    workflow_name TEXT,
-    node_name TEXT,
-    error_message TEXT,
-    error_type TEXT,
-    stack TEXT,
-    input_snapshot JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS error_traces_case_id_idx ON error_traces (case_id);
-CREATE INDEX IF NOT EXISTS error_traces_execution_id_idx ON error_traces (execution_id);
-
-CREATE TABLE IF NOT EXISTS executions (
-    execution_id TEXT PRIMARY KEY,
-    case_id TEXT,
-    workflow_name TEXT,
-    started_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS executions_case_id_idx ON executions (case_id);
-
-""".replace("__CASE_STATUSES__", ", ".join(f"'{s}'" for s in CASE_STATUSES))
-
-
-def sql_02() -> str:
-    registry = create_table_sql(pretty=True)
-    seed = seed_rows_sql(("excel_extractor", "calculation_agent"), mode="update", pretty=True)
-    return SQL_HEADER_02 + SQL_02_TABLES + registry + "\n\n" + seed + "\n"
-
-
-def sql_03() -> str:
-    return (
-        "-- Register Schedule Builder after the Python service exists.\n"
-        "-- Generated by n8n/templates/generate_mas_control_plane_proxy.py — do not edit by hand.\n\n"
-        + seed_rows_sql(("schedule_builder",), mode="update", pretty=True)
-        + "\n"
-    )
-
-
-def sql_activity() -> str:
-    return (
-        "-- MAS control plane schema for mas-activity-service (contract copy).\n"
-        "-- Executed through MAS — Control Plane Proxy (`schema`), never directly from Python.\n"
-        "-- Generated from postgres-init/02-mas-control-plane.sql + 03-schedule-builder-registry.sql.\n\n"
-        + sql_02()
-        + "\n"
-        + sql_03()
-    )
-
-
-def main() -> None:
-    wf = build_workflow()
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(wf, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    SQL_02.write_text(sql_02(), encoding="utf-8")
-    SQL_03.write_text(sql_03(), encoding="utf-8")
-    SQL_ACTIVITY.write_text(sql_activity(), encoding="utf-8")
-    # Activity's in-memory registry (no Control Plane Proxy configured — tests, offline harness) must be
-    # the same rows the database gets, so the seed is exported as data, not retyped in Python.
-    SEED_JSON.write_text(json.dumps(seed_as_python(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(
-        f"wrote {OUT} ({len(wf['nodes'])} nodes) + {SQL_02.name}, {SQL_03.name}, "
-        f"{SQL_ACTIVITY.relative_to(REPO)}, {SEED_JSON.relative_to(REPO)}"
-    )
-
-
-if __name__ == "__main__":
-    main()
-
-===END_FILE===
-===BEGIN_FILE===	n8n/templates/generate_mas_error_traces.py	7028	utf8
-#!/usr/bin/env python3
-"""Generate native n8n Error Trigger → error_traces + system.node_error."""
-
-from __future__ import annotations
-
-import json
-import uuid
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "workflows/core/mas-error-traces.workflow.json"
-WF_ID = "63116836-8724-595e-bc5e-dd6e743e2586"
-WF_NAME = "Error — MAS Node Traces"
-PG = {"postgres": {"id": "REPLACE_IN_UI", "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"}}
-
-
-def nid(name: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"mas-error-traces:{name}"))
-
-
-def node(name, ntype, ver, pos, params, **extra):
-    out = {
-        "parameters": params,
-        "id": nid(name),
-        "name": name,
-        "type": ntype,
-        "typeVersion": ver,
-        "position": list(pos),
-    }
-    out.update(extra)
-    return out
-
-
-def code(name, pos, js):
-    return node(name, "n8n-nodes-base.code", 2, pos, {"jsCode": js})
-
-
-def postgres(name, pos, query, params_expr):
-    return node(
-        name,
-        "n8n-nodes-base.postgres",
-        2.6,
-        pos,
-        {
-            "operation": "executeQuery",
-            "query": query,
-            "options": {
-                "queryReplacement": params_expr,
-                "queryBatching": "single",
-                "largeNumbersOutput": "text",
-                "replaceEmptyStrings": False,
-            },
-        },
-        credentials=PG,
-        alwaysOutputData=True,
-    )
-
-
-def connect(c, src, dst, out="main", si=0, tin="main", ti=0):
-    groups = c.setdefault(src, {})
-    outputs = groups.setdefault(out, [])
-    while len(outputs) <= si:
-        outputs.append([])
-    outputs[si].append({"node": dst, "type": tin, "index": ti})
-
-
-NORMALIZE = r"""
-const root=$json||{};
-const exec=root.execution&&typeof root.execution==='object'?root.execution:(root);
-const error=exec.error&&typeof exec.error==='object'?exec.error:(root.error||{});
-const executionId=String(exec.id||exec.executionId||root.execution_id||'');
-const executionUrl=String(exec.url||root.execution_url||'');
-const wfObj=root.workflow&&typeof root.workflow==='object'?root.workflow:(exec.workflow&&typeof exec.workflow==='object'?exec.workflow:{});
-const workflowName=String(wfObj.name||exec.workflowName||root.workflow_name||'');
-const workflowId=String(wfObj.id||root.workflow_id||'');
-const errNode=error.node&&typeof error.node==='object'?error.node:null;
-const nodeName=String(exec.lastNodeExecuted||(errNode?errNode.name:error.node)||root.node_name||'');
-const nodeType=String((errNode&&errNode.type)||'');
-const message=String(error.message||root.message||'n8n node failed');
-const errorType=String(error.name||error.type||'Error');
-const stack=String(error.stack||'');
-return [{json:{
-  execution_id:executionId,
-  execution_url:executionUrl,
-  workflow_name:workflowName,
-  workflow_id:workflowId,
-  node_name:nodeName,
-  node_type:nodeType,
-  error_message:message.slice(0,4000),
-  error_type:errorType.slice(0,200),
-  stack:stack.slice(0,8000),
-  lookup_sql_parameters:[executionId],
-}}];
-"""
-
-ATTACH = r"""
-const n=$('Normalize n8n error trigger').first().json||{};
-const look=$json||{};
-const caseId=String(look.case_id||n.case_id||'').trim()||null;
-return [{json:{
-  ...n,
-  case_id:caseId,
-  trace_sql_parameters:[caseId, n.execution_id, n.workflow_name, n.node_name, n.error_message, n.error_type, n.stack, JSON.stringify({execution_id:n.execution_id,execution_url:n.execution_url,workflow_id:n.workflow_id,node_type:n.node_type})],
-}}];
-"""
-
-EVENT = r"""
-const x=$json;
-const errorId=x.error_id||x.errorId||null;
-if(!x.case_id) return [{json:{...x, skip_event:true, event_sql_parameters:null}}];
-return [{json:{
-  ...x,
-  skip_event:false,
-  event_sql_parameters:[
-    x.case_id,
-    null,
-    'system.node_error',
-    'n8n',
-    null,
-    'error',
-    `Упал узел ${x.node_name||'unknown'}`,
-    null,
-    /* Developer log («Лог»): enough to read the failure without opening Postgres; the full stack stays in error_traces. */
-    JSON.stringify({error_id:errorId, execution_id:x.execution_id, execution_url:x.execution_url, workflow_id:x.workflow_id, workflow_name:x.workflow_name, node_name:x.node_name, node_type:x.node_type, error_type:x.error_type, error_message:String(x.error_message||'').slice(0,600), stack:String(x.stack||'').slice(0,1500)})
-  ]
-}}];
-"""
-
-
-def main() -> None:
-    nodes = [
-        node("Error Trigger", "n8n-nodes-base.errorTrigger", 1, (0, 0), {}),
-        code("Normalize n8n error trigger", (240, 0), NORMALIZE),
-        postgres(
-            "Lookup case by execution",
-            (480, 0),
-            "SELECT case_id FROM executions WHERE execution_id = $1",
-            "={{ $json.lookup_sql_parameters }}",
-        ),
-        code("Attach case_id", (720, 0), ATTACH),
-        postgres(
-            "Insert error_traces",
-            (960, 0),
-            "INSERT INTO error_traces (case_id, execution_id, workflow_name, node_name, error_message, error_type, stack, input_snapshot) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING error_id, case_id",
-            "={{ $json.trace_sql_parameters }}",
-        ),
-        code("Prepare system.node_error", (1200, 0), EVENT),
-        postgres(
-            "Insert system.node_error event",
-            (1440, 0),
-            "INSERT INTO events(case_id, task_id, kind, actor, agent_id, status, status_message, handoff_message, payload) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb WHERE $1 IS NOT NULL",
-            "={{ $json.event_sql_parameters }}",
-        ),
-        code(
-            "Format error trace ack",
-            (1680, 0),
-            "const x=$('Attach case_id').first().json||{};return[{json:{contract:'mas_error_trace_ack',case_id:x.case_id,execution_id:x.execution_id,node_name:x.node_name}}];",
-        ),
-    ]
-    connections = {}
-    connect(connections, "Error Trigger", "Normalize n8n error trigger")
-    connect(connections, "Normalize n8n error trigger", "Lookup case by execution")
-    connect(connections, "Lookup case by execution", "Attach case_id")
-    connect(connections, "Attach case_id", "Insert error_traces")
-    connect(connections, "Insert error_traces", "Prepare system.node_error")
-    connect(connections, "Prepare system.node_error", "Insert system.node_error event")
-    connect(connections, "Insert system.node_error event", "Format error trace ack")
-
-    wf = {
-        "id": WF_ID,
-        "name": WF_NAME,
-        "active": False,
-        "isArchived": False,
-        "nodes": nodes,
-        "connections": connections,
-        "settings": {"executionOrder": "v1", "callerPolicy": "workflowsFromSameOwner", "errorWorkflow": ""},
-        "meta": {"templateCredsSetupCompleted": True, "targetN8nVersion": "2.30.8"},
-        "tags": [],
-        "pinData": {},
-        "versionId": str(uuid.uuid4()),
-    }
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(wf, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"wrote {OUT} ({len(nodes)} nodes)")
-
-
-if __name__ == "__main__":
-    main()
-
-===END_FILE===
-===BEGIN_FILE===	n8n/templates/generate_mas_health_check.py	25895	utf8
-#!/usr/bin/env python3
-"""Generate Form — MAS Deployment Health Check (n8n 2.30.8, UI-only field).
-
-Every probe URL comes from **MAS — Runtime Config** (the same Set the
-Orchestrator / Excel / Schedule agents use). The form therefore checks exactly
-the addresses the engineer typed once after import — no second copy of URLs,
-no Docker DNS names, no lab-only probes (n8n-runners, Data Tables).
-
-Probes:
-  * GET  {activity_base_url}/health  and /ready   (Windows → n8n direction too)
-  * GET  {excel_tools_url}/health, {schedule_service_url}/health, {math_url}/health
-  * POST {orchestrator_step_url}                {"action":"probe"}        (Header Auth)
-  * POST {webhook base}/mas-control-plane       {"operation":"list_agents"} (Header Auth)
-
-Regenerate:  python3 n8n/templates/generate_mas_health_check.py
-"""
-
-from __future__ import annotations
-
-import json
-import uuid
-from pathlib import Path
-
-from agents import ALL as AGENT_SPECS
-
-from generate_mas_runtime_config import PLACEHOLDER as RUNTIME_PLACEHOLDER
-from generate_mas_runtime_config import WF_NAME as RUNTIME_WF_NAME
-from generate_mas_runtime_config import runtime_config_execute_params
-
-ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "workflows/core/mas-deployment-health-check.workflow.json"
-WF_ID = "mas-deployment-health-check-v1"
-WF_NAME = "Form — MAS Deployment Health Check"
-FORM_PATH = "mas-deployment-health-check"
-CONTRACT_VERSION = "mas_deployment_health_check/v2.0"
-ERROR_WORKFLOW_ID = "e1f0a7c2-9b4d-5e8f-a123-4567890abcde"
-
-# Same Header Auth credential as Orchestrator webhook / Control Plane Proxy webhook.
-HDR = {
-    "httpHeaderAuth": {
-        "id": "REPLACE_IN_UI",
-        "name": "REPLACE: MAS webhook Header Auth (same as Orchestrator / Control Plane Proxy)",
-    }
-}
-
-# Agent services come from the specs (n8n/templates/agents/*.py): one probe per service URL in Runtime Config.
-# Agents seeded ``enabled=False`` (the demo/template agent) are optional: not probed, not required in the registry.
-ENABLED_SPECS = tuple(spec for spec in AGENT_SPECS if spec.enabled)
-AGENT_SERVICES = tuple((spec.service_label, spec.service_url_key, spec.health_url_key, spec.lab_host) for spec in ENABLED_SPECS if spec.service_url_key)
-SERVICE_PROBES = (
-    # node name, urls.<key>, human label
-    ("Probe Activity /health", "activity_health", "Activity"),
-    ("Probe Activity /ready", "activity_ready", "Activity"),
-    *[(f"Probe {label} /health", health_key, label) for label, _url_key, health_key, _host in AGENT_SERVICES],
-)
-RUNTIME_KEYS = ["activity_base_url", *[url_key for _l, url_key, _h, _host in AGENT_SERVICES], "orchestrator_step_url"]
-LAB_HOSTS = ["mas-activity", *[host for _l, _u, _h, host in AGENT_SERVICES]]
-REQUIRED_AGENTS = [spec.agent_id for spec in ENABLED_SPECS]
-ORCH_PROBE = "Probe Orchestrator webhook"
-PROXY_PROBE = "Probe Control Plane Proxy webhook"
-
-
-def _fill(js: str) -> str:
-    """Inline the spec-derived lists into the Code nodes (n8n Code nodes cannot import anything)."""
-    health_urls = "\n".join(f"  {hk}: join(runtime.{uk}, '/health')," for _l, uk, hk, _h in AGENT_SERVICES)
-    health_checks = "\n".join(
-        f"svc('Probe {label} /health', '{label} /health', urls.{hk}, (b) => b && (b.status === 'ok' || b.ok === true));"
-        for label, _u, hk, _h in AGENT_SERVICES
-    )
-    version_rows = "\n".join(
-        f"    ['{label}', versionOf(readHttp('Probe {label} /health').body)],"
-        for label, _u, _h, _host in AGENT_SERVICES
-    )
-    return (
-        js.replace("__RUNTIME_KEYS__", json.dumps(RUNTIME_KEYS))
-        .replace("__LAB_HOSTS__", json.dumps(LAB_HOSTS))
-        .replace("__REQUIRED_AGENTS__", json.dumps(REQUIRED_AGENTS))
-        .replace("__AGENT_HEALTH_URLS__", health_urls)
-        .replace("__AGENT_HEALTH_CHECKS__", health_checks)
-        .replace("__AGENT_VERSION_ROWS__", version_rows)
-    )
-
-
-def nid(name: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"mas-health-check:{name}"))
-
-
-def node(name, ntype, ver, pos, params, **extra):
-    out = {
-        "parameters": params,
-        "id": nid(name),
-        "name": name,
-        "type": ntype,
-        "typeVersion": ver,
-        "position": list(pos),
-    }
-    out.update(extra)
-    return out
-
-
-def code(name, pos, js):
-    return node(name, "n8n-nodes-base.code", 2, pos, {"jsCode": js})
-
-
-def http_get(name, pos, url_key):
-    return node(
-        name,
-        "n8n-nodes-base.httpRequest",
-        4.2,
-        pos,
-        {
-            "method": "GET",
-            "url": f"={{{{ $('Prepare health probes').first().json.urls.{url_key} }}}}",
-            "options": {
-                "timeout": 8000,
-                "response": {
-                    "response": {"neverError": True, "responseFormat": "autodetect", "fullResponse": True}
-                },
-            },
-        },
-        continueOnFail=True,
-        alwaysOutputData=True,
-    )
-
-
-def http_post_auth(name, pos, url_key, body_key):
-    return node(
-        name,
-        "n8n-nodes-base.httpRequest",
-        4.2,
-        pos,
-        {
-            "method": "POST",
-            "url": f"={{{{ $('Prepare health probes').first().json.urls.{url_key} }}}}",
-            "authentication": "genericCredentialType",
-            "genericAuthType": "httpHeaderAuth",
-            "sendHeaders": True,
-            "headerParameters": {"parameters": [{"name": "Content-Type", "value": "application/json"}]},
-            "sendBody": True,
-            "specifyBody": "json",
-            "jsonBody": f"={{{{ JSON.stringify($('Prepare health probes').first().json.bodies.{body_key}) }}}}",
-            "options": {
-                "timeout": 20000,
-                "response": {
-                    "response": {"neverError": True, "responseFormat": "autodetect", "fullResponse": True}
-                },
-            },
-        },
-        credentials=HDR,
-        continueOnFail=True,
-        alwaysOutputData=True,
-    )
-
-
-def connect(c, src, dst, out="main", si=0, tin="main", ti=0):
-    groups = c.setdefault(src, {})
-    outputs = groups.setdefault(out, [])
-    while len(outputs) <= si:
-        outputs.append([])
-    outputs[si].append({"node": dst, "type": tin, "index": ti})
-
-
-PREPARE = r"""
-/* All probe URLs come from MAS — Runtime Config (node "Runtime endpoints"). */
