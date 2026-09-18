@@ -39,6 +39,8 @@ assert.deepEqual(fields, {
   excel_tools_url: 'http://excel-tools:8000',
   schedule_service_url: 'http://schedule-builder:8090',
   math_url: 'http://math-service:8100',
+  // tNav Cluster Agent (tnav-cluster-service): the field stays while the registry row waits for cluster credentials.
+  tnav_cluster_url: 'http://tnav-cluster:8400',
   // Template agent (agents-template/demo_agent): the field stays even while the registry row is disabled.
   demo_agent_url: 'http://demo-agent:8300',
   orchestrator_step_url: 'http://127.0.0.1:5678/webhook/mas-orchestrator-step',

@@ -80,6 +80,44 @@ services:
     networks:
       - backend
       - egress
+  # tNav Cluster Agent + мок ГД-кластера в одном контейнере: сервис ходит к моку по SSH (paramiko,
+  # exec + SFTP) — тем же транспортом, что в поле. Мок поднимается первым, дерево моделей — /cluster.
+  tnav-cluster:
+    image: python:3.11-slim
+    command: >
+      sh -c "pip install -r requirements.txt &&
+             python3 mock_cluster/lab_cluster.py &
+             sleep 6 &&
+             python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8400"
+    working_dir: /app
+    volumes:
+      - ./tnav-cluster-service:/app
+      - ./mas-agent-kit:/mas-agent-kit:ro
+      - ./VERSION:/app/VERSION:ro
+    environment:
+      - ACTIVITY_BASE_URL=${ACTIVITY_BASE_URL:-http://mas-activity:8200}
+      - TNAV_SESSIONS_DIR=/tmp/tnav-sessions
+      # Лаборатория: мок кластера в этом же контейнере, доступ по паролю.
+      - TNAV_TRANSPORT=ssh
+      - TNAV_SSH_HOST=127.0.0.1
+      - TNAV_SSH_PORT=2222
+      - TNAV_SSH_USER=re
+      - TNAV_SSH_PASSWORD=cluster-pass
+      - TNAV_CLUSTER_ROOT=/cluster
+      - TNAV_MOCK_ROOT=/cluster
+      - TNAV_MOCK_SSH_PORT=2222
+      # Заглушка tNavigator вместо боевого /opt/tNavigator/tNavigator-con; {model} подставляет агент.
+      - TNAV_CLI_COMMAND=python3 /app/mock_cluster/tnav_con_mock.py --cpu-num=2 --log-lang=ru --dump-res {model}
+      - TNAV_MOCK_SECONDS=${TNAV_MOCK_SECONDS:-12}
+      - TNAV_MOCK_FORECAST_DATES=${TNAV_MOCK_FORECAST_DATES:-8}
+      - TNAV_POLL_SECONDS=${TNAV_POLL_SECONDS:-3}
+      - TNAV_PROGRESS_EVERY_S=${TNAV_PROGRESS_EVERY_S:-10}
+      - TNAV_MAX_WAIT_HOURS=${TNAV_MAX_WAIT_HOURS:-1}
+    ports:
+      - 127.0.0.1:${TNAV_CLUSTER_HOST_PORT:-8400}:8400
+    networks:
+      - backend
+      - egress
   mas-activity:
     image: python:3.11-slim
     restart: unless-stopped

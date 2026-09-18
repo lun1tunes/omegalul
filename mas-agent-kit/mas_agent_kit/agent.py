@@ -26,8 +26,10 @@ Subclass, set ``agent_id`` / ``store`` / ``tools``, implement ``open_session`` a
 
 from __future__ import annotations
 
+import logging
 import os
 import time
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
@@ -42,6 +44,8 @@ from .result import agent_result, needs_input
 from .session import SessionStore
 from .tools import ToolRegistry
 from .view import tool_model_view
+
+logger = logging.getLogger(__name__)
 
 #: ``next_step`` the model reads after a tool fixed the session result — who acts next, so it stops.
 RESULT_NEXT_STEP: dict[str, str] = {
@@ -235,18 +239,38 @@ def agent_router(agent: AgentService, *, dependencies: list[Any] | None = None) 
     return router
 
 
-def create_agent_app(agent: AgentService, *, title: str = "", version: str = "0.1.0", dependencies: list[Any] | None = None) -> FastAPI:
-    """FastAPI app with the agent routes and ``GET /health`` (what the Health Check form probes)."""
+def create_agent_app(
+    agent: AgentService,
+    *,
+    title: str = "",
+    version: str = "0.1.0",
+    dependencies: list[Any] | None = None,
+    extra_health: Callable[[], dict[str, Any]] | None = None,
+) -> FastAPI:
+    """FastAPI app with the agent routes and ``GET /health`` (what the Health Check form probes).
+
+    ``extra_health`` adds service-specific fields to ``/health`` — an agent that depends on an external
+    system (cluster over SSH, licence server) reports there what is missing instead of refusing to start.
+    """
     app = FastAPI(title=title or f"{agent.agent_id}-service", version=version)
 
     @app.get("/health")
     def health() -> dict[str, Any]:
-        return {
+        body = {
             "ok": True,
             "agent_id": agent.agent_id,
             "tools": agent.tools.names,
             "mas_version": read_mas_version(),
         }
+        if extra_health is not None:
+            try:
+                extra = extra_health()
+            except Exception:  # noqa: BLE001 — a broken probe must not hide the service
+                logger.exception("extra_health of %s failed", agent.agent_id)
+                extra = {"health_detail": "unavailable"}
+            if isinstance(extra, dict):
+                body.update(extra)
+        return body
 
     app.include_router(agent_router(agent, dependencies=dependencies))
     return app

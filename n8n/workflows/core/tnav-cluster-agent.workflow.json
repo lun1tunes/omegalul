@@ -1,0 +1,1332 @@
+{
+  "id": "7aedebc1-4f6e-5ec2-872c-9cc7968e58bc",
+  "name": "Agent — tNav Cluster Agent",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## edit after import\n\n**Agent — tNav Cluster Agent** — один LLM + FastAPI tools (сгенерировано из `agents/tnav_cluster.py`).\n\n1. Bind **Qwen** credential on **tNav Cluster Agent Agent chat** (тот же OpenAI-compatible, что у Decision chat оркестратора).\n2. Bind **Runtime configuration** → `MAS — Runtime Config` (поле `tnav_cluster_url` = URL сервиса).\n3. Bind **Call Knowledge Retrieval** → `MAS — Knowledge Retrieval` (срез `specialist_template`).\n4. Оркестратор вызывает этот workflow через универсальный `Call agent (n8n)` по id из `agent_registry.invoke`. После импорта через UI id меняется — впишите новый id (из URL этого workflow) в `MAS — Runtime Config` → `agent_workflow_ids`.\n5. Settings → **Error workflow** = `Error — MAS Node Traces` (после импорта через UI ссылка по id теряется): упавший узел попадёт в лог кейса (Activity → Режим разработчика → Лог).\n\nИнструмент выбирает LLM по задаче (нет regex-роутера). Вопрос инженеру — только `ask_engineer` прозой с вариантами; ошибки аргументов возвращаются LLM, не человеку. Результат читается из GET /sessions/{id}/result, сессия закрывается POST /sessions/{id}/close.",
+        "height": 360,
+        "width": 480,
+        "color": 1
+      },
+      "id": "c9e5f4ce-2cd4-570a-9a0f-a2cf691c55b5",
+      "name": "edit after import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -675
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\"agent_task\": {\"case_id\": \"CASE-example\", \"task_id\": \"TASK-001\", \"agent_id\": \"tnav_cluster\", \"objective\": \"Примени новое расписание к модели на кластере и запусти расчёт\", \"inputs\": {}, \"context\": {}}}"
+      },
+      "id": "4cca24ae-7146-5d15-941f-293acfd1614d",
+      "name": "When executed by another workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_MAS_RUNTIME_CONFIG_IN_UI",
+          "mode": "list",
+          "cachedResultName": "MAS — Runtime Config"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "39c1e729-08fa-524e-9410-1976cafa7b10",
+      "name": "Runtime configuration",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const incoming=(()=>{try{return $('When executed by another workflow').first().json||{}}catch{return $json||{}}})();\nconst root=incoming&&typeof incoming==='object'?incoming:{};\nconst body=root.body&&typeof root.body==='object'?root.body:root;\nlet task=body.agent_task&&typeof body.agent_task==='object'?body.agent_task:(body.case_id||body.task_id||body.objective?body:null);\nif(!task||typeof task!=='object') task={};\n// Contract: agent_task only (retired specialist_packet is not accepted).\ntask.agent_id=\"tnav_cluster\";\ntask.case_id=String(task.case_id||'');\ntask.task_id=String(task.task_id||'');\ntask.objective=String(task.objective||'');\ntask.handoff_message=String(task.handoff_message||'');\ntask.inputs=task.inputs&&typeof task.inputs==='object'?task.inputs:{};\ntask.context=task.context&&typeof task.context==='object'?task.context:{};\nconst cfg=$('Runtime configuration').first().json||{};\nif(!task.inputs.activity_base_url&&cfg.activity_base_url) task.inputs={...task.inputs, activity_base_url:cfg.activity_base_url};\nreturn [{json:{...cfg, agent_task:task, case_id:task.case_id, task_id:task.task_id}}];\n"
+      },
+      "id": "5ad87f00-4de3-5ad9-ad1b-f1d1427c5485",
+      "name": "Normalize cluster task",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.tnav_cluster_url }}/agent-tools/open_session",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.agent_task }}"
+      },
+      "id": "7699f713-b6da-5c86-a3a3-31eafca0ffcd",
+      "name": "Open cluster session",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        840,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "3750d8dc-b86b-5b6c-abc6-6c6fa03a0ec7",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9b2b77f5-e695-5edf-bfe0-4bd646caa708",
+      "name": "Session ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const opened=$json||{};\nconst runtime=(()=>{try{return $('Runtime configuration').first().json||{}}catch{return {}}})();\nconst result=opened.result&&typeof opened.result==='object'?opened.result:{};\nif(typeof opened.ok!=='boolean'){\n  return [{json:{\n    task_id:result.task_id||opened.task_id||'',\n    agent_id:\"tnav_cluster\",\n    status:'failed',\n    message:\"Сервис агента „tNav Cluster Agent“ не отвечает по адресу из настроек среды. Проверьте, что он запущен, и перезапустите задачу.\",\n    data:{},\n    artifacts:{},\n    issues:[{code:'service_unreachable',url:String(runtime[\"tnav_cluster_url\"]||'')}],\n    assumptions:[],\n    requests:[]\n  }}];\n}\nreturn [{json:{\n  task_id:result.task_id||opened.task_id||'',\n  agent_id:\"tnav_cluster\",\n  status:result.status||'needs_input',\n  message:result.message||opened.message||\"Нет задачи для кластерного агента\",\n  data:result.data||{},\n  artifacts:result.artifacts||{},\n  issues:result.issues||[{type:\"missing_objective\"}],\n  assumptions:result.assumptions||[],\n  requests:result.requests||[{question_id:\"Q-cluster\",question:\"Напишите, какую модель считать на кластере и нужно ли применять новое расписание.\",options:[],accepts:{free_text:true,files:[\"inc\"]}}]\n}}];\n"
+      },
+      "id": "28dbc5b6-8786-57c3-8726-c37346c64989",
+      "name": "Format missing cluster",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        85
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize cluster task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: \"agent.accepted\", actor: \"tnav_cluster\", agent_id: \"tnav_cluster\", task_id: $('Normalize cluster task').first().json.agent_task.task_id, status: 'running', status_message: \"Кластерный агент принял задачу\", payload: {source: \"tnav-cluster-agent-workflow\", execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')}}) }}"
+      },
+      "id": "0889d7e2-549c-5064-b2a6-a3fc8c9ed376",
+      "name": "Activity — tNav Cluster Agent accepted",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1400,
+        -85
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Session ready?').first().json||{}; return [{json:x}];"
+      },
+      "id": "28e90cd3-6f90-5092-8808-ae552cfb0e61",
+      "name": "Restore after tNav Cluster Agent accepted",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize cluster task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: \"agent.progress\", actor: \"tnav_cluster\", agent_id: \"tnav_cluster\", task_id: $('Normalize cluster task').first().json.agent_task.task_id, status: 'running', status_message: \"Кластерный агент смотрит модели на гидродинамическом кластере.\", payload: {source: \"tnav-cluster-agent-workflow\", execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')}}) }}"
+      },
+      "id": "9e05da27-6259-596c-9b63-02b8bbb28f87",
+      "name": "Activity — tNav Cluster Agent progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1960,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Restore after tNav Cluster Agent accepted').first().json||{}; return [{json:x}];"
+      },
+      "id": "0c3a6ed7-86e7-593f-adbd-33d384eeb30f",
+      "name": "Restore after tNav Cluster Agent progress",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Format cluster result').first().json||{}; return [{json:x}];"
+      },
+      "id": "fb1ce8de-f780-5cd7-8060-b63ae64b179d",
+      "name": "Restore after tNav Cluster Agent activity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const RAG_TARGET_BASE=\"specialist_template\";\nconst RAG_ACCESS_SCOPE=\"petroleum-engineering\";\nconst RAG_KNOWLEDGE_TYPES=[\"capability_instruction\", \"worked_example\"];\nconst RAG_TOP_K=8;\nconst RAG_TOPICS=[\"specialist\", \"capability\"];\nconst opened=$json||{};\nconst task=$('Normalize cluster task').first().json.agent_task||{};\nconst objective=String(opened.objective||task.objective||'');\nconst handoff=String(opened.handoff_message||task.handoff_message||'');\nconst blob=[objective,handoff].join('\\n');\nconst low=blob.toLowerCase();\n// Retrieval filters from inspect / expected_output (spec JS). Task text is query only.\nconst keyword_families=[];\nconst topics=RAG_TOPICS.slice();\nconst task_patterns=[];\nconst query=blob.trim().replace(/\\b[\\w.-]+\\.(xlsx|xls|xlsm|inc|dev|txt|csv)\\b/gi,' ').replace(/\\s+/g,' ').trim().slice(0,800)||\"specialist_template instruction\";\nconst retrieval_selector={target_base:RAG_TARGET_BASE,knowledge_types:RAG_KNOWLEDGE_TYPES};\nconst schedule_retrieval_request={\n  query,\n  filters:{target_base:RAG_TARGET_BASE,access_scope:RAG_ACCESS_SCOPE,knowledge_types:RAG_KNOWLEDGE_TYPES,keyword_families:[...new Set(keyword_families)].slice(0,6),topics:[...new Set(topics)],task_patterns:[...new Set(task_patterns)]},\n  top_k:RAG_TOP_K\n};\n// The LLM decides which tool fits: task text + what open_session found + what the engineer already answered.\nconst engineerAnswers=Array.isArray(opened.engineer_answers)?opened.engineer_answers:[];\nconst reworkReason=String(opened.rework_reason||(task.inputs&&task.inputs.rework_reason)||'').trim();\nconst planner_input=JSON.stringify({\n  objective,\n  handoff_message:handoff,\n  inspect:opened.inspect||{},\n  engineer_answers:engineerAnswers,\n  ...(reworkReason?{rework_reason:reworkReason}:{}),\n  ...(opened.expected_output&&typeof opened.expected_output==='object'&&Object.keys(opened.expected_output).length?{expected_output:opened.expected_output}:{})\n});\nreturn [{json:{...opened,session_id:opened.session_id,agent_input:planner_input,planner_input,schedule_retrieval_request,retrieval_selector}}];\n"
+      },
+      "id": "b6786289-5845-510d-9b77-358c74c6d9a4",
+      "name": "Prepare AI Agent input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI",
+          "mode": "list",
+          "cachedResultName": "MAS — Knowledge Retrieval"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "schedule_retrieval_request": "={{ $json.schedule_retrieval_request }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "183aa617-34a3-5413-9712-65bd7025ed58",
+      "name": "Call Knowledge Retrieval",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2800,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "function unwrapRetrieval(raw){\n  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\n  const src=obj(raw)?raw:{};\n  if(obj(src.schedule_retrieval_result)) return src.schedule_retrieval_result;\n  if(obj(src.body)&&obj(src.body.schedule_retrieval_result)) return src.body.schedule_retrieval_result;\n  if(String(src.contract||'')==='schedule_retrieval_result') return src;\n  if(src.error||Number(src.statusCode)>=400) return {status:'failed',findings:[{code:'RETRIEVAL_CALL_FAILED'}],results:[]};\n  return src;\n}\nfunction retrievalOutage(result, raw){\n  if(Boolean(raw&&raw.error)||Number(raw&&raw.statusCode)>=400) return 'failed';\n  const st=String((result&&result.status)||'').toLowerCase();\n  if(st==='failed'||st==='error') return 'failed';\n  if(st==='needs_input') return 'needs_input';\n  if(st==='abstain') return 'abstain';\n  if(st==='unavailable') return 'unavailable';\n  return '';\n}\nfunction compactRetrievalCards(result, selector, limit, textLimit, preferFull){\n  const rows=Array.isArray(result.results)?result.results:[];\n  const wantedBase=String(selector.target_base||'');\n  const wantedTypes=new Set((selector.knowledge_types||[]).map(v=>String(v).toLowerCase()));\n  const cap=Number(limit)||6;\n  const cut=Number(textLimit)||700;\n  const minText=50;\n  const relKeep=0.45;\n  const scored=[];\n  for(const r of rows){\n    if(!r||typeof r!=='object') continue;\n    const body=r.body&&typeof r.body==='object'?r.body:{};\n    const base=String(r.target_base||body.target_base||(result.filters&&result.filters.target_base)||'');\n    const kt=String(r.knowledge_type||body.knowledge_type||'').toLowerCase();\n    if(wantedBase&&base&&base!==wantedBase) continue;\n    if(wantedTypes.size&&kt&&!wantedTypes.has(kt)) continue;\n    const summary=String(body.summary||r.summary||'').trim();\n    const full=String(body.text||body.instruction||r.text||'').trim();\n    const text=preferFull?(full||summary):(summary||full);\n    if(text.length<minText) continue;\n    const score=r.rrf_score!=null?Number(r.rrf_score):(body.rrf_score!=null?Number(body.rrf_score):null);\n    if(Number.isFinite(score)&&score<=0) continue;\n    const topics=Array.isArray(r.topics)?r.topics:(Array.isArray(body.topics)?body.topics:[]);\n    scored.push({\n      knowledge_id:String(r.knowledge_id||body.knowledge_id||''),\n      title:String(r.title||body.title||'').slice(0,160),\n      knowledge_type:kt||null,\n      text:text.slice(0,cut),\n      revision:(r.revision!=null&&r.revision!=='')?r.revision:((body.revision!=null&&body.revision!=='')?body.revision:null),\n      rrf_score:Number.isFinite(score)?score:null,\n      branches:Array.isArray(r.branches)?r.branches.slice(0,6).map(b=>String(b)):(Array.isArray(body.branches)?body.branches.slice(0,6).map(b=>String(b)):[]),\n      topics:topics.slice(0,12).map(t=>String(t||'').trim()).filter(Boolean),\n      _score:Number.isFinite(score)?score:null\n    });\n  }\n  const finite=scored.map(c=>c._score).filter(s=>s!=null);\n  const best=finite.length?Math.max.apply(null,finite):0;\n  const floor=best>0?best*relKeep:0;\n  const want=new Set((Array.isArray(selector.topics)?selector.topics:[]).map(t=>String(t||'').toLowerCase()).filter(Boolean));\n  const orch=String(selector.target_base||'')==='orchestrator_routing';\n  const kept=scored.filter(c=>{\n    if(c._score==null||floor<=0) return true;\n    const cardTopics=(Array.isArray(c.topics)?c.topics:[]).map(t=>String(t||'').toLowerCase());\n    if(want.size&&cardTopics.some(t=>want.has(t))) return true;\n    if(orch&&want.size) return false;\n    const n=Array.isArray(c.branches)?c.branches.length:0;\n    if(n<2) return true;\n    return c._score>=floor;\n  });\n  kept.sort((a,b)=>{\n    if(a._score==null&&b._score==null) return 0;\n    if(a._score==null) return 1;\n    if(b._score==null) return -1;\n    return b._score-a._score;\n  });\n  return kept.slice(0,cap).map(c=>({knowledge_id:c.knowledge_id,title:c.title,knowledge_type:c.knowledge_type,text:c.text,revision:c.revision,rrf_score:c.rrf_score,branches:c.branches,topics:c.topics}));\n}\nconst prev=$(\"Prepare AI Agent input\").first().json||{};\nconst raw=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst result=unwrapRetrieval(raw);\nconst fallbackSelector={\"target_base\": \"specialist_template\", \"knowledge_types\": [\"capability_instruction\", \"worked_example\"]};\nconst fromPrev=prev.retrieval_selector;\nconst req=obj(prev.schedule_retrieval_request)?prev.schedule_retrieval_request:{};\nconst wantTopics=Array.isArray(req.filters&&req.filters.topics)?req.filters.topics:[];\nconst selector=(fromPrev&&fromPrev.target_base)?{target_base:String(fromPrev.target_base),knowledge_types:Array.isArray(fromPrev.knowledge_types)&&fromPrev.knowledge_types.length?fromPrev.knowledge_types:fallbackSelector.knowledge_types,topics:wantTopics}:Object.assign({},fallbackSelector,{topics:wantTopics});\nconst outage=retrievalOutage(result,raw);\nconst cards=(outage==='failed'||outage==='needs_input')?[]:compactRetrievalCards(result,selector,8,1200);\nconst rag={contract:'mas_rag_evidence',contract_version:'1.0',target_base:selector.target_base,knowledge_types:selector.knowledge_types,status:outage||(cards.length?'ready':'empty'),phase:\"initial\",cards,findings:(Array.isArray(result.findings)?result.findings:[]).slice(0,6).map(f=>f&&f.code).filter(Boolean)};\nconst note=rag.status==='ready'?\"Карточки — правила работы на кластере (устройство модели, запуск расчёта, что нельзя делать). Работай по задаче; про базу знаний инженера не спрашивай.\":\"Срез правил кластера пуст или недоступен — работай по задаче и правилам инструментов.\";\nconst planner=`${prev.planner_input||prev.agent_input||''}\\n\\nRetrieved knowledge (target_base=${selector.target_base}):\\n${JSON.stringify(rag,null,2)}\\n\\n${note}\\n`;\nconst logCards=(Array.isArray(cards)?cards:[]).map(c=>({knowledge_id:String((c&&c.knowledge_id)||''),revision:(c&&c.revision)!=null?c.revision:null,rrf_score:Number.isFinite(Number(c&&c.rrf_score))?Number(c.rrf_score):null,branches:Array.isArray(c&&c.branches)?c.branches.slice(0,6):[]}));\nconst logFindings=(Array.isArray(result.findings)?result.findings:[]).slice(0,8).map(f=>{if(obj(f)&&f.code)return{code:String(f.code)};const code=String(f||'').trim();return code?{code}:null}).filter(Boolean);\nconst activity={activity_kind:'trace.rag',status_message:`База знаний: ${rag.status} · ${logCards.length} карточек`,activity_payload:{caller:\"tnav_cluster\",query:String(req.query||result.query||'').slice(0,800),filters:obj(req.filters)?req.filters:{},status:rag.status,phase:rag.phase,findings:logFindings,cards:logCards}};\nreturn [{json:{...prev,rag,planner_input:planner,agent_input:planner,...activity}}];\n"
+      },
+      "id": "326b929b-cce3-5e87-94dc-55b3db2d5d6f",
+      "name": "Attach cluster RAG evidence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize cluster task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"tnav_cluster\", agent_id: \"tnav_cluster\", task_id: $('Normalize cluster task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: Object.assign({source: \"tnav-cluster-agent-workflow\"}, $json.activity_payload || {}, {execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')})}) }}"
+      },
+      "id": "0bc2b144-d666-51f4-b2a1-7eabec501fb0",
+      "name": "Activity — tNav Cluster Agent RAG",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3360,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Attach cluster RAG evidence').first().json||{}; return [{json:x}];"
+      },
+      "id": "f02b3643-8ff6-5c28-985d-86b0831cf8f0",
+      "name": "Restore after tNav Cluster Agent RAG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst SYSTEM=\"Ты — решатель агента tNav Cluster Agent. Ты работаешь с моделями на гидродинамическом кластере: разбираешь модель, собираешь её новую версию с новым файлом расписания и запускаешь расчёт. Считают и правят файлы инструменты; ты сам ничего не вычисляешь, строки расписания не пишешь и команды кластера не придумываешь.\\n\\nsession_id привязан workflow: никогда не передавай session_id и обёртку args/input.\\n\\nКакой инструмент когда:\\n- Нужно понять устройство модели (её секции, подключённые файлы, какой файл расписания основной) → inspect_model с путём к входному файлу модели. Путь бери из списка моделей, который пришёл при открытии сессии.\\n- В списке нет нужной модели или путь сомнительный → list_models один раз, потом inspect_model.\\n- Задача просит применить новое расписание, собрать новую версию модели, подготовить прогнозный вариант → prepare_model_version. Инструмент сам скопирует входной файл модели, положит рядом новый файл расписания и перепишет подключение в копии.\\n- Задача просит посчитать, запустить расчёт, посчитать на кластере → start_calculation. После ответа in_progress расчёт идёт сам, результат придёт позже: больше инструменты не вызывай, STOP.\\n- Инженер спрашивает, как идёт уже запущенный расчёт → check_calculation.\\n- Из задачи непонятно, какую модель считать или какое расписание применять, и подсказок в списке нет → ask_engineer одним вопросом обычной русской фразой.\\n\\nПорядок для задачи «новая версия и расчёт»: inspect_model → prepare_model_version → start_calculation. Больше четырёх вызовов инструментов не нужно.\\n\\nОтветы инструментов:\\n- ok:false, code:model_not_chosen или model_not_found — это тебе: возьми путь из available_models или спроси инженера через ask_engineer.\\n- ok:false, code:schedule_file_missing, schedule_file_ambiguous, schedule_file_without_dates — выбери другой файл из available_files или сообщи инженеру, что расписание не передано.\\n- ok:false, code:version_not_created или run_not_started — прочитай message: чаще всего мешает уже существующее имя версии или запущенный расчёт.\\n- ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.\\n- status prepared — версия собрана; status in_progress, completed, needs_input — результат зафиксирован, STOP.\\n\\nНичего не удаляй и не предлагай удалять: инструменты умеют только копировать, создавать и переименовывать. Пути к файлам и имена файлов в ответе инженеру не вставляй — пиши, что сделано: собрал новую версию модели, запустил расчёт, расчёт завершён за столько-то. Заверши одним коротким фактическим предложением по-русски.\\n\";\nconst TOOLS=[{\"type\": \"function\", \"function\": {\"name\": \"list_models\", \"description\": \"Показать входные файлы моделей в рабочем каталоге кластера.\", \"parameters\": {\"type\": \"object\", \"properties\": {}, \"additionalProperties\": true}}}, {\"type\": \"function\", \"function\": {\"name\": \"inspect_model\", \"description\": \"Разобрать модель: секции входного файла, подключённые файлы, основной файл расписания (в нём больше всего дат).\", \"parameters\": {\"type\": \"object\", \"properties\": {\"model\": {\"type\": \"string\", \"description\": \"Путь к входному файлу модели относительно рабочего каталога кластера\"}}, \"additionalProperties\": true, \"required\": [\"model\"]}}}, {\"type\": \"function\", \"function\": {\"name\": \"prepare_model_version\", \"description\": \"Собрать новую версию модели: новый файл расписания рядом со старым, копия входного файла модели с новым подключением.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"version_name\": {\"type\": \"string\", \"description\": \"Короткое латинское имя версии для имён файлов, например prognoz_2027\"}, \"model\": {\"type\": \"string\", \"description\": \"Путь к входному файлу модели; пусто — разобранная модель\"}, \"schedule_artifact_id\": {\"type\": \"string\", \"description\": \"Какой файл расписания из задачи применить; пусто — единственный\"}}, \"additionalProperties\": true}}}, {\"type\": \"function\", \"function\": {\"name\": \"start_calculation\", \"description\": \"Запустить расчёт модели на кластере. Сразу возвращает in_progress; результат придёт позже через Activity.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"model\": {\"type\": \"string\", \"description\": \"Путь к входному файлу модели; пусто — собранная новая версия\"}}, \"additionalProperties\": true}}}, {\"type\": \"function\", \"function\": {\"name\": \"check_calculation\", \"description\": \"Состояние запущенного расчёта: идёт, завершился или упал, сколько шагов пройдено и сколько осталось.\", \"parameters\": {\"type\": \"object\", \"properties\": {}, \"additionalProperties\": true}}}, {\"type\": \"function\", \"function\": {\"name\": \"ask_engineer\", \"description\": \"Спросить инженера одним вопросом по-русски, когда непонятно, какую модель считать или какое расписание применять. Не для ошибок вызова инструментов.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"question\": {\"type\": \"string\", \"description\": \"Обычная русская фраза без имён полей, путей и JSON\"}, \"options\": {\"type\": \"string\", \"description\": \"Варианты через точку с запятой, как их видит инженер; пусто — свободный ответ\"}}, \"additionalProperties\": true, \"required\": [\"question\"]}}}, {\"type\": \"function\", \"function\": {\"name\": \"retrieve_knowledge\", \"description\": \"Найти карточки в базе знаний по запросу. Вызови, когда в текущем срезе нет инструкции по нужному keyword или протоколу — особенно перед первым apply_dataset / apply_operations / extract_table по ним. keywords — имена keyword через запятую.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"Поисковый запрос (русская фраза или имена keyword)\"}, \"keywords\": {\"type\": \"string\", \"description\": \"Необязательно: семейства keyword через запятую\"}}, \"required\": [\"query\"]}}}];\nconst THINKING_OFF={\"reasoning\": {\"enabled\": false}, \"enable_thinking\": false, \"chat_template_kwargs\": {\"enable_thinking\": false}};\nconst SAMPLING={\"temperature\": 0.7, \"top_p\": 0.8, \"top_k\": 20, \"presence_penalty\": 1.5};\nconst DEFAULT_CHAT_MODEL=\"qwen/qwen3.6-27b\";\nconst MAX_ITER=8;\nconst prev=$json||{};\nlet cfg={};\ntry{cfg=$('Runtime configuration').first().json||{};}catch(e){cfg={}}\nconst model=String(cfg.chat_model||'').trim()||DEFAULT_CHAT_MODEL;\nconst base=String(cfg.chat_base_url||'').replace(/[/]+$/,'');\nconst chat_url=base?base+'/chat/completions':'';\nlet messages=Array.isArray(prev.messages)?prev.messages:[];\nif(!messages.length){\n  messages=[{role:'system',content:SYSTEM},{role:'user',content:String(prev.planner_input||prev.agent_input||'')}];\n}\nconst extra=parseChatExtra(cfg);\nconst chat_request={model,...SAMPLING,...THINKING_OFF,messages,tools:TOOLS,tool_choice:'auto',...extra};\nreturn [{json:{...prev,messages,chat_request,chat_url,max_iterations:MAX_ITER,iteration:Number(prev.iteration||0)}}];\n"
+      },
+      "id": "f32840be-6ec0-56a5-bc6e-12d85c002726",
+      "name": "Build chat request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3920,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.chat_url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.chat_request }}",
+        "options": {
+          "timeout": 600000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "0851ce94-ffbc-5193-ac43-30711059bacf",
+      "name": "tNav Cluster Agent Agent chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        4200,
+        0
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: Qwen OpenAI-compatible agent credential"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst http=$json||{};\nconst prev=fromNode('Build chat request');\nconst choice=obj((http.choices||[])[0])?(http.choices||[])[0]:{};\nconst msg=obj(choice.message)?choice.message:{};\nconst content=stripThink(typeof msg.content==='string'?msg.content:'');\nconst usage=obj(http.usage)?http.usage:{};\nconst details=obj(usage.completion_tokens_details)?usage.completion_tokens_details:{};\nconst finish=String(choice.finish_reason||http.finish_reason||'');\nconst errObj=obj(http.error)?http.error:null;\nconst errText=typeof http.error==='string'?http.error:String((errObj&&(errObj.message||errObj.code))||'');\nconst statusCode=Number(http.statusCode||http.status||(errObj&&errObj.status)||0);\nconst toolCalls=Array.isArray(msg.tool_calls)?msg.tool_calls:[];\nconst pending=toolCalls.map(tc=>{\n  const fn=obj(tc.function)?tc.function:{};\n  return {id:String(tc.id||''),name:String(fn.name||tc.name||''),arguments:fn.arguments!=null?fn.arguments:tc.arguments};\n}).filter(t=>t.name);\nconst iteration=Number(prev.iteration||0)+1;\nconst maxIter=Number(prev.max_iterations||8);\nconst over=iteration>=maxIter;\nlet messages=Array.isArray(prev.messages)?prev.messages.slice():[];\nconst assistant={role:'assistant',content:content||null};\nif(toolCalls.length) assistant.tool_calls=toolCalls;\nmessages.push(assistant);\nconst tool_log=Array.isArray(prev.tool_log)?prev.tool_log.slice():[];\nconst llm_unavailable=(!pending.length)&&(Boolean(errText)||statusCode>=400||!Array.isArray(http.choices)||finish==='error');\nconst loop_route=llm_unavailable?'done':(pending.length?loopRouteForPending(pending, over):'done');\nconst promptMsgs=obj(prev.chat_request)&&Array.isArray(prev.chat_request.messages)?prev.chat_request.messages:[];\nconst tokens=Number(usage.prompt_tokens||0)+Number(usage.completion_tokens||0);\nconst payload={\n  role:'agent',\n  model:String((obj(prev.chat_request)&&prev.chat_request.model)||''),\n  prompt_tokens:Number(usage.prompt_tokens||0),\n  completion_tokens:Number(usage.completion_tokens||0),\n  reasoning_tokens:Number(details.reasoning_tokens||0),\n  finish_reason:llm_unavailable?(finish||'error'):(finish||(errText?'error':'stop')),\n  tool_calls:pending.map(t=>({name:t.name,args_preview:clip(String(t.arguments||''),400)})),\n  prompt_preview:previewChatMessages(promptMsgs, Number(prev.prompt_len||0)),\n  content_preview:clip(content,2000)\n};\nif(errText) payload.error=errText.slice(0,200);\nreturn [{json:{\n  ...prev,\n  messages,\n  pending_tools:llm_unavailable?[]:pending,\n  iteration,\n  over,\n  loop_route,\n  llm_final_text:content,\n  llm_unavailable,\n  prompt_len:promptMsgs.length,\n  tool_log,\n  finish_reason:payload.finish_reason,\n  activity_kind:'trace.llm',\n  status_message:`agent: ${payload.finish_reason} · ${tokens} tok`,\n  activity_payload:payload\n}}];\n"
+      },
+      "id": "33335ec3-63ae-55a9-86bc-141572231184",
+      "name": "Parse agent chat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize cluster task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"tnav_cluster\", agent_id: \"tnav_cluster\", task_id: $('Normalize cluster task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: Object.assign({source: \"tnav-cluster-agent-workflow\"}, $json.activity_payload || {}, {execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')})}) }}"
+      },
+      "id": "42c17dab-3e05-5895-ad79-9dd38c179507",
+      "name": "Activity — tNav Cluster Agent LLM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        4760,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Parse agent chat').first().json||{}; return [{json:x}];"
+      },
+      "id": "d455a9eb-5e73-5444-83d4-386ec50f9efa",
+      "name": "Restore after tNav Cluster Agent LLM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5040,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 4,
+        "output": "={{ ({chat:0,tool:1,retrieve:2,done:3})[$json.loop_route] ?? 3 }}"
+      },
+      "id": "691c18d7-d082-5b7e-a778-40299cc57269",
+      "name": "Agent loop router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        5320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst ALLOWED=new Set([\"list_models\", \"inspect_model\", \"prepare_model_version\", \"start_calculation\", \"check_calculation\", \"ask_engineer\"]);\nconst SERVICE_KEY=\"tnav_cluster_url\";\nconst OPEN_NAME=\"Open cluster session\";\n\nconst prev=$json||{};\nconst pending=Array.isArray(prev.pending_tools)?prev.pending_tools:[];\nconst call=pending[0]||{};\nconst name=String(call.name||'');\nconst args=parseArgs(call.arguments);\nconst opened=fromNode(OPEN_NAME);\nconst sessionId=String(opened.session_id||prev.session_id||'');\nlet cfg={};\ntry{cfg=$('Runtime configuration').first().json||{};}catch(e){cfg={}}\nconst base=String(cfg[SERVICE_KEY]||prev[SERVICE_KEY]||'').replace(/[/]+$/,'');\nconst log=Array.isArray(prev.tool_log)?prev.tool_log:[];\nconst needKb=name==='apply_dataset'&&ALLOWED.has(name)&&!log.includes('retrieve_knowledge');\nconst skip_http=!name||!ALLOWED.has(name)||needKb;\nconst skip_result=needKb?{ok:false,code:'knowledge_required',message:'Сначала вызови retrieve_knowledge с query (смысл набора) и keywords (имя keyword), затем get_keyword, затем apply_dataset. Стартовый срез — краткие summary; полный текст — только из retrieve_knowledge.'}:(skip_http?{ok:false,code:'unknown_tool',message:'Нет такого инструмента',available:[...ALLOWED]}:null);\nconst tool_url=skip_http?'':(base+'/agent-tools/'+name);\nconst tool_body={session_id:sessionId,...args};\nreturn [{json:{...prev,pending_tool:call,tool_url,tool_body,skip_http,skip_result}}];\n"
+      },
+      "id": "75b75721-ac40-52d6-801b-c01dd6746517",
+      "name": "Prepare tool call",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5600,
+        -170
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "466eaa7a-eace-5e3d-a587-9037ac706f23",
+              "leftValue": "={{ Boolean($json.skip_http) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9c8a5634-9e4a-55e3-8fa9-3aa40059dfc0",
+      "name": "Skip unknown tool?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5880,
+        -170
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.tool_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.tool_body }}"
+      },
+      "id": "fe773587-6508-540e-8bc0-b9cd20e53710",
+      "name": "Call agent tool",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        6160,
+        -85
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst http=$json||{};\nconst prev=fromNode('Prepare tool call');\nconst call=obj(prev.pending_tool)?prev.pending_tool:{};\nlet pending=Array.isArray(prev.pending_tools)?prev.pending_tools.slice(1):[];\nlet messages=Array.isArray(prev.messages)?prev.messages.slice():[];\nconst transport=prev.skip_http?'':toolTransportCode(http);\nconst result=prev.skip_http?prev.skip_result:(transport?{ok:false,code:transport,message:transport==='service_unreachable'?'Сервис агента не отвечает':'Инструмент не ответил'}:http);\nconst body=typeof result==='string'?result:JSON.stringify(result==null?{}:result);\nmessages.push({role:'tool',tool_call_id:String(call.id||''),content:body});\nconst tool_log=Array.isArray(prev.tool_log)?prev.tool_log.slice():[];\nif(call.name) tool_log.push(String(call.name));\nconst down=transport==='service_unreachable';\nconst loop_route=down?'done':loopRouteForPending(pending, Boolean(prev.over));\nreturn [{json:{...prev,messages,pending_tools:down?[]:pending,tool_log,loop_route,skip_http:false,skip_result:null,service_unreachable:Boolean(prev.service_unreachable||down)}}];\n"
+      },
+      "id": "b19b4dbb-d368-5886-8a38-f9a79513eeaf",
+      "name": "Append tool result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6160,
+        -255
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst prev=$json||{};\nconst pending=Array.isArray(prev.pending_tools)?prev.pending_tools:[];\nconst call=pending[0]||{};\nconst args=parseArgs(call.arguments);\nconst req=obj(prev.schedule_retrieval_request)?{...prev.schedule_retrieval_request}:{};\nconst filters=obj(req.filters)?{...req.filters}:{};\nconst keywords=String(args.keywords||'').split(/[,;]/).map(s=>s.trim().toUpperCase()).filter(Boolean);\nif(keywords.length) filters.keyword_families=[...new Set(keywords)].slice(0,6);\nelse filters.keyword_families=[];\nconst query=clip(String(args.query||'').trim()||String(req.query||''),800);\nreturn [{json:{...prev,pending_tool:call,schedule_retrieval_request:{...req,query,filters}}}];\n"
+      },
+      "id": "fd1f6452-390b-5ce0-b9b5-0f7ff2da2550",
+      "name": "Prepare retrieve request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI",
+          "mode": "list",
+          "cachedResultName": "MAS — Knowledge Retrieval"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "schedule_retrieval_request": "={{ $json.schedule_retrieval_request }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "8297e2a3-1d42-598a-b2fd-6a61cf51f607",
+      "name": "Retrieve knowledge",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        5880,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nfunction unwrapRetrieval(raw){\n  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\n  const src=obj(raw)?raw:{};\n  if(obj(src.schedule_retrieval_result)) return src.schedule_retrieval_result;\n  if(obj(src.body)&&obj(src.body.schedule_retrieval_result)) return src.body.schedule_retrieval_result;\n  if(String(src.contract||'')==='schedule_retrieval_result') return src;\n  if(src.error||Number(src.statusCode)>=400) return {status:'failed',findings:[{code:'RETRIEVAL_CALL_FAILED'}],results:[]};\n  return src;\n}\nfunction retrievalOutage(result, raw){\n  if(Boolean(raw&&raw.error)||Number(raw&&raw.statusCode)>=400) return 'failed';\n  const st=String((result&&result.status)||'').toLowerCase();\n  if(st==='failed'||st==='error') return 'failed';\n  if(st==='needs_input') return 'needs_input';\n  if(st==='abstain') return 'abstain';\n  if(st==='unavailable') return 'unavailable';\n  return '';\n}\nfunction compactRetrievalCards(result, selector, limit, textLimit, preferFull){\n  const rows=Array.isArray(result.results)?result.results:[];\n  const wantedBase=String(selector.target_base||'');\n  const wantedTypes=new Set((selector.knowledge_types||[]).map(v=>String(v).toLowerCase()));\n  const cap=Number(limit)||6;\n  const cut=Number(textLimit)||700;\n  const minText=50;\n  const relKeep=0.45;\n  const scored=[];\n  for(const r of rows){\n    if(!r||typeof r!=='object') continue;\n    const body=r.body&&typeof r.body==='object'?r.body:{};\n    const base=String(r.target_base||body.target_base||(result.filters&&result.filters.target_base)||'');\n    const kt=String(r.knowledge_type||body.knowledge_type||'').toLowerCase();\n    if(wantedBase&&base&&base!==wantedBase) continue;\n    if(wantedTypes.size&&kt&&!wantedTypes.has(kt)) continue;\n    const summary=String(body.summary||r.summary||'').trim();\n    const full=String(body.text||body.instruction||r.text||'').trim();\n    const text=preferFull?(full||summary):(summary||full);\n    if(text.length<minText) continue;\n    const score=r.rrf_score!=null?Number(r.rrf_score):(body.rrf_score!=null?Number(body.rrf_score):null);\n    if(Number.isFinite(score)&&score<=0) continue;\n    const topics=Array.isArray(r.topics)?r.topics:(Array.isArray(body.topics)?body.topics:[]);\n    scored.push({\n      knowledge_id:String(r.knowledge_id||body.knowledge_id||''),\n      title:String(r.title||body.title||'').slice(0,160),\n      knowledge_type:kt||null,\n      text:text.slice(0,cut),\n      revision:(r.revision!=null&&r.revision!=='')?r.revision:((body.revision!=null&&body.revision!=='')?body.revision:null),\n      rrf_score:Number.isFinite(score)?score:null,\n      branches:Array.isArray(r.branches)?r.branches.slice(0,6).map(b=>String(b)):(Array.isArray(body.branches)?body.branches.slice(0,6).map(b=>String(b)):[]),\n      topics:topics.slice(0,12).map(t=>String(t||'').trim()).filter(Boolean),\n      _score:Number.isFinite(score)?score:null\n    });\n  }\n  const finite=scored.map(c=>c._score).filter(s=>s!=null);\n  const best=finite.length?Math.max.apply(null,finite):0;\n  const floor=best>0?best*relKeep:0;\n  const want=new Set((Array.isArray(selector.topics)?selector.topics:[]).map(t=>String(t||'').toLowerCase()).filter(Boolean));\n  const orch=String(selector.target_base||'')==='orchestrator_routing';\n  const kept=scored.filter(c=>{\n    if(c._score==null||floor<=0) return true;\n    const cardTopics=(Array.isArray(c.topics)?c.topics:[]).map(t=>String(t||'').toLowerCase());\n    if(want.size&&cardTopics.some(t=>want.has(t))) return true;\n    if(orch&&want.size) return false;\n    const n=Array.isArray(c.branches)?c.branches.length:0;\n    if(n<2) return true;\n    return c._score>=floor;\n  });\n  kept.sort((a,b)=>{\n    if(a._score==null&&b._score==null) return 0;\n    if(a._score==null) return 1;\n    if(b._score==null) return -1;\n    return b._score-a._score;\n  });\n  return kept.slice(0,cap).map(c=>({knowledge_id:c.knowledge_id,title:c.title,knowledge_type:c.knowledge_type,text:c.text,revision:c.revision,rrf_score:c.rrf_score,branches:c.branches,topics:c.topics}));\n}\nconst fallbackSelector={\"target_base\": \"specialist_template\", \"knowledge_types\": [\"capability_instruction\", \"worked_example\"]};\nconst caller=\"tnav_cluster\";\nconst maxCards=8;\nconst textLimit=4000;\n\nconst prev=fromNode('Prepare retrieve request');\nconst raw=$json||{};\nconst result=unwrapRetrieval(raw);\nconst fromPrev=prev.retrieval_selector;\nconst selector=(fromPrev&&fromPrev.target_base)?{target_base:String(fromPrev.target_base),knowledge_types:Array.isArray(fromPrev.knowledge_types)&&fromPrev.knowledge_types.length?fromPrev.knowledge_types:fallbackSelector.knowledge_types}:fallbackSelector;\nconst outage=retrievalOutage(result,raw);\nconst cards=(outage==='failed'||outage==='needs_input')?[]:compactRetrievalCards(result,selector,maxCards,textLimit,true);\nconst rag={contract:'mas_rag_evidence',contract_version:'1.0',target_base:selector.target_base,knowledge_types:selector.knowledge_types,status:outage||(cards.length?'ready':'empty'),phase:'on_demand',cards,findings:(Array.isArray(result.findings)?result.findings:[]).slice(0,6).map(f=>f&&f.code).filter(Boolean)};\nconst call=obj(prev.pending_tool)?prev.pending_tool:{};\nlet pending=Array.isArray(prev.pending_tools)?prev.pending_tools.slice(1):[];\nlet messages=Array.isArray(prev.messages)?prev.messages.slice():[];\nmessages.push({role:'tool',tool_call_id:String(call.id||''),content:JSON.stringify({status:rag.status,findings:rag.findings,cards:rag.cards})});\nconst tool_log=Array.isArray(prev.tool_log)?prev.tool_log.slice():[];\ntool_log.push('retrieve_knowledge');\nconst loop_route=loopRouteForPending(pending, Boolean(prev.over));\nconst req=obj(prev.schedule_retrieval_request)?prev.schedule_retrieval_request:{};\nconst logCards=(Array.isArray(cards)?cards:[]).map(c=>({knowledge_id:String((c&&c.knowledge_id)||''),revision:(c&&c.revision)!=null?c.revision:null,rrf_score:Number.isFinite(Number(c&&c.rrf_score))?Number(c.rrf_score):null,branches:Array.isArray(c&&c.branches)?c.branches.slice(0,6):[]}));\nconst logFindings=(Array.isArray(result.findings)?result.findings:[]).slice(0,8).map(f=>{if(obj(f)&&f.code)return{code:String(f.code)};const code=String(f||'').trim();return code?{code}:null}).filter(Boolean);\nreturn [{json:{\n  ...prev,\n  messages,\n  pending_tools:pending,\n  tool_log,\n  loop_route,\n  rag,\n  activity_kind:'trace.rag',\n  status_message:`База знаний: ${rag.status} · ${logCards.length} карточек`,\n  activity_payload:{caller,query:String(req.query||result.query||'').slice(0,800),filters:obj(req.filters)?req.filters:{},status:rag.status,phase:rag.phase,findings:logFindings,cards:logCards}\n}}];\n"
+      },
+      "id": "ebb14e1b-a44e-5887-b55f-2e83e7418929",
+      "name": "Attach retrieve evidence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6160,
+        85
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize cluster task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"tnav_cluster\", agent_id: \"tnav_cluster\", task_id: $('Normalize cluster task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: Object.assign({source: \"tnav-cluster-agent-workflow\"}, $json.activity_payload || {}, {execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')})}) }}"
+      },
+      "id": "e540d5a6-3fd4-5d46-9f17-a44f8c483091",
+      "name": "Activity — tNav Cluster Agent retrieve",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        6440,
+        -85
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Attach retrieve evidence').first().json||{}; return [{json:x}];"
+      },
+      "id": "825df710-0ddf-5c12-9f5e-f2364e8b99bd",
+      "name": "Restore after tNav Cluster Agent retrieve",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6720,
+        -85
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst OPEN_NAME=\"Open cluster session\";\n\nconst prev=$json||{};\nconst opened=fromNode(OPEN_NAME);\nconst tools=Array.isArray(prev.tool_log)?prev.tool_log.filter(Boolean):[];\nconst unique=[...new Set(tools)];\nconst finalText=stripThink(String(prev.llm_final_text||''));\nconst counts={};\nfor(const name of tools) counts[name]=(counts[name]||0)+1;\nconst repeated=Object.keys(counts).some(name=>name!=='retrieve_knowledge'&&counts[name]>3);\nconst total=tools.filter(n=>n!=='retrieve_knowledge').length;\nconst human=finalText.trim();\nconst status_message=(human&&!looksMachine(human))?clip(human,400):'Агент завершил шаг.';\nreturn [{json:{\n  ...prev,\n  llm_final_text:finalText,\n  tools_used:unique,\n  total_calls:total,\n  repeated,\n  activity_kind:'agent.progress',\n  status_message,\n  activity_payload:{source:\"tnav-cluster-agent-workflow\",total_calls:total,tools_used:unique,iterations:Number(prev.iteration||0)}\n}}];\n"
+      },
+      "id": "d16ab0ac-2c2e-50f7-9571-877e0257671d",
+      "name": "Summarize AI steps",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5600,
+        170
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize cluster task').first().json.agent_task.case_id + '/events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"tnav_cluster\", agent_id: \"tnav_cluster\", task_id: $('Normalize cluster task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: Object.assign({source: \"tnav-cluster-agent-workflow\"}, $json.activity_payload || {}, {execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')})}) }}"
+      },
+      "id": "9089339e-b45a-5ffe-ba31-83196e200197",
+      "name": "Activity — tNav Cluster Agent tools",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        5880,
+        170
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$('Summarize AI steps').first().json||{}; return [{json:x}];"
+      },
+      "id": "4f7eed14-b22c-52bd-b31b-8aed5a668535",
+      "name": "Restore after AI tools",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6160,
+        255
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Runtime configuration').first().json.tnav_cluster_url + '/sessions/' + $('Open cluster session').first().json.session_id + '/result' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "7b45fcbd-2a47-5b0d-adcb-038201260166",
+      "name": "Fetch cluster result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        6440,
+        85
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst AGENT_ID=\"tnav_cluster\";\nconst NO_RESULT_ISSUE=\"no_cluster_result\";\nconst QUESTION_ID=\"Q-cluster\";\nconst ACCEPTS_FILES=[\"inc\"];\nconst FAIL_MSG=\"Кластерный агент не вернул результат\";\nconst FAIL_ISSUE=\"tnav_cluster_no_result\";\nconst OPEN_NAME=\"Open cluster session\";\nconst DOWN_MSG=\"Сервис агента „tNav Cluster Agent“ не отвечает по адресу из настроек среды. Проверьте, что он запущен, и перезапустите задачу.\";\nconst LLM_DOWN_MSG=\"Модель чата не ответила. Проверьте доступ к модели в настройках среды и перезапустите задачу.\";\n\nconst fetched=$json||{};\nconst opened=fromNode(OPEN_NAME);\nconst summarized=fromNode('Summarize AI steps');\nconst finalText=stripThink(String(summarized.llm_final_text||fetched.llm_final_text||''));\nconst arts=fetched.artifacts&&typeof fetched.artifacts==='object'?fetched.artifacts:{};\nconst artifacts=Object.fromEntries(Object.entries(arts).filter(([,v])=>typeof v!=='boolean'));\nfunction pack(src){\n  return {json:{\n    task_id:src.task_id||opened.task_id||'',\n    agent_id:AGENT_ID,\n    status:src.status,\n    message:src.message||'',\n    data:src.data||{},\n    artifacts:src.artifacts&&typeof src.artifacts==='object'?src.artifacts:artifacts,\n    issues:src.issues||[],\n    assumptions:src.assumptions||[],\n    requests:src.requests||[],\n    ...(src.watch&&typeof src.watch==='object'?{watch:src.watch}:{})\n  }};\n}\nif(summarized.service_unreachable||fetched.service_unreachable){\n  return [pack({status:'failed',message:DOWN_MSG,data:{},artifacts:{},issues:[{code:'service_unreachable'}],requests:[]})];\n}\nif(summarized.llm_unavailable||fetched.llm_unavailable){\n  return [pack({status:'failed',message:LLM_DOWN_MSG,data:{},artifacts:{},issues:[{code:'llm_unavailable'}],requests:[]})];\n}\nif(fetched.status){\n  const issues=Array.isArray(fetched.issues)?fetched.issues:[];\n  const generic=issues.some(i=>i&&i.type===NO_RESULT_ISSUE);\n  if(generic&&fetched.status==='needs_input'&&finalText&&!looksMachine(finalText)){\n    const reqs=Array.isArray(fetched.requests)?fetched.requests:[];\n    const requests=reqs.length?reqs.map((r,i)=>i===0?{...r,question:finalText}:r):[{question_id:QUESTION_ID,question:finalText,options:[],accepts:{free_text:true,files:ACCEPTS_FILES}}];\n    return [pack({...fetched,message:finalText,requests,artifacts})];\n  }\n  return [pack({...fetched,artifacts})];\n}\nif(finalText&&!looksMachine(finalText)){\n  return [pack({\n    status:'needs_input',\n    message:finalText,\n    data:{llm_final_text:finalText.slice(0,600)},\n    artifacts:{},\n    issues:[{type:NO_RESULT_ISSUE}],\n    requests:[{question_id:QUESTION_ID,question:finalText,options:[],accepts:{free_text:true,files:ACCEPTS_FILES}}]\n  })];\n}\nreturn [{json:{\n  task_id:opened.task_id||'',\n  agent_id:AGENT_ID,\n  status:'failed',\n  message:String(fetched.message||FAIL_MSG),\n  data:{},\n  artifacts:{},\n  issues:[{type:FAIL_ISSUE}],\n  assumptions:[],\n  requests:[]\n}}];\n"
+      },
+      "id": "d91c8029-4a64-5859-8832-6735a6de800e",
+      "name": "Format cluster result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6720,
+        85
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Runtime configuration').first().json.tnav_cluster_url + '/sessions/' + $('Open cluster session').first().json.session_id + '/close' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({}) }}"
+      },
+      "id": "8a90d3f7-607f-534c-99e6-ee53ecd8512a",
+      "name": "Close cluster session",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        7000,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "When executed by another workflow": {
+      "main": [
+        [
+          {
+            "node": "Runtime configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Runtime configuration": {
+      "main": [
+        [
+          {
+            "node": "Normalize cluster task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize cluster task": {
+      "main": [
+        [
+          {
+            "node": "Open cluster session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open cluster session": {
+      "main": [
+        [
+          {
+            "node": "Session ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session ready?": {
+      "main": [
+        [
+          {
+            "node": "Activity — tNav Cluster Agent accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format missing cluster",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — tNav Cluster Agent accepted": {
+      "main": [
+        [
+          {
+            "node": "Restore after tNav Cluster Agent accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after tNav Cluster Agent accepted": {
+      "main": [
+        [
+          {
+            "node": "Activity — tNav Cluster Agent progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — tNav Cluster Agent progress": {
+      "main": [
+        [
+          {
+            "node": "Restore after tNav Cluster Agent progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after tNav Cluster Agent progress": {
+      "main": [
+        [
+          {
+            "node": "Prepare AI Agent input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Agent input": {
+      "main": [
+        [
+          {
+            "node": "Call Knowledge Retrieval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Knowledge Retrieval": {
+      "main": [
+        [
+          {
+            "node": "Attach cluster RAG evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach cluster RAG evidence": {
+      "main": [
+        [
+          {
+            "node": "Activity — tNav Cluster Agent RAG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — tNav Cluster Agent RAG": {
+      "main": [
+        [
+          {
+            "node": "Restore after tNav Cluster Agent RAG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format cluster result": {
+      "main": [
+        [
+          {
+            "node": "Close cluster session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close cluster session": {
+      "main": [
+        [
+          {
+            "node": "Restore after tNav Cluster Agent activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after tNav Cluster Agent RAG": {
+      "main": [
+        [
+          {
+            "node": "Build chat request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build chat request": {
+      "main": [
+        [
+          {
+            "node": "tNav Cluster Agent Agent chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tNav Cluster Agent Agent chat": {
+      "main": [
+        [
+          {
+            "node": "Parse agent chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse agent chat": {
+      "main": [
+        [
+          {
+            "node": "Activity — tNav Cluster Agent LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — tNav Cluster Agent LLM": {
+      "main": [
+        [
+          {
+            "node": "Restore after tNav Cluster Agent LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after tNav Cluster Agent LLM": {
+      "main": [
+        [
+          {
+            "node": "Agent loop router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent loop router": {
+      "main": [
+        [
+          {
+            "node": "Build chat request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare tool call",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare retrieve request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Summarize AI steps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare tool call": {
+      "main": [
+        [
+          {
+            "node": "Skip unknown tool?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip unknown tool?": {
+      "main": [
+        [
+          {
+            "node": "Append tool result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call agent tool",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call agent tool": {
+      "main": [
+        [
+          {
+            "node": "Append tool result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append tool result": {
+      "main": [
+        [
+          {
+            "node": "Agent loop router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare retrieve request": {
+      "main": [
+        [
+          {
+            "node": "Retrieve knowledge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retrieve knowledge": {
+      "main": [
+        [
+          {
+            "node": "Attach retrieve evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach retrieve evidence": {
+      "main": [
+        [
+          {
+            "node": "Activity — tNav Cluster Agent retrieve",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — tNav Cluster Agent retrieve": {
+      "main": [
+        [
+          {
+            "node": "Restore after tNav Cluster Agent retrieve",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after tNav Cluster Agent retrieve": {
+      "main": [
+        [
+          {
+            "node": "Agent loop router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize AI steps": {
+      "main": [
+        [
+          {
+            "node": "Activity — tNav Cluster Agent tools",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activity — tNav Cluster Agent tools": {
+      "main": [
+        [
+          {
+            "node": "Restore after AI tools",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore after AI tools": {
+      "main": [
+        [
+          {
+            "node": "Fetch cluster result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch cluster result": {
+      "main": [
+        [
+          {
+            "node": "Format cluster result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "63116836-8724-595e-bc5e-dd6e743e2586",
+    "executionTimeout": 1800
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "targetN8nVersion": "2.30.8"
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "df593fc3-70e8-47ed-8e9d-e6da73a032dc"
+}

@@ -9,6 +9,7 @@
     "workflows/core/mas-runtime-config.workflow.json",
     "workflows/core/schedule-builder-agent.workflow.json",
     "workflows/core/excel-extractor-agent.workflow.json",
+    "workflows/core/tnav-cluster-agent.workflow.json",
     "workflows/core/mas-error-traces.workflow.json",
     "workflows/core/mas-control-plane-proxy.workflow.json",
     "workflows/core/mas-orchestrator.workflow.json",
@@ -21,6 +22,7 @@
     "workflows/core/mas-runtime-config.workflow.json",
     "workflows/core/schedule-builder-agent.workflow.json",
     "workflows/core/excel-extractor-agent.workflow.json",
+    "workflows/core/tnav-cluster-agent.workflow.json",
     "workflows/core/mas-error-traces.workflow.json",
     "workflows/core/mas-control-plane-proxy.workflow.json",
     "workflows/core/mas-orchestrator.workflow.json",
@@ -52,6 +54,12 @@
       "placeholder": "REPLACE_MAS_RUNTIME_CONFIG_IN_UI"
     },
     {
+      "owner": "Agent — tNav Cluster Agent",
+      "node": "Runtime configuration",
+      "target": "MAS — Runtime Config",
+      "placeholder": "REPLACE_MAS_RUNTIME_CONFIG_IN_UI"
+    },
+    {
       "owner": "Orchestrator — MAS",
       "node": "Call Knowledge Retrieval",
       "target": "MAS — Knowledge Retrieval",
@@ -65,6 +73,12 @@
     },
     {
       "owner": "Agent — Schedule Builder",
+      "node": "Call Knowledge Retrieval",
+      "target": "MAS — Knowledge Retrieval",
+      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    },
+    {
+      "owner": "Agent — tNav Cluster Agent",
       "node": "Call Knowledge Retrieval",
       "target": "MAS — Knowledge Retrieval",
       "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
@@ -124,7 +138,8 @@
     }
   ],
   "ui_configuration": [
-    "Field import is runtime_import_order (9 core JSON). Lab also imports support/demo-agent.workflow.json.",
+    "Field import is runtime_import_order (10 core JSON). Lab also imports support/demo-agent.workflow.json.",
+    "Agent — tNav Cluster Agent (hydrodynamic cluster over SSH): import the workflow, set tnav_cluster_url in MAS — Runtime Config (http://<IP-Windows>:8400), bind its Runtime configuration → MAS — Runtime Config and Call Knowledge Retrieval → MAS — Knowledge Retrieval, bind the Qwen credential on tNav Cluster Agent Agent chat. The registry row is seeded enabled=false: enable it in Activity → Агенты only after tnav-cluster.env has the cluster address, user, password, base path and the tNavigator command (see docs.md «Кластерный агент»).",
     "Do not create n8n Data Tables for live case state.",
     "Bind Orchestrator — MAS: Call Knowledge Retrieval → MAS — Knowledge Retrieval (selector target_base=orchestrator_routing). Bind Call Knowledge Retrieval on Excel Extractor (excel_protocol) and Schedule Builder (schedule_mvp). Agents are NOT bound as nodes: Orchestrator's universal Call agent (n8n) takes the workflow id from agent_registry.invoke (seeded by Control Plane Proxy schema). After UI import n8n assigns new ids — copy each agent workflow id (URL of the open workflow) into MAS — Runtime Config → agent_workflow_ids as {\"excel_extractor\":\"<id>\",\"schedule_builder\":\"<id>\"}. Adding an agent = import its workflow + POST {\"operation\":\"upsert_agent\",\"row\":{...}} to the Control Plane Proxy (no orchestrator regen).",
     "Bind Runtime endpoints / Runtime configuration → MAS — Runtime Config on Orchestrator, Excel Extractor, and Schedule Builder. Edit the four URLs once in MAS — Runtime Config (lab Docker DNS in git; field = http://<IP-Windows>:8200/:8000/:8090/:8100). math_url has no /agent/run suffix.",

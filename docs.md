@@ -19,12 +19,14 @@ flowchart TB
     ExcelSvc["Excel Tools :8000<br/>читает книги"]
     SchedSvc["Schedule Builder :8090<br/>правит .INC"]
     MathSvc["Math :8100"]
+    ClusterSvc["tNav Cluster :8400<br/>модели и расчёты (по желанию)"]
   end
 
   subgraph n8n [Корпоративный n8n 2.30.8]
     Orch[Оркестратор]
     ExcelA[Агент Excel]
     SchedA[Агент Schedule]
+    ClusterA[Агент кластера]
     Proxy[Прокси к Postgres]
     RAG[База знаний]
     Cfg[Адреса и лимиты]
@@ -32,20 +34,25 @@ flowchart TB
   end
 
   PG[(Postgres)]
+  Cluster[["ГД-кластер<br/>tNavigator"]]
 
   Activity -->|создать задачу / ответ| Orch
   Activity --> Proxy
   Orch --> Model
   Orch --> ExcelA
   Orch --> SchedA
+  Orch --> ClusterA
   Orch --> RAG
   Orch --> Cfg
   ExcelA --> ExcelSvc
   SchedA --> SchedSvc
+  ClusterA --> ClusterSvc
   ExcelA --> Model
   SchedA --> Model
   ExcelSvc --> Activity
   SchedSvc --> Activity
+  ClusterSvc -->|SSH| Cluster
+  ClusterSvc --> Activity
   Proxy --> PG
   Orch --> PG
   RAG --> PG
@@ -72,7 +79,9 @@ flowchart TB
 
 Состав этой сборки — альфа (`VERSION` `0.8.0`, тег `alpha-1`).
 
-Ещё нет: третьего боевого агента (расчёт, выгрузка с кластера) — только Excel и Schedule. Широкий набор живых кейсов (два вопроса от разных агентов, перепривязка и даты в одной задаче, несколько INCLUDE) — после 6.2.
+Третий агент — **кластерный** (`tNav Cluster Agent`): по SSH находит модель на ГД-кластере, подкладывает новое расписание рядом со старым, делает копию входного `.data` с новым `INCLUDE`, запускает расчёт `tNavigator` и сам сообщает в чат, сколько он считался и чем закончился. Он **выключен из коробки** — включается после того, как вы впишете доступ к кластеру (раздел «8. Кластерный агент»). Ничего не удаляет: `rm` запрещён в коде.
+
+Ещё нет: выгрузки результатов расчёта с кластера (профили, отчёты) — агент возвращает состояние и время расчёта, но не забирает файлы результатов. Широкий набор живых кейсов (два вопроса от разных агентов, перепривязка и даты в одной задаче, несколько INCLUDE) — после 6.2.
 
 Если оркестратор импортирован до правки thinking: в **Orchestrator — MAS** должны быть HTTP-ноды **Decision chat**, **Verify chat**, **Interpret chat**. У агентов Excel / Schedule / Demo — HTTP-нода **Agent chat**. На все эти ноды — тот же OpenAI-compatible credential; в Runtime Config заполнен `chat_base_url`. Иначе свободный ответ и следующий шаг снова пустеют. Thinking у модели выключен телом запроса (`reasoning.enabled`, `enable_thinking`, `chat_template_kwargs.enable_thinking`), не отдельной нодой языковой модели.
 
@@ -106,6 +115,8 @@ flowchart TB
 | Schedule Builder | `schedule-builder-service` | 8090 | `schedule-builder.env` |
 | Math | `fastapi-math-service` | 8100 | `math-service.env` |
 | Activity | `mas-activity-service` | 8200 | `mas-activity.env` — заполните, но **запустите позже** |
+
+Пятый сервис — `tnav-cluster-service` (`:8400`, `tnav-cluster.env`) — нужен только если вы будете считать модели на ГД-кластере. Он ставится так же, но настраивается отдельно: раздел «8. Кластерный агент».
 
 В каждом каталоге:
 
@@ -142,12 +153,13 @@ n8n → **Import from File**, строго по `IMPORT_ORDER.txt`. Пока **�
 3. `MAS — Runtime Config`
 4. `Agent — Schedule Builder`
 5. `Agent — Excel Extractor`
-6. `Error — MAS Node Traces`
-7. `MAS — Control Plane Proxy`
-8. `Orchestrator — MAS`
-9. `Form — MAS Deployment Health Check`
+6. `Agent — tNav Cluster Agent` — можно пропустить, если расчёты на кластере не нужны
+7. `Error — MAS Node Traces`
+8. `MAS — Control Plane Proxy`
+9. `Orchestrator — MAS`
+10. `Form — MAS Deployment Health Check`
 
-После импорта у каждого workflow новый id — он виден в адресной строке, когда workflow открыт. Запишите id Excel Extractor и Schedule Builder: понадобятся на шаге 4.
+После импорта у каждого workflow новый id — он виден в адресной строке, когда workflow открыт. Запишите id Excel Extractor, Schedule Builder (и кластерного агента, если импортировали): понадобятся на шаге 4.
 
 `support/demo-agent.workflow.json` — только если проверяете шаблон агента. Других JSON в `support/` нет.
 
@@ -155,7 +167,7 @@ n8n → **Import from File**, строго по `IMPORT_ORDER.txt`. Пока **�
 
 | Куда | Какой credential |
 |---|---|
-| **Decision chat**, **Verify chat**, **Interpret chat** в оркестраторе; **Agent chat** у Excel Extractor, Schedule Builder и Demo Agent | Один OpenAI-compatible credential вашей модели |
+| **Decision chat**, **Verify chat**, **Interpret chat** в оркестраторе; **Agent chat** у Excel Extractor, Schedule Builder, tNav Cluster Agent и Demo Agent | Один OpenAI-compatible credential вашей модели |
 | Knowledge Ingestion и Retrieval → Embeddings | Отдельный embedding credential, модель `baai/bge-m3`, Dimensions пустое (таблица `tnavigator_schedule_knowledge_v2`) |
 | Ingestion, Retrieval, оркестратор, прокси, Error traces → Postgres | Одна учётка Postgres / PGVector (SSL = Disable, если сервер без TLS) |
 | Webhook оркестратора, нода **POST continue run**, webhook прокси | Header Auth — те же имя и значение, что в `mas-activity.env` |
@@ -168,6 +180,7 @@ n8n → **Import from File**, строго по `IMPORT_ORDER.txt`. Пока **�
 | `excel_tools_url` | `http://<IP-этой-Windows>:8000` |
 | `schedule_service_url` | `http://<IP-этой-Windows>:8090` |
 | `math_url` | `http://<IP-этой-Windows>:8100` |
+| `tnav_cluster_url` | `http://<IP-этой-Windows>:8400` — только если поднимаете кластерный агент; иначе оставьте как есть |
 | `orchestrator_step_url` | `https://<ваш-n8n>/webhook/mas-orchestrator-step` — адрес, по которому **n8n достаёт сам себя** |
 | `chat_model` | id модели, как в credential |
 | `chat_base_url` | Base URL из того же credential, **без** `/chat/completions`. Нужен Decision, Verify, Interpret и Agent chat |
@@ -201,6 +214,7 @@ Excel Tools без Header Auth — ключ в Runtime Config и на агент
 | `excel_tools_url` | агент Excel | `:8000` / `http://excel-tools:8000` |
 | `schedule_service_url` | агент Schedule | `:8090` / `http://schedule-builder:8090` |
 | `math_url` | HTTP-агент Math | `:8100` / `http://math-service:8100` |
+| `tnav_cluster_url` | агент кластера | `:8400` / `http://tnav-cluster:8400`. Доступ к самому кластеру (адрес, логин, пароль) здесь **не** хранится — он в `tnav-cluster.env` |
 | `orchestrator_step_url` | Activity и n8n «сам в себя» | корпоративный URL `/webhook/mas-orchestrator-step` / lab `http://n8n:5678/…` с хоста Windows — тот адрес, с которого n8n достаёт себя |
 | `chat_model` | HTTP `/chat/completions` | id как в credential |
 | `chat_base_url` | Decision, Verify, Interpret, Agent chat (без `/chat/completions`) | Base URL credential |
@@ -217,6 +231,7 @@ Excel Tools без Header Auth — ключ в Runtime Config и на агент
 | `excel-agent-tools/excel-tools.env` | слушатель `:8000`, сессии, лимиты книг | `EXCEL_TOOLS_HOST=0.0.0.0`; ключ не нужен |
 | `schedule-builder-service/schedule-builder.env` | слушатель `:8090`, `ACTIVITY_BASE_URL` | то же |
 | `fastapi-math-service/math-service.env` | слушатель `:8100` | то же |
+| `tnav-cluster-service/tnav-cluster.env` | слушатель `:8400`, **доступ к ГД-кластеру** (адрес, логин, пароль или ключ), рабочий каталог на кластере, команда `tNavigator`, интервалы наблюдения | единственное место с паролем кластера; раздел «8. Кластерный агент» |
 | `agents-template/demo_agent/demo-agent.env` | шаблон агента `:8300` (не полевой контур) | lab / проверка шаблона |
 | корневой `.env` | только lab Compose (Postgres, n8n, порты) | на поле не используется |
 
@@ -229,19 +244,19 @@ Excel Tools без Header Auth — ключ в Runtime Config и на агент
 | Workflow | Нода | Цель |
 |---|---|---|
 | Orchestrator — MAS | Runtime endpoints | MAS — Runtime Config |
-| Оба агента | Runtime configuration | MAS — Runtime Config |
-| Оркестратор и оба агента | Call Knowledge Retrieval | MAS — Knowledge Retrieval |
+| Каждый агент (Excel, Schedule, кластер) | Runtime configuration | MAS — Runtime Config |
+| Оркестратор и каждый агент | Call Knowledge Retrieval | MAS — Knowledge Retrieval |
 | Форма Health Check | Runtime endpoints | MAS — Runtime Config; на пробах webhook — тот же Header Auth |
 
 Агентов к оркестратору кнопкой «привязать ноду» не цепляют. После импорта впишите новые id в `Runtime URLs` → `agent_workflow_ids`:
 
 ```json
-{"excel_extractor":"<id из URL Excel>","schedule_builder":"<id из URL Schedule>"}
+{"excel_extractor":"<id из URL Excel>","schedule_builder":"<id из URL Schedule>","tnav_cluster":"<id из URL кластерного>"}
 ```
 
-Save. Либо позже, когда Activity уже жива: страница **Агенты** → правите `invoke.workflow_id`.
+Кластерную строку добавляйте только если импортировали его workflow. Save. Либо позже, когда Activity уже жива: страница **Агенты** → правите `invoke.workflow_id`.
 
-Settings каждого из: оркестратор, оба агента, Retrieval, Ingestion → **Error workflow** = `Error — MAS Node Traces`. На сам Error traces и на прокси это не ставьте.
+Settings каждого из: оркестратор, все агенты, Retrieval, Ingestion → **Error workflow** = `Error — MAS Node Traces`. На сам Error traces и на прокси это не ставьте.
 
 ### 5. Прокси и таблицы
 
@@ -262,6 +277,96 @@ Settings каждого из: оркестратор, оба агента, Retri
 1. В n8n откройте `/form/mas-deployment-health-check` (нужна ваша сессия). Цель — **PASS**, ни одного FAIL. Строка версии = `VERSION`.
 2. Активируйте по очереди: Ingestion, Retrieval, Excel Extractor, Schedule Builder, Error traces, **последним** оркестратор.
 3. Прогоните форму ещё раз.
+
+### 8. Кластерный агент (расчёт на ГД-кластере)
+
+Нужен, если после сборки расписания модель надо посчитать на гидродинамическом кластере. Агент по SSH находит модель, кладёт новое расписание рядом со старым, делает **копию** входного `.data` с новым `INCLUDE`, запускает `tNavigator` и сам пишет в чат, когда расчёт закончится. Исходные файлы остаются на месте: удаление в агенте запрещено.
+
+Если расчёты вам не нужны — пропустите раздел целиком. Агент выключен по умолчанию и системе не мешает.
+
+#### 8.1. Сервис на Windows
+
+```bat
+cd tnav-cluster-service
+setup-windows.bat
+copy tnav-cluster.env.example tnav-cluster.env
+notepad tnav-cluster.env
+start-windows.bat
+```
+
+#### 8.2. Куда вписывать адрес кластера, логин и пароль
+
+**Только в `tnav-cluster-service\tnav-cluster.env` на этой Windows.** В n8n, в базе и в workflow доступа к кластеру нет.
+
+| Строка в `tnav-cluster.env` | Что вписать |
+|---|---|
+| `TNAV_SSH_HOST` | адрес ГД-кластера, как он виден с этой Windows (имя или IP) |
+| `TNAV_SSH_PORT` | `22`, если SSH на другом порту — свой |
+| `TNAV_SSH_USER` | ваша учётка на кластере |
+| `TNAV_SSH_PASSWORD` | пароль этой учётки |
+| `TNAV_SSH_KEY_PATH` | **вместо пароля** — путь к приватному ключу на этой Windows, например `C:\Users\me\.ssh\id_ed25519` (и `TNAV_SSH_KEY_PASSPHRASE`, если ключ с фразой) |
+| `TNAV_CLUSTER_HOST` | `0.0.0.0` (иначе корпоративный n8n до сервиса не дотянется) + открыть порт 8400 в firewall |
+| `TNAV_CLUSTER_PORT` | `8400` |
+| `ACTIVITY_BASE_URL` | `http://127.0.0.1:8200` |
+
+Пароль **или** ключ — что-то одно обязательно. Пока не заполнено, сервис запускается, но в `http://127.0.0.1:8400/health` в поле `cluster_problems` написано по-русски, чего не хватает; задача с расчётом в этом случае падает с понятным текстом, а не задаёт вопрос инженеру.
+
+#### 8.3. Куда вписывать пути
+
+| Строка | Что вписать | Пример |
+|---|---|---|
+| `TNAV_CLUSTER_ROOT` | **единственный** каталог на кластере, внутри которого агенту разрешено работать | `/data/models` |
+| `TNAV_RESULTS_DIRNAME` | имя каталога, куда `tNavigator` кладёт `.log` / `.err` / `.end` рядом с моделью | `RESULTS` |
+
+Всё, что агент делает и показывает, — **внутри** `TNAV_CLUSTER_ROOT` и путями относительно него: в чате вы увидите `SEVER/SEVER.data`, а не полный путь. Выйти наружу (`..`, абсолютный путь, ссылка за пределы) агент не может — такая попытка отклоняется. Если модели разложены по разным каталогам, укажите общий каталог выше и увеличьте `TNAV_SCAN_DEPTH`.
+
+#### 8.4. Куда вписывать команду запуска расчёта
+
+Одна строка `TNAV_CLI_COMMAND`. Путь к исполняемому файлу и опции — ваши, агент подставляет вместо `{model}` путь к входному `.data` файлу:
+
+```
+TNAV_CLI_COMMAND=/opt/tNavigator/tNavigator-con --cpu-num=8 --log-lang=ru --dump-res {model}
+                 └── путь к tNavigator ──┘ └─── ваши опции ───┘ └ подставит агент
+```
+
+- `{model}` обязателен, без него сервис не стартует и скажет об этом в логе запуска.
+- Опции агент не разбирает и передаёт кластеру как есть. Из мануала tNavigator (раздел про запуск из командной строки) полезны `--cpu-num`, `--mpi-num`, `--log-lang=ru`, `--dump-res`, `--max-calc-time`.
+- Спросите у администратора кластера точный путь к `tNavigator-con` и принятые у вас опции (число ядер, очередь). Больше нигде эту команду менять не нужно.
+
+#### 8.5. Куда вписывать параметры наблюдения
+
+| Строка | Смысл | Обычное значение |
+|---|---|---|
+| `TNAV_POLL_SECONDS` | как часто агент спрашивает кластер о состоянии расчёта | `60` |
+| `TNAV_PROGRESS_EVERY_S` | как часто в чате появляется строка «расчёт идёт» | `900` |
+| `TNAV_MAX_WAIT_HOURS` | сколько агент готов ждать; дольше — сообщает, что ждать перестал (расчёт на кластере продолжается) | `72` |
+| `TNAV_COMMAND_TIMEOUT_S` | таймаут короткой команды на кластере | `120` |
+| `TNAV_SCAN_DEPTH` | на какую глубину под корнем искать `.data` | `4` |
+
+Остальные строки файла — с комментариями, менять не обязательно. Полное описание каждой — `tnav-cluster-service/README.md`.
+
+#### 8.6. Что сделать в n8n
+
+1. **Import from File** → `Agent — tNav Cluster Agent` (шестым в порядке импорта).
+2. В нём привязать: `Runtime configuration` → **MAS — Runtime Config**, `Call Knowledge Retrieval` → **MAS — Knowledge Retrieval**, на `tNav Cluster Agent Agent chat` — тот же OpenAI-compatible credential, что на Decision chat.
+3. Settings этого workflow → **Error workflow** = `Error — MAS Node Traces`.
+4. В **MAS — Runtime Config** → `Runtime URLs`: `tnav_cluster_url` = `http://<IP-этой-Windows>:8400`.
+5. Там же в `agent_workflow_ids` добавить `"tnav_cluster":"<id из адресной строки этого workflow>"`.
+6. **Activate** workflow агента.
+
+#### 8.7. Включить агента в системе
+
+Activity → **Агенты** → строка `tNav Cluster Agent` → включить. Пока она выключена, оркестратор агента не видит и задачи про кластер до него не доходят. После включения он появляется на вкладке **Схема** рядом с Excel и Schedule.
+
+Порядок именно такой: сначала заполненный `tnav-cluster.env` и живой `/health`, потом включение строки. Иначе первая же задача упрётся в ненастроенный доступ.
+
+#### 8.8. Проверка
+
+1. `http://<IP-Windows>:8400/health` → `ok: true`, `cluster_ready: true`, в `cluster` видны рабочий каталог и путь к `tNavigator` (пароля там нет).
+2. Задача в Activity: приложите готовый `.INC` и напишите, например: «На кластере лежит модель SEVER. Примени приложенное расписание и запусти расчёт». В чате должно появиться: какая модель разобрана, что собрана новая версия, что расчёт запущен, затем — итог с временем расчёта.
+3. Пока расчёт идёт, задача в состоянии «ждём агента»; закрывать Activity не нужно, итог придёт сам.
+
+Файлы результатов расчёта агент с кластера не забирает — он возвращает состояние, время и число шагов, а профили и отчёты лежат на кластере в каталоге результатов.
 
 ---
 
@@ -308,6 +413,11 @@ Settings каждого из: оркестратор, оба агента, Retri
 | Пустая лента при живом n8n | Переимпортировали прокси — перезапустите Activity. |
 | «Сервис агента не отвечает», задача сразу упала | Не запущен Excel/Schedule или неверный URL в Runtime Config. Поднимите сервис и перезапустите задачу. То же, если сервис упал **в середине** цикла инструментов. |
 | «Модель чата не ответила», задача сразу упала | Нет ответа `/chat/completions` (сеть, 5xx, пустой choices). Проверьте credential, `chat_base_url` и что корп. vLLM умеет function calling. Не путать с «агент не вернул факты». |
+| Кластерный агент пишет, что доступ к кластеру не настроен | В `tnav-cluster.env` нет адреса, пользователя или пароля/ключа. Что именно — в `http://<IP-Windows>:8400/health`, поле `cluster_problems`. После правки перезапустите сервис. |
+| «Рабочий каталог кластера не найден» | `TNAV_CLUSTER_ROOT` не существует на кластере или у учётки нет прав. Проверьте вручную: `ssh <user>@<host> ls <каталог>`. |
+| Агент не находит модель | Модель лежит глубже `TNAV_SCAN_DEPTH` от корня или вне `TNAV_CLUSTER_ROOT`. Поднимите корень выше / увеличьте глубину, либо назовите путь модели в задаче. |
+| Расчёт «не запустился» сразу после запуска | Неверный путь к `tNavigator-con` или опции в `TNAV_CLI_COMMAND`. Хвост лога кластера агент кладёт в лог задачи; проверьте команду у администратора кластера. |
+| Расчёт по этой модели уже идёт | В каталоге результатов лежит файл блокировки от предыдущего запуска. Дождитесь окончания или посчитайте другую версию модели — агент намеренно не запускает вторую копию. |
 | «Не удалось разобрать следующий шаг» | Модель вернула пустой ответ. В Логе смотрите строку решения. Три раза подряд задача падает. Проверьте, что на Decision chat, Verify chat и Interpret chat висит тот же credential и `chat_base_url` совпадает с Base URL модели. |
 | Вопрос с кнопками, вы ответили текстом, система переспросила «не поняла» | Напишите ближе к подписи кнопки или нажмите кнопку. Interpret chat должен быть на том же credential, что Decision. |
 | Activity пишет, что не дождалась шага, задача остаётся «идёт» | n8n ещё считает (лимит ожидания 30 мин). Это не «неверный адрес». Если connection refused — тогда да, адрес оркестратора. |

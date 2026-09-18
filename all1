@@ -545,7 +545,7 @@ echo Keep this window open. Press Ctrl+C to stop.
 exit /b %errorlevel%
 
 ===END_FILE===
-===BEGIN_FILE===	docker-compose.yml	9675	utf8
+===BEGIN_FILE===	docker-compose.yml	11340	utf8
 # Lab-only Compose. Python services bind-mount their code and run uvicorn from a plain python image.
 # The shared core mas_agent_kit is a plain repo folder, not a pip package: it is bind-mounted read-only at
 # /mas-agent-kit and each service's app/__init__.py puts it on sys.path (same rule as on the Windows field
@@ -625,6 +625,44 @@ services:
       - DEMO_PROGRESS_EVERY_S=${DEMO_PROGRESS_EVERY_S:-15}
     ports:
       - 127.0.0.1:${DEMO_AGENT_HOST_PORT:-8300}:8300
+    networks:
+      - backend
+      - egress
+  # tNav Cluster Agent + мок ГД-кластера в одном контейнере: сервис ходит к моку по SSH (paramiko,
+  # exec + SFTP) — тем же транспортом, что в поле. Мок поднимается первым, дерево моделей — /cluster.
+  tnav-cluster:
+    image: python:3.11-slim
+    command: >
+      sh -c "pip install -r requirements.txt &&
+             python3 mock_cluster/lab_cluster.py &
+             sleep 6 &&
+             python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8400"
+    working_dir: /app
+    volumes:
+      - ./tnav-cluster-service:/app
+      - ./mas-agent-kit:/mas-agent-kit:ro
+      - ./VERSION:/app/VERSION:ro
+    environment:
+      - ACTIVITY_BASE_URL=${ACTIVITY_BASE_URL:-http://mas-activity:8200}
+      - TNAV_SESSIONS_DIR=/tmp/tnav-sessions
+      # Лаборатория: мок кластера в этом же контейнере, доступ по паролю.
+      - TNAV_TRANSPORT=ssh
+      - TNAV_SSH_HOST=127.0.0.1
+      - TNAV_SSH_PORT=2222
+      - TNAV_SSH_USER=re
+      - TNAV_SSH_PASSWORD=cluster-pass
+      - TNAV_CLUSTER_ROOT=/cluster
+      - TNAV_MOCK_ROOT=/cluster
+      - TNAV_MOCK_SSH_PORT=2222
+      # Заглушка tNavigator вместо боевого /opt/tNavigator/tNavigator-con; {model} подставляет агент.
+      - TNAV_CLI_COMMAND=python3 /app/mock_cluster/tnav_con_mock.py --cpu-num=2 --log-lang=ru --dump-res {model}
+      - TNAV_MOCK_SECONDS=${TNAV_MOCK_SECONDS:-12}
+      - TNAV_MOCK_FORECAST_DATES=${TNAV_MOCK_FORECAST_DATES:-8}
+      - TNAV_POLL_SECONDS=${TNAV_POLL_SECONDS:-3}
+      - TNAV_PROGRESS_EVERY_S=${TNAV_PROGRESS_EVERY_S:-10}
+      - TNAV_MAX_WAIT_HOURS=${TNAV_MAX_WAIT_HOURS:-1}
+    ports:
+      - 127.0.0.1:${TNAV_CLUSTER_HOST_PORT:-8400}:8400
     networks:
       - backend
       - egress
@@ -806,7 +844,7 @@ networks:
   ingress: null
 
 ===END_FILE===
-===BEGIN_FILE===	docs.md	19780	utf8
+===BEGIN_FILE===	docs.md	28348	utf8
 # NOVATEK RE MASter
 
 Система собирает или правит файл `SCHEDULE` (`.INC`) для tNavigator / ECLIPSE по задаче гидродинамика. Вы пишете цель по-русски, прикладываете Excel и исходный schedule — система читает таблицы, при необходимости спрашивает вас и отдаёт новый `.INC` с diff.
@@ -828,12 +866,14 @@ flowchart TB
     ExcelSvc["Excel Tools :8000<br/>читает книги"]
     SchedSvc["Schedule Builder :8090<br/>правит .INC"]
     MathSvc["Math :8100"]
+    ClusterSvc["tNav Cluster :8400<br/>модели и расчёты (по желанию)"]
   end
 
   subgraph n8n [Корпоративный n8n 2.30.8]
     Orch[Оркестратор]
     ExcelA[Агент Excel]
     SchedA[Агент Schedule]
+    ClusterA[Агент кластера]
     Proxy[Прокси к Postgres]
     RAG[База знаний]
     Cfg[Адреса и лимиты]
@@ -841,20 +881,25 @@ flowchart TB
   end
 
   PG[(Postgres)]
+  Cluster[["ГД-кластер<br/>tNavigator"]]
 
   Activity -->|создать задачу / ответ| Orch
   Activity --> Proxy
   Orch --> Model
   Orch --> ExcelA
   Orch --> SchedA
+  Orch --> ClusterA
   Orch --> RAG
   Orch --> Cfg
   ExcelA --> ExcelSvc
   SchedA --> SchedSvc
+  ClusterA --> ClusterSvc
   ExcelA --> Model
   SchedA --> Model
   ExcelSvc --> Activity
   SchedSvc --> Activity
+  ClusterSvc -->|SSH| Cluster
+  ClusterSvc --> Activity
   Proxy --> PG
   Orch --> PG
   RAG --> PG
@@ -881,7 +926,9 @@ flowchart TB
 
 Состав этой сборки — альфа (`VERSION` `0.8.0`, тег `alpha-1`).
 
-Ещё нет: третьего боевого агента (расчёт, выгрузка с кластера) — только Excel и Schedule. Широкий набор живых кейсов (два вопроса от разных агентов, перепривязка и даты в одной задаче, несколько INCLUDE) — после 6.2.
+Третий агент — **кластерный** (`tNav Cluster Agent`): по SSH находит модель на ГД-кластере, подкладывает новое расписание рядом со старым, делает копию входного `.data` с новым `INCLUDE`, запускает расчёт `tNavigator` и сам сообщает в чат, сколько он считался и чем закончился. Он **выключен из коробки** — включается после того, как вы впишете доступ к кластеру (раздел «8. Кластерный агент»). Ничего не удаляет: `rm` запрещён в коде.
+
+Ещё нет: выгрузки результатов расчёта с кластера (профили, отчёты) — агент возвращает состояние и время расчёта, но не забирает файлы результатов. Широкий набор живых кейсов (два вопроса от разных агентов, перепривязка и даты в одной задаче, несколько INCLUDE) — после 6.2.
 
 Если оркестратор импортирован до правки thinking: в **Orchestrator — MAS** должны быть HTTP-ноды **Decision chat**, **Verify chat**, **Interpret chat**. У агентов Excel / Schedule / Demo — HTTP-нода **Agent chat**. На все эти ноды — тот же OpenAI-compatible credential; в Runtime Config заполнен `chat_base_url`. Иначе свободный ответ и следующий шаг снова пустеют. Thinking у модели выключен телом запроса (`reasoning.enabled`, `enable_thinking`, `chat_template_kwargs.enable_thinking`), не отдельной нодой языковой модели.
 
@@ -915,6 +962,8 @@ flowchart TB
 | Schedule Builder | `schedule-builder-service` | 8090 | `schedule-builder.env` |
 | Math | `fastapi-math-service` | 8100 | `math-service.env` |
 | Activity | `mas-activity-service` | 8200 | `mas-activity.env` — заполните, но **запустите позже** |
+
+Пятый сервис — `tnav-cluster-service` (`:8400`, `tnav-cluster.env`) — нужен только если вы будете считать модели на ГД-кластере. Он ставится так же, но настраивается отдельно: раздел «8. Кластерный агент».
 
 В каждом каталоге:
 
@@ -951,12 +1000,13 @@ n8n → **Import from File**, строго по `IMPORT_ORDER.txt`. Пока **�
 3. `MAS — Runtime Config`
 4. `Agent — Schedule Builder`
 5. `Agent — Excel Extractor`
-6. `Error — MAS Node Traces`
-7. `MAS — Control Plane Proxy`
-8. `Orchestrator — MAS`
-9. `Form — MAS Deployment Health Check`
+6. `Agent — tNav Cluster Agent` — можно пропустить, если расчёты на кластере не нужны
+7. `Error — MAS Node Traces`
+8. `MAS — Control Plane Proxy`
+9. `Orchestrator — MAS`
+10. `Form — MAS Deployment Health Check`
 
-После импорта у каждого workflow новый id — он виден в адресной строке, когда workflow открыт. Запишите id Excel Extractor и Schedule Builder: понадобятся на шаге 4.
+После импорта у каждого workflow новый id — он виден в адресной строке, когда workflow открыт. Запишите id Excel Extractor, Schedule Builder (и кластерного агента, если импортировали): понадобятся на шаге 4.
 
 `support/demo-agent.workflow.json` — только если проверяете шаблон агента. Других JSON в `support/` нет.
 
@@ -964,7 +1014,7 @@ n8n → **Import from File**, строго по `IMPORT_ORDER.txt`. Пока **�
 
 | Куда | Какой credential |
 |---|---|
-| **Decision chat**, **Verify chat**, **Interpret chat** в оркестраторе; **Agent chat** у Excel Extractor, Schedule Builder и Demo Agent | Один OpenAI-compatible credential вашей модели |
+| **Decision chat**, **Verify chat**, **Interpret chat** в оркестраторе; **Agent chat** у Excel Extractor, Schedule Builder, tNav Cluster Agent и Demo Agent | Один OpenAI-compatible credential вашей модели |
 | Knowledge Ingestion и Retrieval → Embeddings | Отдельный embedding credential, модель `baai/bge-m3`, Dimensions пустое (таблица `tnavigator_schedule_knowledge_v2`) |
 | Ingestion, Retrieval, оркестратор, прокси, Error traces → Postgres | Одна учётка Postgres / PGVector (SSL = Disable, если сервер без TLS) |
 | Webhook оркестратора, нода **POST continue run**, webhook прокси | Header Auth — те же имя и значение, что в `mas-activity.env` |
@@ -977,6 +1027,7 @@ n8n → **Import from File**, строго по `IMPORT_ORDER.txt`. Пока **�
 | `excel_tools_url` | `http://<IP-этой-Windows>:8000` |
 | `schedule_service_url` | `http://<IP-этой-Windows>:8090` |
 | `math_url` | `http://<IP-этой-Windows>:8100` |
+| `tnav_cluster_url` | `http://<IP-этой-Windows>:8400` — только если поднимаете кластерный агент; иначе оставьте как есть |
 | `orchestrator_step_url` | `https://<ваш-n8n>/webhook/mas-orchestrator-step` — адрес, по которому **n8n достаёт сам себя** |
 | `chat_model` | id модели, как в credential |
 | `chat_base_url` | Base URL из того же credential, **без** `/chat/completions`. Нужен Decision, Verify, Interpret и Agent chat |
@@ -1010,6 +1061,7 @@ Excel Tools без Header Auth — ключ в Runtime Config и на агент
 | `excel_tools_url` | агент Excel | `:8000` / `http://excel-tools:8000` |
 | `schedule_service_url` | агент Schedule | `:8090` / `http://schedule-builder:8090` |
 | `math_url` | HTTP-агент Math | `:8100` / `http://math-service:8100` |
+| `tnav_cluster_url` | агент кластера | `:8400` / `http://tnav-cluster:8400`. Доступ к самому кластеру (адрес, логин, пароль) здесь **не** хранится — он в `tnav-cluster.env` |
 | `orchestrator_step_url` | Activity и n8n «сам в себя» | корпоративный URL `/webhook/mas-orchestrator-step` / lab `http://n8n:5678/…` с хоста Windows — тот адрес, с которого n8n достаёт себя |
 | `chat_model` | HTTP `/chat/completions` | id как в credential |
 | `chat_base_url` | Decision, Verify, Interpret, Agent chat (без `/chat/completions`) | Base URL credential |
@@ -1026,6 +1078,7 @@ Excel Tools без Header Auth — ключ в Runtime Config и на агент
 | `excel-agent-tools/excel-tools.env` | слушатель `:8000`, сессии, лимиты книг | `EXCEL_TOOLS_HOST=0.0.0.0`; ключ не нужен |
 | `schedule-builder-service/schedule-builder.env` | слушатель `:8090`, `ACTIVITY_BASE_URL` | то же |
 | `fastapi-math-service/math-service.env` | слушатель `:8100` | то же |
+| `tnav-cluster-service/tnav-cluster.env` | слушатель `:8400`, **доступ к ГД-кластеру** (адрес, логин, пароль или ключ), рабочий каталог на кластере, команда `tNavigator`, интервалы наблюдения | единственное место с паролем кластера; раздел «8. Кластерный агент» |
 | `agents-template/demo_agent/demo-agent.env` | шаблон агента `:8300` (не полевой контур) | lab / проверка шаблона |
 | корневой `.env` | только lab Compose (Postgres, n8n, порты) | на поле не используется |
 
@@ -1038,19 +1091,19 @@ Excel Tools без Header Auth — ключ в Runtime Config и на агент
 | Workflow | Нода | Цель |
 |---|---|---|
 | Orchestrator — MAS | Runtime endpoints | MAS — Runtime Config |
-| Оба агента | Runtime configuration | MAS — Runtime Config |
-| Оркестратор и оба агента | Call Knowledge Retrieval | MAS — Knowledge Retrieval |
+| Каждый агент (Excel, Schedule, кластер) | Runtime configuration | MAS — Runtime Config |
+| Оркестратор и каждый агент | Call Knowledge Retrieval | MAS — Knowledge Retrieval |
 | Форма Health Check | Runtime endpoints | MAS — Runtime Config; на пробах webhook — тот же Header Auth |
 
 Агентов к оркестратору кнопкой «привязать ноду» не цепляют. После импорта впишите новые id в `Runtime URLs` → `agent_workflow_ids`:
 
 ```json
-{"excel_extractor":"<id из URL Excel>","schedule_builder":"<id из URL Schedule>"}
+{"excel_extractor":"<id из URL Excel>","schedule_builder":"<id из URL Schedule>","tnav_cluster":"<id из URL кластерного>"}
 ```
 
-Save. Либо позже, когда Activity уже жива: страница **Агенты** → правите `invoke.workflow_id`.
+Кластерную строку добавляйте только если импортировали его workflow. Save. Либо позже, когда Activity уже жива: страница **Агенты** → правите `invoke.workflow_id`.
 
-Settings каждого из: оркестратор, оба агента, Retrieval, Ingestion → **Error workflow** = `Error — MAS Node Traces`. На сам Error traces и на прокси это не ставьте.
+Settings каждого из: оркестратор, все агенты, Retrieval, Ingestion → **Error workflow** = `Error — MAS Node Traces`. На сам Error traces и на прокси это не ставьте.
 
 ### 5. Прокси и таблицы
 
@@ -1071,6 +1124,96 @@ Settings каждого из: оркестратор, оба агента, Retri
 1. В n8n откройте `/form/mas-deployment-health-check` (нужна ваша сессия). Цель — **PASS**, ни одного FAIL. Строка версии = `VERSION`.
 2. Активируйте по очереди: Ingestion, Retrieval, Excel Extractor, Schedule Builder, Error traces, **последним** оркестратор.
 3. Прогоните форму ещё раз.
+
+### 8. Кластерный агент (расчёт на ГД-кластере)
+
+Нужен, если после сборки расписания модель надо посчитать на гидродинамическом кластере. Агент по SSH находит модель, кладёт новое расписание рядом со старым, делает **копию** входного `.data` с новым `INCLUDE`, запускает `tNavigator` и сам пишет в чат, когда расчёт закончится. Исходные файлы остаются на месте: удаление в агенте запрещено.
+
+Если расчёты вам не нужны — пропустите раздел целиком. Агент выключен по умолчанию и системе не мешает.
+
+#### 8.1. Сервис на Windows
+
+```bat
+cd tnav-cluster-service
+setup-windows.bat
+copy tnav-cluster.env.example tnav-cluster.env
+notepad tnav-cluster.env
+start-windows.bat
+```
+
+#### 8.2. Куда вписывать адрес кластера, логин и пароль
+
+**Только в `tnav-cluster-service\tnav-cluster.env` на этой Windows.** В n8n, в базе и в workflow доступа к кластеру нет.
+
+| Строка в `tnav-cluster.env` | Что вписать |
+|---|---|
+| `TNAV_SSH_HOST` | адрес ГД-кластера, как он виден с этой Windows (имя или IP) |
+| `TNAV_SSH_PORT` | `22`, если SSH на другом порту — свой |
+| `TNAV_SSH_USER` | ваша учётка на кластере |
+| `TNAV_SSH_PASSWORD` | пароль этой учётки |
+| `TNAV_SSH_KEY_PATH` | **вместо пароля** — путь к приватному ключу на этой Windows, например `C:\Users\me\.ssh\id_ed25519` (и `TNAV_SSH_KEY_PASSPHRASE`, если ключ с фразой) |
+| `TNAV_CLUSTER_HOST` | `0.0.0.0` (иначе корпоративный n8n до сервиса не дотянется) + открыть порт 8400 в firewall |
+| `TNAV_CLUSTER_PORT` | `8400` |
+| `ACTIVITY_BASE_URL` | `http://127.0.0.1:8200` |
+
+Пароль **или** ключ — что-то одно обязательно. Пока не заполнено, сервис запускается, но в `http://127.0.0.1:8400/health` в поле `cluster_problems` написано по-русски, чего не хватает; задача с расчётом в этом случае падает с понятным текстом, а не задаёт вопрос инженеру.
+
+#### 8.3. Куда вписывать пути
+
+| Строка | Что вписать | Пример |
+|---|---|---|
+| `TNAV_CLUSTER_ROOT` | **единственный** каталог на кластере, внутри которого агенту разрешено работать | `/data/models` |
+| `TNAV_RESULTS_DIRNAME` | имя каталога, куда `tNavigator` кладёт `.log` / `.err` / `.end` рядом с моделью | `RESULTS` |
+
+Всё, что агент делает и показывает, — **внутри** `TNAV_CLUSTER_ROOT` и путями относительно него: в чате вы увидите `SEVER/SEVER.data`, а не полный путь. Выйти наружу (`..`, абсолютный путь, ссылка за пределы) агент не может — такая попытка отклоняется. Если модели разложены по разным каталогам, укажите общий каталог выше и увеличьте `TNAV_SCAN_DEPTH`.
+
+#### 8.4. Куда вписывать команду запуска расчёта
+
+Одна строка `TNAV_CLI_COMMAND`. Путь к исполняемому файлу и опции — ваши, агент подставляет вместо `{model}` путь к входному `.data` файлу:
+
+```
+TNAV_CLI_COMMAND=/opt/tNavigator/tNavigator-con --cpu-num=8 --log-lang=ru --dump-res {model}
+                 └── путь к tNavigator ──┘ └─── ваши опции ───┘ └ подставит агент
+```
+
+- `{model}` обязателен, без него сервис не стартует и скажет об этом в логе запуска.
+- Опции агент не разбирает и передаёт кластеру как есть. Из мануала tNavigator (раздел про запуск из командной строки) полезны `--cpu-num`, `--mpi-num`, `--log-lang=ru`, `--dump-res`, `--max-calc-time`.
+- Спросите у администратора кластера точный путь к `tNavigator-con` и принятые у вас опции (число ядер, очередь). Больше нигде эту команду менять не нужно.
+
+#### 8.5. Куда вписывать параметры наблюдения
+
+| Строка | Смысл | Обычное значение |
+|---|---|---|
+| `TNAV_POLL_SECONDS` | как часто агент спрашивает кластер о состоянии расчёта | `60` |
+| `TNAV_PROGRESS_EVERY_S` | как часто в чате появляется строка «расчёт идёт» | `900` |
+| `TNAV_MAX_WAIT_HOURS` | сколько агент готов ждать; дольше — сообщает, что ждать перестал (расчёт на кластере продолжается) | `72` |
+| `TNAV_COMMAND_TIMEOUT_S` | таймаут короткой команды на кластере | `120` |
+| `TNAV_SCAN_DEPTH` | на какую глубину под корнем искать `.data` | `4` |
+
+Остальные строки файла — с комментариями, менять не обязательно. Полное описание каждой — `tnav-cluster-service/README.md`.
+
+#### 8.6. Что сделать в n8n
+
+1. **Import from File** → `Agent — tNav Cluster Agent` (шестым в порядке импорта).
+2. В нём привязать: `Runtime configuration` → **MAS — Runtime Config**, `Call Knowledge Retrieval` → **MAS — Knowledge Retrieval**, на `tNav Cluster Agent Agent chat` — тот же OpenAI-compatible credential, что на Decision chat.
+3. Settings этого workflow → **Error workflow** = `Error — MAS Node Traces`.
+4. В **MAS — Runtime Config** → `Runtime URLs`: `tnav_cluster_url` = `http://<IP-этой-Windows>:8400`.
+5. Там же в `agent_workflow_ids` добавить `"tnav_cluster":"<id из адресной строки этого workflow>"`.
+6. **Activate** workflow агента.
+
+#### 8.7. Включить агента в системе
+
+Activity → **Агенты** → строка `tNav Cluster Agent` → включить. Пока она выключена, оркестратор агента не видит и задачи про кластер до него не доходят. После включения он появляется на вкладке **Схема** рядом с Excel и Schedule.
+
+Порядок именно такой: сначала заполненный `tnav-cluster.env` и живой `/health`, потом включение строки. Иначе первая же задача упрётся в ненастроенный доступ.
+
+#### 8.8. Проверка
+
+1. `http://<IP-Windows>:8400/health` → `ok: true`, `cluster_ready: true`, в `cluster` видны рабочий каталог и путь к `tNavigator` (пароля там нет).
+2. Задача в Activity: приложите готовый `.INC` и напишите, например: «На кластере лежит модель SEVER. Примени приложенное расписание и запусти расчёт». В чате должно появиться: какая модель разобрана, что собрана новая версия, что расчёт запущен, затем — итог с временем расчёта.
+3. Пока расчёт идёт, задача в состоянии «ждём агента»; закрывать Activity не нужно, итог придёт сам.
+
+Файлы результатов расчёта агент с кластера не забирает — он возвращает состояние, время и число шагов, а профили и отчёты лежат на кластере в каталоге результатов.
 
 ---
 
@@ -1117,6 +1260,11 @@ Settings каждого из: оркестратор, оба агента, Retri
 | Пустая лента при живом n8n | Переимпортировали прокси — перезапустите Activity. |
 | «Сервис агента не отвечает», задача сразу упала | Не запущен Excel/Schedule или неверный URL в Runtime Config. Поднимите сервис и перезапустите задачу. То же, если сервис упал **в середине** цикла инструментов. |
 | «Модель чата не ответила», задача сразу упала | Нет ответа `/chat/completions` (сеть, 5xx, пустой choices). Проверьте credential, `chat_base_url` и что корп. vLLM умеет function calling. Не путать с «агент не вернул факты». |
+| Кластерный агент пишет, что доступ к кластеру не настроен | В `tnav-cluster.env` нет адреса, пользователя или пароля/ключа. Что именно — в `http://<IP-Windows>:8400/health`, поле `cluster_problems`. После правки перезапустите сервис. |
+| «Рабочий каталог кластера не найден» | `TNAV_CLUSTER_ROOT` не существует на кластере или у учётки нет прав. Проверьте вручную: `ssh <user>@<host> ls <каталог>`. |
+| Агент не находит модель | Модель лежит глубже `TNAV_SCAN_DEPTH` от корня или вне `TNAV_CLUSTER_ROOT`. Поднимите корень выше / увеличьте глубину, либо назовите путь модели в задаче. |
+| Расчёт «не запустился» сразу после запуска | Неверный путь к `tNavigator-con` или опции в `TNAV_CLI_COMMAND`. Хвост лога кластера агент кладёт в лог задачи; проверьте команду у администратора кластера. |
+| Расчёт по этой модели уже идёт | В каталоге результатов лежит файл блокировки от предыдущего запуска. Дождитесь окончания или посчитайте другую версию модели — агент намеренно не запускает вторую копию. |
 | «Не удалось разобрать следующий шаг» | Модель вернула пустой ответ. В Логе смотрите строку решения. Три раза подряд задача падает. Проверьте, что на Decision chat, Verify chat и Interpret chat висит тот же credential и `chat_base_url` совпадает с Base URL модели. |
 | Вопрос с кнопками, вы ответили текстом, система переспросила «не поняла» | Напишите ближе к подписи кнопки или нажмите кнопку. Interpret chat должен быть на том же credential, что Decision. |
 | Activity пишет, что не дождалась шага, задача остаётся «идёт» | n8n ещё считает (лимит ожидания 30 мин). Это не «неверный адрес». Если connection refused — тогда да, адрес оркестратора. |
@@ -11876,7 +12024,7 @@ def configure_logging(level: str | None = None) -> None:
     )
 
 ===END_FILE===
-===BEGIN_FILE===	mas-activity-service/app/sql/agent_registry_seed.json	5035	utf8
+===BEGIN_FILE===	mas-activity-service/app/sql/agent_registry_seed.json	6639	utf8
 [
   {
     "agent_id": "excel_extractor",
@@ -11977,6 +12125,38 @@ def configure_logging(level: str | None = None) -> None:
     },
     "hitl_policy": "never",
     "enabled": true,
+    "version": "2"
+  },
+  {
+    "agent_id": "tnav_cluster",
+    "title": "tNav Cluster Agent",
+    "when_to_use": "Работает с моделями на гидродинамическом кластере по SSH: разбирает устройство модели (секции входного файла, подключённые файлы, основной файл расписания), собирает новую версию модели с новым файлом расписания и запускает расчёт на кластере, а потом сообщает время расчёта и его итог. Вызывать, когда инженер просит посчитать модель на кластере, применить новое расписание к модели или узнать, как идёт расчёт. Готовое расписание он получает от агента, который собирает расписание; если инженер просит только запустить уже готовую модель, файл расписания не нужен. Файлы не удаляет и расписание не составляет.",
+    "input_required": [
+      "schedule_out"
+    ],
+    "output_provides": [
+      "model_version",
+      "run_status",
+      "run_results"
+    ],
+    "invoke": {
+      "kind": "n8n_workflow",
+      "workflow_id": "7aedebc1-4f6e-5ec2-872c-9cc7968e58bc",
+      "workflow_name": "Agent — tNav Cluster Agent"
+    },
+    "input_schema": {
+      "handoff_message": "какую модель считать на кластере и какое расписание применить",
+      "artifact_ids": "[schedule_out — новый файл расписания, если версию модели нужно пересобрать]"
+    },
+    "output_schema": {
+      "data": {
+        "model_version": "{model_path, schedule_path, version, dates_total}",
+        "run_status": "finished | failed | not_started | timeout",
+        "run_results": "{state, model, results_dir, steps, elapsed_seconds, last_date}"
+      }
+    },
+    "hitl_policy": "agent_asks",
+    "enabled": false,
     "version": "2"
   },
   {
@@ -20629,7 +20809,7 @@ def _disposition_filename(disposition: str) -> str:
     return m.group(1).strip() if m else ""
 
 ===END_FILE===
-===BEGIN_FILE===	mas-agent-kit/mas_agent_kit/agent.py	12303	utf8
+===BEGIN_FILE===	mas-agent-kit/mas_agent_kit/agent.py	13106	utf8
 """``AgentService`` — the object a new agent implements; ``agent_router`` exposes it over HTTP.
 
 The n8n workflow of an agent (generated from its ``AgentSpec``) talks to the service like this:
@@ -20658,8 +20838,10 @@ Subclass, set ``agent_id`` / ``store`` / ``tools``, implement ``open_session`` a
 
 from __future__ import annotations
 
+import logging
 import os
 import time
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
@@ -20674,6 +20856,8 @@ from .result import agent_result, needs_input
 from .session import SessionStore
 from .tools import ToolRegistry
 from .view import tool_model_view
+
+logger = logging.getLogger(__name__)
 
 #: ``next_step`` the model reads after a tool fixed the session result — who acts next, so it stops.
 RESULT_NEXT_STEP: dict[str, str] = {
@@ -20867,18 +21051,38 @@ def agent_router(agent: AgentService, *, dependencies: list[Any] | None = None) 
     return router
 
 
-def create_agent_app(agent: AgentService, *, title: str = "", version: str = "0.1.0", dependencies: list[Any] | None = None) -> FastAPI:
-    """FastAPI app with the agent routes and ``GET /health`` (what the Health Check form probes)."""
+def create_agent_app(
+    agent: AgentService,
+    *,
+    title: str = "",
+    version: str = "0.1.0",
+    dependencies: list[Any] | None = None,
+    extra_health: Callable[[], dict[str, Any]] | None = None,
+) -> FastAPI:
+    """FastAPI app with the agent routes and ``GET /health`` (what the Health Check form probes).
+
+    ``extra_health`` adds service-specific fields to ``/health`` — an agent that depends on an external
+    system (cluster over SSH, licence server) reports there what is missing instead of refusing to start.
+    """
     app = FastAPI(title=title or f"{agent.agent_id}-service", version=version)
 
     @app.get("/health")
     def health() -> dict[str, Any]:
-        return {
+        body = {
             "ok": True,
             "agent_id": agent.agent_id,
             "tools": agent.tools.names,
             "mas_version": read_mas_version(),
         }
+        if extra_health is not None:
+            try:
+                extra = extra_health()
+            except Exception:  # noqa: BLE001 — a broken probe must not hide the service
+                logger.exception("extra_health of %s failed", agent.agent_id)
+                extra = {"health_detail": "unavailable"}
+            if isinstance(extra, dict):
+                body.update(extra)
+        return body
 
     app.include_router(agent_router(agent, dependencies=dependencies))
     return app
@@ -22356,7 +22560,7 @@ filelock>=3.15,<4.0
 UI runbook: [`../docs.md`](../docs.md).
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/import-manifest.json	11468	utf8
+===BEGIN_FILE===	n8n/import-manifest.json	12522	utf8
 {
   "contract": "n8n_ui_import_manifest",
   "contract_version": "1.0",
@@ -22368,6 +22572,7 @@ UI runbook: [`../docs.md`](../docs.md).
     "workflows/core/mas-runtime-config.workflow.json",
     "workflows/core/schedule-builder-agent.workflow.json",
     "workflows/core/excel-extractor-agent.workflow.json",
+    "workflows/core/tnav-cluster-agent.workflow.json",
     "workflows/core/mas-error-traces.workflow.json",
     "workflows/core/mas-control-plane-proxy.workflow.json",
     "workflows/core/mas-orchestrator.workflow.json",
@@ -22380,6 +22585,7 @@ UI runbook: [`../docs.md`](../docs.md).
     "workflows/core/mas-runtime-config.workflow.json",
     "workflows/core/schedule-builder-agent.workflow.json",
     "workflows/core/excel-extractor-agent.workflow.json",
+    "workflows/core/tnav-cluster-agent.workflow.json",
     "workflows/core/mas-error-traces.workflow.json",
     "workflows/core/mas-control-plane-proxy.workflow.json",
     "workflows/core/mas-orchestrator.workflow.json",
@@ -22411,6 +22617,12 @@ UI runbook: [`../docs.md`](../docs.md).
       "placeholder": "REPLACE_MAS_RUNTIME_CONFIG_IN_UI"
     },
     {
+      "owner": "Agent — tNav Cluster Agent",
+      "node": "Runtime configuration",
+      "target": "MAS — Runtime Config",
+      "placeholder": "REPLACE_MAS_RUNTIME_CONFIG_IN_UI"
+    },
+    {
       "owner": "Orchestrator — MAS",
       "node": "Call Knowledge Retrieval",
       "target": "MAS — Knowledge Retrieval",
@@ -22424,6 +22636,12 @@ UI runbook: [`../docs.md`](../docs.md).
     },
     {
       "owner": "Agent — Schedule Builder",
+      "node": "Call Knowledge Retrieval",
+      "target": "MAS — Knowledge Retrieval",
+      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    },
+    {
+      "owner": "Agent — tNav Cluster Agent",
       "node": "Call Knowledge Retrieval",
       "target": "MAS — Knowledge Retrieval",
       "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
@@ -22483,7 +22701,8 @@ UI runbook: [`../docs.md`](../docs.md).
     }
   ],
   "ui_configuration": [
-    "Field import is runtime_import_order (9 core JSON). Lab also imports support/demo-agent.workflow.json.",
+    "Field import is runtime_import_order (10 core JSON). Lab also imports support/demo-agent.workflow.json.",
+    "Agent — tNav Cluster Agent (hydrodynamic cluster over SSH): import the workflow, set tnav_cluster_url in MAS — Runtime Config (http://<IP-Windows>:8400), bind its Runtime configuration → MAS — Runtime Config and Call Knowledge Retrieval → MAS — Knowledge Retrieval, bind the Qwen credential on tNav Cluster Agent Agent chat. The registry row is seeded enabled=false: enable it in Activity → Агенты only after tnav-cluster.env has the cluster address, user, password, base path and the tNavigator command (see docs.md «Кластерный агент»).",
     "Do not create n8n Data Tables for live case state.",
     "Bind Orchestrator — MAS: Call Knowledge Retrieval → MAS — Knowledge Retrieval (selector target_base=orchestrator_routing). Bind Call Knowledge Retrieval on Excel Extractor (excel_protocol) and Schedule Builder (schedule_mvp). Agents are NOT bound as nodes: Orchestrator's universal Call agent (n8n) takes the workflow id from agent_registry.invoke (seeded by Control Plane Proxy schema). After UI import n8n assigns new ids — copy each agent workflow id (URL of the open workflow) into MAS — Runtime Config → agent_workflow_ids as {\"excel_extractor\":\"<id>\",\"schedule_builder\":\"<id>\"}. Adding an agent = import its workflow + POST {\"operation\":\"upsert_agent\",\"row\":{...}} to the Control Plane Proxy (no orchestrator regen).",
     "Bind Runtime endpoints / Runtime configuration → MAS — Runtime Config on Orchestrator, Excel Extractor, and Schedule Builder. Edit the four URLs once in MAS — Runtime Config (lab Docker DNS in git; field = http://<IP-Windows>:8200/:8000/:8090/:8100). math_url has no /agent/run suffix.",
@@ -22714,258 +22933,3 @@ UI runbook: [`../docs.md`](../docs.md).
       "contract_version": "1.0",
       "target_base": "excel_protocol",
       "knowledge_type": "protocol_instruction",
-      "knowledge_id": "excel-agent-clarification-and-continuation",
-      "revision": "5",
-      "title": "Спросить инженера — ask_engineer",
-      "keywords": [
-        "ASK_ENGINEER",
-        "CLARIFICATION"
-      ],
-      "topics": [
-        "протокол",
-        "clarification"
-      ],
-      "task_patterns": [
-        "спросить инженера какой лист и колонка",
-        "две колонки дат без пояснений",
-        "варианты как их видит инженер",
-        "не вызывать get_session_state"
-      ],
-      "status": "active",
-      "author": "excel-protocol-maintainer",
-      "access_scope": "petroleum-engineering",
-      "text": "Уточнение у инженера Excel Extractor.\n\nНазначение. Когда по инвентарю и engineer_answers нельзя выбрать таблицу или колонку — один вопрос через ask_engineer.\n\nКогда применять. Две колонки дат, несколько похожих листов, пустые обязательные значения. Не когда инструмент вернул ok:false — это исправляется повторным вызовом.\n\nКанон протокола.\n- ask_engineer — единственный вопрос инженеру: русская проза, варианты как их видит инженер (имена листов и колонок).\n- Имена файлов в вопрос не вставляйте; говорите «в книге», лист, колонка.\n- Ответы уже лежат в engineer_answers сессии — читайте их, книгу заново не открывайте.\n- Не вызывайте get_session_state, submit_clarification, resolve_clarification, save_agent_plan.\n\nВалидация.\n- Вопрос без JSON, snake_case и имён файлов.\n- После ответа — extract_* по выбранным колонкам, не новый обход книги «с нуля».\n",
-      "id": "excel-agent-clarification-and-continuation",
-      "examples": [
-        {
-          "title": "Две колонки дат",
-          "task": "Неясно, какая колонка — новая дата ввода",
-          "schedule_text": "ask_engineer(вопрос прозой, options=имена колонок)",
-          "explanation": "Не угадывайте колонку. Не вызывайте снятые clarification-инструменты."
-        },
-        {
-          "title": "Ответ уже в сессии",
-          "task": "Инженер ответил, какой лист",
-          "schedule_text": "engineer_answers → extract_*",
-          "explanation": "Повторно книгу не загружайте. Берите выбор из ответов инженера в сессии."
-        }
-      ]
-    },
-    {
-      "contract": "schedule_knowledge_block",
-      "contract_version": "1.0",
-      "target_base": "orchestrator_routing",
-      "knowledge_type": "routing_card",
-      "knowledge_id": "route-excel-extractor",
-      "revision": "9",
-      "title": "Политика: табличные факты из Excel",
-      "keywords": [
-        "XLSX",
-        "EXCEL"
-      ],
-      "topics": [
-        "маршрутизация",
-        "Excel",
-        "facts",
-        "new_wells"
-      ],
-      "task_patterns": [
-        "извлечь таблицу",
-        "даты ввода из Excel",
-        "параметры новых скважин",
-        "extract workbook"
-      ],
-      "status": "active",
-      "author": "orchestrator-routing-maintainer",
-      "access_scope": "petroleum-engineering",
-      "text": "Табличные факты — даты ввода «скважина — дата», параметры новых скважин, дебиты, мероприятия, любая другая таблица из книги — извлекает агент, чей when_to_use — чтение Excel. Вызывай его только если среди приложенных файлов есть роль excel. Что именно извлечь — из цели инженера, не из полного output_schema агента: если цель только про даты ввода, не заказывай параметры новых скважин «на всякий случай». Лист, колонки, единицы и формат дат агент выбирает сам и сам спрашивает инженера при неоднозначности (hitl_policy agent_asks) — оркестратор про листы, колонки, единицы и систему координат не спрашивает. Если таблица нестандартная (не dates/new_wells из output_schema) и цель её требует, заполни action.expected_output.datasets: имя набора латиницей, поля как их будет читать следующий агент (input_schema.data) или как в цели; не выдумывай значения ячеек и не копируй все ключи output_provides. Если таблицы нет, а задача требует табличных данных — ask_user с просьбой приложить таблицу, а не вызов агента и не выдуманные факты. Имена скважин в фактах должны быть как в исходном файле schedule — за это отвечает агент. После успеха запрошенные данные (facts, new_wells или именованный набор) лежат в результатах этого агента; повторно читать Excel без новых файлов или вопросов не нужно.",
-      "id": "route-excel-extractor"
-    },
-    {
-      "contract": "schedule_knowledge_block",
-      "contract_version": "1.0",
-      "target_base": "orchestrator_routing",
-      "knowledge_type": "routing_card",
-      "knowledge_id": "route-schedule-builder",
-      "revision": "11",
-      "title": "Политика: правка SCHEDULE",
-      "keywords": [
-        "INC",
-        "COMMISSIONING",
-        "GROUP_CONTROL"
-      ],
-      "topics": [
-        "маршрутизация",
-        "SCHEDULE",
-        "schedule_source",
-        "schedule_out",
-        "diff",
-        "facts",
-        "new_wells",
-        "datasets"
-      ],
-      "task_patterns": [
-        "построить прогнозный SCHEDULE",
-        "revise schedule",
-        "новые даты ввода скважин",
-        "даты ввода",
-        "сдвиг дат",
-        "добавить новые скважины",
-        "перепривязка групп",
-        "групповой контроль",
-        "внести таблицу в schedule"
-      ],
-      "status": "active",
-      "author": "orchestrator-routing-maintainer",
-      "access_scope": "petroleum-engineering",
-      "text": "Правку исходного SCHEDULE (.inc) выполняет агент, чей input_required включает schedule_source: сдвиг дат ввода по фактам «скважина — дата», добавление новых скважин по их параметрам, перепривязка скважин в группу по тексту задачи, запись именованного набора строк (не даты ввода) в keyword по схеме. Нужен исходный файл schedule среди приложенных файлов; без него — ask_user. Объём правки — из текста задачи (какие скважины, какие ключевые слова, какой глагол: убери, добавь, измени); не выдумывай ключевые слова и не расширяй задачу. От предыдущего агента жди только данные, которые эта правка требует: для сдвига дат — факты ввода; параметры новых скважин — только если цель просит их добавить; для любой другой таблицы — именованный набор строк. Единицы METRIC и tNavigator 22.2 заданы — у инженера не подтверждать. Агент сам рендерит ключевые слова и не читает Excel: даты, параметры новых скважин и именованные наборы берёт из результатов агента, который читал Excel, и из ответов инженера. Результат — новый файл SCHEDULE и список изменений; после него повторный вызов оправдан только новыми данными или конкретным недостатком (rework_reason).",
-      "id": "route-schedule-builder"
-    },
-    {
-      "contract": "schedule_knowledge_block",
-      "contract_version": "1.0",
-      "target_base": "orchestrator_routing",
-      "knowledge_type": "routing_card",
-      "knowledge_id": "route-mas-thin-orchestrator",
-      "revision": "7",
-      "title": "Политика декомпозиции задач MAS",
-      "keywords": [
-        "INC",
-        "XLSX",
-        "COMMISSIONING",
-        "GROUP_CONTROL"
-      ],
-      "topics": [
-        "маршрутизация",
-        "декомпозиция",
-        "handoff",
-        "excel",
-        "schedule_source",
-        "facts",
-        "new_wells",
-        "schedule_out"
-      ],
-      "task_patterns": [
-        "новые даты ввода скважин",
-        "даты ввода",
-        "сдвиг дат",
-        "собрать новый schedule.inc",
-        "добавить новые скважины",
-        "перепривязка скважин в группу",
-        "перепривязка групп",
-        "групповой контроль"
-      ],
-      "status": "active",
-      "author": "orchestrator-routing-maintainer",
-      "access_scope": "petroleum-engineering",
-      "text": "Политика декомпозиции. Кого вызывать — только из реестра агентов по полям when_to_use, input_required и output_provides; в этой карточке имён агентов нет. План — разбиение цели инженера, не каталога агента: не включай в план и в expected_output то, что агент умеет, но цель не просит. 1) Факты для правки SCHEDULE берутся из приложенных таблиц Excel агентом, который читает Excel — только те факты, которые нужны цели (даты ввода «скважина — дата», параметры новых скважин, другая таблица). Если цель только про новые даты ввода, не заказывай параметры новых скважин. Агент, который правит SCHEDULE, вызывается после того, как в журнале появились данные, нужные этой правке; не раньше и не ожидая ключей output_provides, которых цель не требовала. 2) Перепривязка скважин в группу и групповой контроль (GRUPTREE, GCONPROD, группа в WELSPECS) решаются по тексту задачи и исходному файлу schedule — таблицы не нужны: сразу агент, который правит SCHEDULE; даты ввода этих скважин он берёт из исходного файла, инженера о них не спрашивают. 3) Когда агент правки SCHEDULE вернул новый файл SCHEDULE и все части цели покрыты записями журнала со статусом completed — finish. 4) Имена приложенных INCLUDE-файлов (GRUPTREE.GRDECL и подобные) — состав пакета, а не постановка задачи: не дописывай перепривязку групп, если инженер её не просил. 5) Если срез знаний пуст — решай по реестру и состоянию, инженера про базу знаний не спрашивай.",
-      "id": "route-mas-thin-orchestrator"
-    },
-    {
-      "contract": "schedule_knowledge_block",
-      "contract_version": "1.0",
-      "target_base": "orchestrator_routing",
-      "knowledge_type": "routing_card",
-      "knowledge_id": "route-calculation",
-      "revision": "7",
-      "title": "Политика: геометрия скважины",
-      "keywords": [
-        "DEV",
-        "CPS3"
-      ],
-      "topics": [
-        "absent_agent"
-      ],
-      "task_patterns": [
-        "пересечение траектории",
-        "well trajectory intersection",
-        "перфорация",
-        "траектория"
-      ],
-      "status": "active",
-      "author": "orchestrator-routing-maintainer",
-      "access_scope": "petroleum-engineering",
-      "text": "Пересечение траектории скважины со структурной поверхностью и начало интервала перфорации (глубина по стволу) считает агент, чей input_required — surface и trajectory (траектория .dev и одна поверхность ASCII CPS3). Вызывай его только когда оба файла приложены; он не пишет SCHEDULE. Его результат виден в журнале и может понадобиться агенту правки SCHEDULE. Единицы и систему координат у инженера не спрашивай, если файлы приложены; ask_user — только если нет траектории или поверхности.",
-      "id": "route-calculation"
-    },
-    {
-      "contract": "schedule_knowledge_block",
-      "contract_version": "1.0",
-      "target_base": "orchestrator_routing",
-      "knowledge_type": "routing_card",
-      "knowledge_id": "route-cluster-calculation",
-      "revision": "4",
-      "title": "Политика: расчёты на кластере (агента нет)",
-      "keywords": [
-        "SSH",
-        "JOB"
-      ],
-      "topics": [
-        "absent_agent"
-      ],
-      "task_patterns": [
-        "запуск расчёта на кластере",
-        "статус расчётной задачи"
-      ],
-      "status": "active",
-      "author": "orchestrator-routing-maintainer",
-      "access_scope": "petroleum-engineering",
-      "text": "Запуск расчётов на кластере и статус расчётных задач: если в реестре нет агента с таким when_to_use, эту часть задачи выполнить нельзя. Не выдумывай агента и не спрашивай инженера про учётные данные кластера. Если это единственная часть цели — ask_user, как поступить; если остальные части выполнены — finish с честным итогом, что расчёт на кластере не запускался.",
-      "id": "route-cluster-calculation"
-    },
-    {
-      "contract": "schedule_knowledge_block",
-      "contract_version": "1.0",
-      "target_base": "orchestrator_routing",
-      "knowledge_type": "routing_card",
-      "knowledge_id": "route-binary-results",
-      "revision": "4",
-      "title": "Политика: бинарные результаты расчёта (агента нет)",
-      "keywords": [
-        "REPORT_FACTS"
-      ],
-      "topics": [
-        "absent_agent"
-      ],
-      "task_patterns": [
-        "извлечь данные из бинарных результатов",
-        "собрать факты для отчёта"
-      ],
-      "status": "active",
-      "author": "orchestrator-routing-maintainer",
-      "access_scope": "petroleum-engineering",
-      "text": "Чтение бинарных результатов расчёта и сбор фактов для отчёта: если в реестре нет агента с таким when_to_use, эту часть задачи выполнить нельзя. Не выдумывай агента и не задавай инженеру вопросов вместо него. Если это единственная часть цели — ask_user, как поступить; иначе — finish с честным итогом, что результаты расчёта не читались.",
-      "id": "route-binary-results"
-    },
-    {
-      "contract": "schedule_knowledge_block",
-      "contract_version": "1.0",
-      "target_base": "orchestrator_routing",
-      "knowledge_type": "routing_card",
-      "knowledge_id": "route-presentation",
-      "revision": "4",
-      "title": "Политика: презентация результатов (агента нет)",
-      "keywords": [
-        "VISUALIZATION"
-      ],
-      "topics": [
-        "absent_agent"
-      ],
-      "task_patterns": [
-        "собрать презентацию",
-        "визуализация результатов"
-      ],
-      "status": "active",
-      "author": "orchestrator-routing-maintainer",
-      "access_scope": "petroleum-engineering",
-      "text": "Сборка презентации и визуализация результатов: если в реестре нет агента с таким when_to_use, эту часть задачи выполнить нельзя. Не выдумывай агента и не задавай инженеру вопросов вместо него. Если это единственная часть цели — ask_user, как поступить; иначе — finish с честным итогом, что презентация не собиралась.",
-      "id": "route-presentation"
-    },
-    {
-      "contract": "schedule_knowledge_block",
-      "contract_version": "1.0",
-      "target_base": "orchestrator_routing",
-      "knowledge_type": "routing_card",
-      "knowledge_id": "route-hitl-required-evidence",
-      "revision": "8",
-      "title": "Когда спрашивать инженера",

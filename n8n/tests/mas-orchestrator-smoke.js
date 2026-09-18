@@ -264,10 +264,21 @@ async function run(name, json, nodes = {}, binary = {}) {
       { agent_id: 'schedule_builder', enabled: true, input_required: ['schedule_source'], output_provides: ['schedule_out', 'diff'] },
       { agent_id: 'demo_agent', enabled: true, input_required: [], output_provides: ['well_count', 'wells'] },
     ];
-    assert.deepEqual(helpers.planRetrievalTopics([], registry, { inputs: [{ role: 'excel' }, { role: 'schedule_source' }] }), ['excel', 'schedule_source', 'well_count', 'wells']);
-    assert.deepEqual(helpers.planRetrievalTopics([], registry, { inputs: [{ role: 'schedule_source' }] }), ['schedule_source', 'well_count', 'wells']);
-    assert.deepEqual(helpers.planRetrievalTopics([], registry, { inputs: [] }), ['well_count', 'wells']);
-    assert.deepEqual(helpers.planRetrievalTopics([{ id: 'p2', status: 'pending', agent_id: 'schedule_builder' }], registry, { inputs: [{ role: 'excel' }, { role: 'schedule_source' }] }), ['schedule_source', 'schedule_out', 'diff']);
+    assert.deepEqual(helpers.planRetrievalTopics([], registry, { inputs: [{ role: 'excel' }, { role: 'schedule_source' }] }), ['excel', 'schedule_source', 'well_count', 'wells', 'completion']);
+    assert.deepEqual(helpers.planRetrievalTopics([], registry, { inputs: [{ role: 'schedule_source' }] }), ['schedule_source', 'well_count', 'wells', 'completion']);
+    assert.deepEqual(helpers.planRetrievalTopics([], registry, { inputs: [] }), ['well_count', 'wells', 'completion']);
+    assert.deepEqual(helpers.planRetrievalTopics([{ id: 'p2', status: 'pending', agent_id: 'schedule_builder' }], registry, { inputs: [{ role: 'excel' }, { role: 'schedule_source' }] }), ['excel', 'schedule_source', 'well_count', 'wells', 'schedule_out', 'diff', 'completion']);
+    // CASE-6aacef32-374aa4: excel+schedule done, demo still open — file roles stay.
+    assert.deepEqual(helpers.planRetrievalTopics([
+      { id: 'p1', status: 'done', agent_id: 'excel_extractor' },
+      { id: 'p2', status: 'done', agent_id: 'schedule_builder' },
+      { id: 'p3', status: 'pending', agent_id: 'demo_agent' },
+    ], registry, { inputs: [{ role: 'excel' }, { role: 'schedule_source' }] }), ['excel', 'schedule_source', 'well_count', 'wells', 'completion']);
+    assert.deepEqual(helpers.planRetrievalTopics([
+      { id: 'p1', status: 'done', agent_id: 'excel_extractor' },
+      { id: 'p2', status: 'done', agent_id: 'schedule_builder' },
+      { id: 'p3', status: 'pending', agent_id: 'demo_agent' },
+    ], registry, { inputs: [] }), ['well_count', 'wells', 'completion']);
   }
   {
     // Two workbooks in one case: the first keeps the `excel` slot, the second survives as an attachment
@@ -553,7 +564,7 @@ async function run(name, json, nodes = {}, binary = {}) {
   for (const gone of ['keyword_families', 'task_patterns']) {
     assert.equal(gone in prepared.schedule_retrieval_request.filters, false, gone);
   }
-  assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, ['excel', 'schedule_source']);
+  assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, ['excel', 'schedule_source', 'completion']);
   assert.match(prepared.schedule_retrieval_request.query, /даты ввода/);
   assert.equal(prepared.schedule_retrieval_request.query.includes('dates.xlsx'), false, 'query must not carry filenames');
   assert.equal(prepared.schedule_retrieval_request.query.includes('Извлечено 40 скважин'), false, 'query must not carry the journal');
@@ -773,6 +784,38 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(attachedFloor.rag.cards[0].knowledge_id, 'strong');
   assert.deepEqual(attachedFloor.rag.cards[0].topics, ['excel']);
 
+  const attachedNoOverlapMulti = await run(
+    'Attach orchestrator RAG evidence',
+    {
+      contract: 'schedule_retrieval_result',
+      status: 'succeeded',
+      results: [
+        {
+          knowledge_id: 'route-excel-extractor',
+          knowledge_type: 'routing_card',
+          target_base: 'orchestrator_routing',
+          title: 'Excel',
+          rrf_score: 0.048,
+          branches: ['lexical', 'semantic'],
+          topics: ['Excel', 'facts', 'new_wells'],
+          body: { text: 'Достаточно длинный текст карточки маршрутизации чтобы пройти порог длины.' },
+        },
+        {
+          knowledge_id: 'route-schedule-builder',
+          knowledge_type: 'routing_card',
+          target_base: 'orchestrator_routing',
+          title: 'Schedule',
+          rrf_score: 0.048,
+          branches: ['lexical', 'semantic', 'tag'],
+          topics: ['schedule_source', 'schedule_out'],
+          body: { text: 'Достаточно длинный текст карточки правки SCHEDULE чтобы пройти порог длины.' },
+        },
+      ],
+    },
+    { 'Prepare decision context': { ...prepared, schedule_retrieval_request: { ...prepared.schedule_retrieval_request, filters: { ...prepared.schedule_retrieval_request.filters, topics: ['schedule_source', 'completion'] } } } },
+  );
+  assert.deepEqual(attachedNoOverlapMulti.rag.cards.map((c) => c.knowledge_id), ['route-schedule-builder']);
+
   const attachedFloorNoTopics = await run(
     'Attach orchestrator RAG evidence',
     {
@@ -829,7 +872,7 @@ async function run(name, json, nodes = {}, binary = {}) {
         },
       ],
     },
-    { 'Prepare decision context': prepared },
+    { 'Prepare decision context': { ...prepared, schedule_retrieval_request: { ...prepared.schedule_retrieval_request, filters: { ...prepared.schedule_retrieval_request.filters, topics: [] } } } },
   );
   assert.equal(attachedMultiFloor.rag.cards.length, 1);
   assert.equal(attachedMultiFloor.rag.cards[0].knowledge_id, 'strong-multi');
@@ -2021,7 +2064,7 @@ async function run(name, json, nodes = {}, binary = {}) {
     // A fresh case: the prompt asks for a plan; step 0 topics are roles of agents covered by attached files.
     let prepared = await prepare(baseState);
     assert.match(prepared.planner_input, /План задачи \(твоя декомпозиция; статусы pending, active, done, blocked, dropped\):\n- план ещё не составлен — запиши пункты с идентификатором, заголовком и статусом/);
-    assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, ['excel', 'schedule_source']);
+    assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, ['excel', 'schedule_source', 'completion']);
     const system = wf.nodes.find((n) => n.name === 'Build decision chat').parameters.jsCode;
     assert.match(system, /приоритет над догадкой/);
     assert.match(system, /plan_update/);
@@ -2094,12 +2137,11 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.ok(prepared.planner_input.indexOf('План задачи') < prepared.planner_input.indexOf('\nДанные агентов:'), 'plan is inside the slice Prepare verify forwards');
     assert.deepEqual(prepared.compact.plan[1], { id: 'p2', title: 'Новый schedule на основе baseline', status: 'pending', agent_id: 'schedule_builder' });
     assert.match(prepared.schedule_retrieval_request.query, /План: Даты ввода скважин из Excel; Новый schedule на основе baseline; Согласование с инженером/);
-    // Tag branch (O4 tail): registry roles of the agents named in *open* plan items — p1 is done (excel roles
-    // gone), p2 names the builder, p3 names nobody. Routing cards carry the same words in `topics`.
-    assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, ['schedule_source', 'schedule_out', 'diff']);
+    // Tag branch: file-covered roles stay after p1 is done (excel still attached); open p2 adds builder outputs.
+    assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, ['excel', 'schedule_source', 'schedule_out', 'diff', 'completion']);
     {
       const bothOpen = await prepare({ ...merged.state, plan: merged.state.plan.map((p) => (p.id === 'p1' ? { ...p, status: 'blocked' } : p)) });
-      assert.deepEqual(bothOpen.schedule_retrieval_request.filters.topics, ['excel', 'facts', 'new_wells', 'schedule_source', 'schedule_out', 'diff']);
+      assert.deepEqual(bothOpen.schedule_retrieval_request.filters.topics, ['excel', 'schedule_source', 'facts', 'new_wells', 'schedule_out', 'diff', 'completion']);
     }
 
     // An update touches only the fields it names: status without title keeps the title; a title without status keeps the status.

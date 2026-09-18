@@ -63,6 +63,12 @@
               "type": "string"
             },
             {
+              "id": "131a867b-57a1-56f8-b521-8f2bccc1e62e",
+              "name": "tnav_cluster_url",
+              "value": "http://tnav-cluster:8400",
+              "type": "string"
+            },
+            {
               "id": "9e54c4b2-72e9-5dc1-b8a2-c36f75806e33",
               "name": "demo_agent_url",
               "value": "http://demo-agent:8300",
@@ -152,5 +158,5 @@
   },
   "tags": [],
   "pinData": {},
-  "versionId": "efce9671-7847-43c0-95e8-d18cc6934507"
+  "versionId": "88cbe628-13f7-40c1-b87c-48e5a2db0d4d"
 }

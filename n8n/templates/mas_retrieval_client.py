@@ -118,11 +118,9 @@ function compactRetrievalCards(result, selector, limit, textLimit, preferFull){
     if(c._score==null||floor<=0) return true;
     const cardTopics=(Array.isArray(c.topics)?c.topics:[]).map(t=>String(t||'').toLowerCase());
     if(want.size&&cardTopics.some(t=>want.has(t))) return true;
+    if(orch&&want.size) return false;
     const n=Array.isArray(c.branches)?c.branches.length:0;
-    if(n<2){
-      if(orch&&want.size) return false;
-      return true;
-    }
+    if(n<2) return true;
     return c._score>=floor;
   });
   kept.sort((a,b)=>{
@@ -155,8 +153,8 @@ def attach_retrieval_js(
     Compact keeps cards with missing RRF (fail-open), drops ``rrf_score<=0`` and
     text shorter than 50 chars. The 45% floor applies when a card has at least
     two retrieval branches. On ``orchestrator_routing``, if the caller sent
-    ``topics``, a one-branch card is kept only when it overlaps those topics
-    (RRF ``1/(60+rank)`` never fails a 45% floor inside ``top_k``). Attach prefers ``body.summary``; on-demand
+    ``topics``, keep a card only when it overlaps those topics (lexical/semantic
+    hits without the tag are dropped even with two branches — CASE-6aacea63-31c63b). Attach prefers ``body.summary``; on-demand
     ``retrieve_knowledge`` passes ``preferFull`` so the model gets when-to-use
     and pitfalls, not the 600-char summary.
     Absolute 0.05 is wrong for this retriever: RRF is ``1/(60+rank)`` ≈ 0.016

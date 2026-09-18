@@ -918,23 +918,27 @@ function agentInputsCovered(row, compact){
   const have=attachedRoles(compact);
   return req.every(r=>have.has(r));
 }
-/* RAG tag branch (no regex over the goal). Open plan items → input+output roles of those agents.
-   Empty plan (step 0) → file roles (`input_required`) of enabled agents covered by attached files;
-   agents with empty input_required contribute `output_provides` so a file-less task still sends
-   topics (45% floor on one-branch orchestrator cards). Skip `absent_agent`. */
+/* RAG tag branch (no regex over the goal). File-covered enabled agents always contribute
+   `input_required` (empty req → `output_provides`) so a later open item cannot drop Excel/SCHEDULE
+   tags while those files are still attached (`CASE-6aacef32-374aa4`). Open plan items add both
+   input and output roles. Always `completion` for the HITL/Verify card. Skip `absent_agent`. */
 function planRetrievalTopics(plan, registry, compact){
   const rows=(Array.isArray(registry)?registry:[]).filter(registryEnabled);
   const open=planOpenItems(plan).filter(p=>p&&p.agent_id);
-  const step0=!open.length;
-  const source=step0
-    ?rows.filter(r=>agentInputsCovered(r, compact||{}))
-    :open.map(p=>rows.find(r=>r&&String(r.agent_id||'')===p.agent_id)).filter(Boolean);
   const out=[];
-  for(const row of source){
-    for(const tag of agentRoleTags(row, step0)){
+  const push=(row, inputsOnly)=>{
+    for(const tag of agentRoleTags(row, inputsOnly)){
       if(!out.includes(tag)) out.push(tag);
     }
+  };
+  for(const row of rows){
+    if(agentInputsCovered(row, compact||{})) push(row, true);
   }
+  for(const p of open){
+    const row=rows.find(r=>r&&String(r.agent_id||'')===p.agent_id);
+    if(row) push(row, false);
+  }
+  if(!out.includes('completion')) out.push('completion');
   return out.slice(0,12);
 }
 /* Shape the callee should produce: datasets the Decision LLM named (latin identifiers, known field

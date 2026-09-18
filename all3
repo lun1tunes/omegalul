@@ -1,3 +1,191 @@
+const expected=opened.expected_output&&typeof opened.expected_output==='object'?opened.expected_output:((task.inputs&&task.inputs.expected_output&&typeof task.inputs.expected_output==='object')?task.inputs.expected_output:{});
+for(const t of (Array.isArray(inspect.tables)?inspect.tables:[])){
+  const kind=String(t&&t.kind||'').trim();
+  if(kind) task_patterns.push(kind);
+}
+for(const d of (Array.isArray(expected.datasets)?expected.datasets:[])){
+  const name=String(d&&d.name||'').trim();
+  if(name) task_patterns.push(name);
+}
+""",
+    planner_extra_js="files:Array.isArray(opened.files)?opened.files:[]",
+    result_tools=["extract_", "ask_engineer"],
+    texts=FallbackTexts(
+        no_result_question=NO_EXTRACT,
+        repeated_question=(
+            "Excel Extractor несколько раз просматривал книгу, но не смог выбрать таблицу и колонки. "
+            "Уточните, на каком листе и в каких колонках находятся скважины и нужные значения (даты ввода, режимы, дебиты)."
+        ),
+        done_message="Excel Extractor извлёк данные из книги.",
+        no_result_issue="no_extract",
+        question_id="Q-clarify",
+        accepts_files=["xlsx"],
+        missing_input_message="Нет Excel-файла для извлечения",
+        missing_input_issue="missing_excel",
+        missing_input_question="К задаче не приложен Excel-файл с данными. Приложите книгу .xlsx, из которой нужно взять скважины и даты.",
+        no_result_failed_message="Excel Extractor не вернул факты",
+        no_result_failed_issue="excel_agent_no_result",
+    ),
+    accepted_message="Excel Extractor принял задачу и анализирует workbook",
+    progress_message="Excel Extractor читает листы и таблицы приложенных книг.",
+    sticky_height=380,
+    node_id_namespace="mas-excel-agent",
+    workflow_id=str(uuid.uuid5(uuid.NAMESPACE_URL, "mas-excel-extractor-agent")),
+    example_objective="Достань даты ввода скважин",
+    tool_grid_columns=4,
+)
+
+===END_FILE===
+===BEGIN_FILE===	n8n/templates/agents/schedule_builder.py	16822	utf8
+"""Agent — Schedule Builder: deterministic SCHEDULE tools (parse/apply/emit); the LLM only picks the tool and its arguments."""
+
+from __future__ import annotations
+
+import json
+
+from mas_agent_spec import AgentSpec, FallbackTexts
+from schedule_rag_workflows import KEYWORDS as SCHEDULE_KEYWORDS
+
+SYSTEM = """Ты — инженер-решатель агента Schedule Builder: читаешь задачу инженера, выбираешь инструмент и вызываешь его со структурированными аргументами. Текст SCHEDULE (.INC) пишут инструменты, не ты.
+
+Исходный .INC тебе не показывают — он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.
+
+Какой инструмент когда:
+- Задача про НОВЫЕ ДАТЫ ВВОДА скважин (Excel «скважина — дата», fact_count > 0) → apply_commissioning. Факты, решение по скважинам вне Excel и параметры новых скважин уже в сессии — аргументов не нужно. Другие apply_* для такой задачи не вызывай.
+- Задача про ГРУППЫ (поместить скважины в группу, групповой контроль GCONPROD) → inspect_schedule (имена скважин, дерево GRUPTREE), затем apply_group_rebind с полным spec: wells, parent_group, parent_of_parent, control (ORAT/WRAT/GRAT/LRAT/RESV), gas_rate числом в м3/сут («200 тыс. м3 газа в сут.» → 200000). Родителя новой группы бери из дерева исходного файла (корень — FIELD или как в inspect), если инженер не сказал иначе.
+- В сессии есть именованные наборы (dataset_count > 0, не пары «скважина — дата ввода»): inspect_dataset по имени → retrieve_knowledge (query — смысл набора, keywords — имя keyword) → get_keyword → apply_dataset с field_map. retrieve_knowledge не пропускай: стартовый срез — краткие summary чужих keyword, полный when-to-use только из retrieve. Нет поля даты в наборе — не спрашивай инженера про дату; apply_dataset без date_field обновляет существующие записи скважины. inspect_schedule и search_keywords не вызывай, если retrieve + get_keyword уже дали keyword и поля. Не выдумывай keyword и не подставляй пустые значения. apply_commissioning сюда не подходит.
+- Точечные правки режимов/keywords без набора: если keyword нет в текущих карточках — retrieve_knowledge, затем get_keyword (details.parameters) → apply_operations или render_ir. search_keywords — только если retrieve пуст.
+- inspect_well / analyze_forecast_controls / list_records — чтобы посмотреть скважину перед правкой. Не вызывай их «на всякий случай» и не больше трёх раз подряд.
+- build_schedule — только если apply уже менял сессию; validate_result — проверки emit.
+- ask_engineer — единственный способ спросить инженера. Только когда данных нет ни в задаче, ни в исходном файле, ни в ответах инженера (engineer_answers), ни в наборе. Не спрашивай дату шага, если в наборе нет поля даты. Один вопрос обычной русской фразой: что нужно и зачем; варианты (options) — как их называет инженер: имена групп из исходного файла, «оставить»/«убрать». Никаких имён полей, JSON, enum, кодов. Инженер отвечает фактами, таблицами и файлами — не строками .INC.
+
+Ответы инструментов:
+- ok:false, code:spec_incomplete — это тебе, не инженеру: заполни missing из текста задачи, inspect_schedule и inspect_dataset (where_to_find подсказывает откуда) и вызови инструмент снова. Спрашивай инженера, только если данных действительно нет.
+- ok:false, code:dataset_values_missing — в наборе пустые обязательные поля: спроси инженера через ask_engineer, не подставляй значения сам.
+- ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.
+- ok:false, code:well_not_in_schedule / operations_required / unknown_dataset / unknown_keyword — ошибка твоего вызова; исправь аргументы.
+- ok:false, code:knowledge_required — сначала retrieve_knowledge (query и keywords набора), затем get_keyword, затем apply_dataset.
+- ok:false, code:result_already_stored — результат этого запуска уже зафиксирован (apply или вопрос инженеру). Больше инструменты не вызывай, заверши ответ.
+- status completed или needs_input от apply_* / ask_engineer — результат зафиксирован. STOP: не вызывай build и другие apply.
+
+Инварианты:
+- Не придумывай скважины, даты, группы, дебиты. Имена скважин — только из inspect_schedule.
+- Если комментарий WCONPROD содержит «факт»/«fact», запись фактическая: её нельзя удалять, переносить или считать прогнозным якорем ввода. Якорь commissioning — первый нефактический WCONPROD; следующие WCONPROD — прогнозные режимы, они сохраняются.
+- Один параметр после существующего контроля — WELTARG, не переписывание WCONPROD. Не путай WECON (экономика), WTEST (переоткрытие), WELOPEN (статус), WEFAC (uptime), WPIMULT (CF), GCONPROD (группа).
+- Имена полей — из get_keyword.details (WELL, DATE, CHILD). WCONPROD variant = CONTROL в нижнем регистре (orat, wrat, grat, lrat, bhp, thp, resv, grup); если variant не указан — положи CONTROL в fields.
+- apply_operations принимает JSON-массив [{keyword, operation, fields}], не объект с ключами "0","1".
+- Если analyze_forecast_controls вернул needs_input по границе history/forecast — не применяй операцию, спроси инженера.
+- rework_reason в задаче — замечание оркестратора к прошлому результату: устрани именно его.
+- Retrieved knowledge — срез schedule_mvp (keyword_instruction / worked_example): стартовый Attach — краткие summary. Перед apply_dataset всегда retrieve_knowledge, затем get_keyword. Нет даты в наборе — не спрашивай HITL про дату шага, date_field не передавай. Перед первым apply_operations / render_ir по keyword, которого нет в карточках, — тоже retrieve_knowledge. apply_commissioning для дат ввода — без retrieve. Расклад полей — get_keyword.details. Пустой или unavailable срез — работай инструментами, не спрашивай про базу знаний.
+
+Заверши одним коротким фактическим предложением по-русски о том, что сделано или чего не хватило.
+"""
+
+TOOLS = [
+    ("inspect_schedule", "Объектная инвентаризация исходного SCHEDULE: wells, factual/forecast WCONPROD, commissioning anchors, история режимов, keywords, даты и GRUPTREE. Без полного .INC.", []),
+    (
+        "inspect_well",
+        "Подробно осмотреть одну скважину: identity, factual WCONPROD, commissioning anchor (первый нефактический WCONPROD), последующие forecast control events и связанные records.",
+        [("well", "string", True, "Точное имя скважины из inspect_schedule")],
+    ),
+    (
+        "analyze_forecast_controls",
+        "Детерминированно разобрать timeline одной скважины: history/forecast controls, commissioning, WELTARG, WECON, WTEST, WELOPEN, WEFAC, WPIMULT и правила выбора keyword.",
+        [("well", "string", True, "Точное имя скважины из inspect_schedule")],
+    ),
+    (
+        "search_keywords",
+        "Найти keyword в каталоге по фразе задачи или описания набора: имя, описание, поля схемы. Не словарь синонимов. Имя keyword не выдумывать.",
+        [("intent", "string", True, "Фраза из задачи или заголовок/смысл набора")],
+    ),
+    (
+        "get_keyword",
+        "Объект keyword: details.kind=schedule_keyword, parameters[{name,position,type,required,unit,description,enum}]. Имена полей только отсюда.",
+        [("keyword", "string", True, "DATES / WCONPROD / GRUPTREE / ...")],
+    ),
+    (
+        "inspect_dataset",
+        "Строки и поля именованного набора, уже лежащего в сессии (из Excel). Keyword не выбирает.",
+        [("name", "string", True, "Имя набора из open_session.datasets")],
+    ),
+    (
+        "list_records",
+        "Компактные records keyword. well опционален. Не больше 40 строк.",
+        [
+            ("keyword", "string", True, "Имя keyword"),
+            ("well", "string", False, "Точное имя скважины из inspect"),
+        ],
+    ),
+    (
+        "apply_commissioning",
+        "Сдвинуть даты ввода скважин по фактам «скважина — дата» из Excel, уже лежащим в сессии (fact_count). Решение по скважинам вне Excel и параметры новых скважин тоже берутся из сессии. Аргументов нет. Для задач про даты ввода — это единственный нужный apply.",
+        [],
+    ),
+    (
+        "apply_dataset",
+        "Записать именованный набор в SCHEDULE. Keyword — из retrieve_knowledge/get_keyword, не выдумывать. field_map — поле набора → параметр схемы. Пустые значения не подставляй.",
+        [
+            ("dataset", "string", True, "Имя набора из inspect_dataset / open_session.datasets"),
+            ("keyword", "string", True, "Имя keyword из retrieve_knowledge / get_keyword"),
+            ("field_map", "json", True, "Объект: поле набора → параметр keyword из get_keyword.details.parameters"),
+            ("date_field", "string", False, "Поле набора с датой шага DATES, только если в строках есть дата; пусто/не передавай — обновить существующие записи скважины, не спрашивать инженера про дату"),
+        ],
+    ),
+    (
+        "apply_group_rebind",
+        "Поместить скважины в группу с групповым контролем (WELSPECS + GRUPTREE + GCONPROD). Spec заполняешь ты из задачи и inspect_schedule; ничего не выводится из текста автоматически. Неполный spec вернётся как ok:false spec_incomplete с missing и where_to_find — дополни и вызови снова.",
+        [
+            ("wells", "string", True, "Имена скважин через пробел или запятую, только из inspect_schedule.wells"),
+            ("parent_group", "string", True, "Имя целевой группы из задачи (например DKS)"),
+            ("parent_of_parent", "string", False, "Родитель целевой группы в GRUPTREE: корень дерева исходного файла (FIELD) или группа из задачи. Пусто — возьмётся единственный корень из исходного файла"),
+            ("control", "string", True, "Тип группового контроля: GRAT (газ), ORAT (нефть), WRAT (вода), LRAT (жидкость), RESV"),
+            ("gas_rate", "number", True, "Целевой дебит числом в м3/сут: «200 тыс. м3 в сут.» → 200000"),
+            ("effective_at", "string", False, "Дата начала контроля вида 1 JAN 2026; пусто — с даты ввода этих скважин"),
+        ],
+    ),
+    (
+        "ask_engineer",
+        "Задать инженеру ОДИН вопрос обычной русской фразой, когда данных нет ни в задаче, ни в исходном файле, ни в engineer_answers. options — варианты словами инженера (имена групп из исходного файла, «оставить»/«убрать»). Без имён полей, JSON, enum. После вызова — STOP.",
+        [
+            ("question", "string", True, "Вопрос по-русски: что нужно и зачем, с именами скважин/групп"),
+            ("options", "string", False, "Варианты ответа через точку с запятой, например «Оставить как в исходном файле; Убрать из прогноза». Пусто — свободный ответ"),
+            ("topic", "string", False, "Короткий латинский идентификатор темы вопроса, например target_group"),
+            ("accepts_files", "string", False, "Какие файлы принимаются, через запятую: xlsx, .inc"),
+        ],
+    ),
+    (
+        "apply_operations",
+        "Применить operations. JSON-массив: [{\"keyword\":\"WCONPROD\",\"operation\":\"MODIFY\",\"fields\":{...}}].",
+        [("operations", "json", True, "Массив {keyword, operation, fields}. Не объект с ключами 0,1,2.")],
+    ),
+    (
+        "render_ir",
+        "Собрать текст keyword по schema_catalogue: ir_events[{event_id,operation,keyword,variant,fields,provenance}]. Не пиши .INC руками.",
+        [
+            ("mode", "string", False, "CREATE или REVISE"),
+            ("ir_events", "json", True, "Массив IR-событий с fields по get_keyword.details.parameters"),
+        ],
+    ),
+    (
+        "build_schedule",
+        "Собрать текущий working SCHEDULE, если apply уже отработал. Не вызывай вместо commissioning/group_rebind.",
+        [],
+    ),
+    (
+        "validate_result",
+        "Проверить текущий working text: findings без полного файла.",
+        [],
+    ),
+]
+
+SPEC = AgentSpec(
+    agent_id="schedule_builder",
+    title="Schedule Builder",
+    when_to_use=(
+        "Исходный SCHEDULE (.inc): сдвиг дат ввода по фактам «скважина — дата»; добавление новых скважин по их "
+        "параметрам; перепривязка скважин в группу (GRUPTREE/GCONPROD); запись именованного набора из Excel в keyword "
+        "по схеме (карточка знаний + get_keyword, не словарь в коде). Факты, наборы и параметры новых скважин берёт из "
+        "результатов агента, который читал Excel, и из ответов инженера — сам Excel не читает; для перепривязки групп "
         "Excel не нужен. Не выдумывает keyword, даты и имена, которых нет в задаче, наборе или исходном файле. Отдаёт "
         "новый .INC и список изменений."
     ),
@@ -90,6 +278,146 @@ keyword_families.push(...ranked.slice(0,6));
     workflow_id="c8d5f3b2-6e91-5d22-8a7b-1f0c4e9a2d55",
     example_objective="Сдвинь даты ввода по Excel",
     tool_grid_columns=3,
+)
+
+===END_FILE===
+===BEGIN_FILE===	n8n/templates/agents/tnav_cluster.py	8294	utf8
+"""Agent — tNav Cluster Agent: модели на гидродинамическом кластере (новая версия + расчёт).
+
+Сервис — ``tnav-cluster-service`` (порт 8400, SSH-транспорт до кластера). Строка реестра посеяна
+``enabled=False``: в поле агента включает инженер в Activity → Агенты, когда прописан доступ к кластеру
+(``tnav-cluster.env``); в лаборатории живой слот ``tnav_cluster_run`` включает её на время своего кейса.
+Оркестратор не правится: агент виден планировщику из ``agent_registry`` и на схеме в Activity.
+"""
+
+from __future__ import annotations
+
+from mas_agent_spec import AgentSpec, FallbackTexts
+
+SYSTEM = """Ты — решатель агента tNav Cluster Agent. Ты работаешь с моделями на гидродинамическом кластере: разбираешь модель, собираешь её новую версию с новым файлом расписания и запускаешь расчёт. Считают и правят файлы инструменты; ты сам ничего не вычисляешь, строки расписания не пишешь и команды кластера не придумываешь.
+
+session_id привязан workflow: никогда не передавай session_id и обёртку args/input.
+
+Какой инструмент когда:
+- Нужно понять устройство модели (её секции, подключённые файлы, какой файл расписания основной) → inspect_model с путём к входному файлу модели. Путь бери из списка моделей, который пришёл при открытии сессии.
+- В списке нет нужной модели или путь сомнительный → list_models один раз, потом inspect_model.
+- Задача просит применить новое расписание, собрать новую версию модели, подготовить прогнозный вариант → prepare_model_version. Инструмент сам скопирует входной файл модели, положит рядом новый файл расписания и перепишет подключение в копии.
+- Задача просит посчитать, запустить расчёт, посчитать на кластере → start_calculation. После ответа in_progress расчёт идёт сам, результат придёт позже: больше инструменты не вызывай, STOP.
+- Инженер спрашивает, как идёт уже запущенный расчёт → check_calculation.
+- Из задачи непонятно, какую модель считать или какое расписание применять, и подсказок в списке нет → ask_engineer одним вопросом обычной русской фразой.
+
+Порядок для задачи «новая версия и расчёт»: inspect_model → prepare_model_version → start_calculation. Больше четырёх вызовов инструментов не нужно.
+
+Ответы инструментов:
+- ok:false, code:model_not_chosen или model_not_found — это тебе: возьми путь из available_models или спроси инженера через ask_engineer.
+- ok:false, code:schedule_file_missing, schedule_file_ambiguous, schedule_file_without_dates — выбери другой файл из available_files или сообщи инженеру, что расписание не передано.
+- ok:false, code:version_not_created или run_not_started — прочитай message: чаще всего мешает уже существующее имя версии или запущенный расчёт.
+- ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.
+- status prepared — версия собрана; status in_progress, completed, needs_input — результат зафиксирован, STOP.
+
+Ничего не удаляй и не предлагай удалять: инструменты умеют только копировать, создавать и переименовывать. Пути к файлам и имена файлов в ответе инженеру не вставляй — пиши, что сделано: собрал новую версию модели, запустил расчёт, расчёт завершён за столько-то. Заверши одним коротким фактическим предложением по-русски.
+"""
+
+TOOLS = [
+    (
+        "list_models",
+        "Показать входные файлы моделей в рабочем каталоге кластера.",
+        [],
+    ),
+    (
+        "inspect_model",
+        "Разобрать модель: секции входного файла, подключённые файлы, основной файл расписания (в нём больше всего дат).",
+        [("model", "string", True, "Путь к входному файлу модели относительно рабочего каталога кластера")],
+    ),
+    (
+        "prepare_model_version",
+        "Собрать новую версию модели: новый файл расписания рядом со старым, копия входного файла модели с новым подключением.",
+        [
+            ("version_name", "string", False, "Короткое латинское имя версии для имён файлов, например prognoz_2027"),
+            ("model", "string", False, "Путь к входному файлу модели; пусто — разобранная модель"),
+            ("schedule_artifact_id", "string", False, "Какой файл расписания из задачи применить; пусто — единственный"),
+        ],
+    ),
+    (
+        "start_calculation",
+        "Запустить расчёт модели на кластере. Сразу возвращает in_progress; результат придёт позже через Activity.",
+        [("model", "string", False, "Путь к входному файлу модели; пусто — собранная новая версия")],
+    ),
+    (
+        "check_calculation",
+        "Состояние запущенного расчёта: идёт, завершился или упал, сколько шагов пройдено и сколько осталось.",
+        [],
+    ),
+    (
+        "ask_engineer",
+        "Спросить инженера одним вопросом по-русски, когда непонятно, какую модель считать или какое расписание применять. Не для ошибок вызова инструментов.",
+        [
+            ("question", "string", True, "Обычная русская фраза без имён полей, путей и JSON"),
+            ("options", "string", False, "Варианты через точку с запятой, как их видит инженер; пусто — свободный ответ"),
+        ],
+    ),
+]
+
+SPEC = AgentSpec(
+    agent_id="tnav_cluster",
+    title="tNav Cluster Agent",
+    when_to_use=(
+        "Работает с моделями на гидродинамическом кластере по SSH: разбирает устройство модели "
+        "(секции входного файла, подключённые файлы, основной файл расписания), собирает новую версию "
+        "модели с новым файлом расписания и запускает расчёт на кластере, а потом сообщает время расчёта "
+        "и его итог. Вызывать, когда инженер просит посчитать модель на кластере, применить новое "
+        "расписание к модели или узнать, как идёт расчёт. Готовое расписание он получает от агента, "
+        "который собирает расписание; если инженер просит только запустить уже готовую модель, файл "
+        "расписания не нужен. Файлы не удаляет и расписание не составляет."
+    ),
+    input_required=["schedule_out"],
+    output_provides=["model_version", "run_status", "run_results"],
+    input_schema={
+        "handoff_message": "какую модель считать на кластере и какое расписание применить",
+        "artifact_ids": "[schedule_out — новый файл расписания, если версию модели нужно пересобрать]",
+    },
+    output_schema={
+        "data": {
+            "model_version": "{model_path, schedule_path, version, dates_total}",
+            "run_status": "finished | failed | not_started | timeout",
+            "run_results": "{state, model, results_dir, steps, elapsed_seconds, last_date}",
+        }
+    },
+    enabled=False,
+    service_url_key="tnav_cluster_url",
+    lab_url="http://tnav-cluster:8400",
+    service_title="tNav Cluster Agent",
+    slug="cluster",
+    system_prompt=SYSTEM,
+    tools=TOOLS,
+    rag_selector="specialist",
+    rag_ready_note="Карточки — правила работы на кластере (устройство модели, запуск расчёта, что нельзя делать). Работай по задаче; про базу знаний инженера не спрашивай.",
+    rag_empty_note="Срез правил кластера пуст или недоступен — работай по задаче и правилам инструментов.",
+    result_tools=["start_calculation", "ask_engineer"],
+    texts=FallbackTexts(
+        no_result_question=(
+            "Кластерный агент не понял, что нужно сделать с моделью на кластере. Напишите одним-двумя "
+            "предложениями: какую модель считать и нужно ли применять новое расписание."
+        ),
+        repeated_question=(
+            "Кластерный агент несколько раз пытался разобрать задачу и не смог. Напишите, какую модель "
+            "считать на кластере и какое расписание применить."
+        ),
+        done_message="Кластерный агент выполнил задачу на гидродинамическом кластере.",
+        no_result_issue="no_cluster_result",
+        question_id="Q-cluster",
+        accepts_files=["inc"],
+        missing_input_message="Нет задачи для кластерного агента",
+        missing_input_issue="missing_objective",
+        missing_input_question="Напишите, какую модель считать на кластере и нужно ли применять новое расписание.",
+        no_result_failed_message="Кластерный агент не вернул результат",
+        no_result_failed_issue="tnav_cluster_no_result",
+    ),
+    accepted_message="Кластерный агент принял задачу",
+    progress_message="Кластерный агент смотрит модели на гидродинамическом кластере.",
+    node_id_namespace="mas-tnav-cluster",
+    example_objective="Примени новое расписание к модели на кластере и запусти расчёт",
+    max_iterations=8,
 )
 
 ===END_FILE===
@@ -3809,6 +4137,21 @@ if __name__ == "__main__":
     main()
 
 ===END_FILE===
+===BEGIN_FILE===	n8n/templates/generate_tnav_cluster_agent.py	434	utf8
+#!/usr/bin/env python3
+"""Generate Agent — tNav Cluster Agent from its spec (``agents/tnav_cluster.py``).
+
+Workflow лежит в основном каталоге (``n8n/workflows/core``): агент боевой, просто выключен в реестре,
+пока инженер не прописал доступ к кластеру и не включил его в Activity → Агенты.
+"""
+
+from agents import TNAV_CLUSTER
+from mas_agent_workflow import write_workflow
+
+if __name__ == "__main__":
+    write_workflow(TNAV_CLUSTER)
+
+===END_FILE===
 ===BEGIN_FILE===	n8n/templates/llm_runtime_options.py	5234	utf8
 """Shared Chat Model / structured-parser options for slow local LLMs (Qwen).
 
@@ -5486,7 +5829,7 @@ def namespaces_js() -> str:
     )
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/mas_retrieval_client.py	14102	utf8
+===BEGIN_FILE===	n8n/templates/mas_retrieval_client.py	14108	utf8
 """Shared MAS Knowledge Retrieval client.
 
 One Postgres/PGVector corpus. Isolation is ``filters.target_base`` (plus
@@ -5607,11 +5950,9 @@ function compactRetrievalCards(result, selector, limit, textLimit, preferFull){
     if(c._score==null||floor<=0) return true;
     const cardTopics=(Array.isArray(c.topics)?c.topics:[]).map(t=>String(t||'').toLowerCase());
     if(want.size&&cardTopics.some(t=>want.has(t))) return true;
+    if(orch&&want.size) return false;
     const n=Array.isArray(c.branches)?c.branches.length:0;
-    if(n<2){
-      if(orch&&want.size) return false;
-      return true;
-    }
+    if(n<2) return true;
     return c._score>=floor;
   });
   kept.sort((a,b)=>{
@@ -5644,8 +5985,8 @@ def attach_retrieval_js(
     Compact keeps cards with missing RRF (fail-open), drops ``rrf_score<=0`` and
     text shorter than 50 chars. The 45% floor applies when a card has at least
     two retrieval branches. On ``orchestrator_routing``, if the caller sent
-    ``topics``, a one-branch card is kept only when it overlaps those topics
-    (RRF ``1/(60+rank)`` never fails a 45% floor inside ``top_k``). Attach prefers ``body.summary``; on-demand
+    ``topics``, keep a card only when it overlaps those topics (lexical/semantic
+    hits without the tag are dropped even with two branches — CASE-6aacea63-31c63b). Attach prefers ``body.summary``; on-demand
     ``retrieve_knowledge`` passes ``preferFull`` so the model gets when-to-use
     and pitfalls, not the 600-char summary.
     Absolute 0.05 is wrong for this retriever: RRF is ``1/(60+rank)`` ≈ 0.016
@@ -5769,7 +6110,7 @@ def attach_schedule_rag_js() -> str:
     )
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/mas_state_utils.py	56678	utf8
+===BEGIN_FILE===	n8n/templates/mas_state_utils.py	56781	utf8
 """Shared orchestrator state helpers prepended into n8n Code nodes.
 
 n8n 2.30 Code cannot import a JS module at runtime. This Python constant is
@@ -6690,23 +7031,27 @@ function agentInputsCovered(row, compact){
   const have=attachedRoles(compact);
   return req.every(r=>have.has(r));
 }
-/* RAG tag branch (no regex over the goal). Open plan items → input+output roles of those agents.
-   Empty plan (step 0) → file roles (`input_required`) of enabled agents covered by attached files;
-   agents with empty input_required contribute `output_provides` so a file-less task still sends
-   topics (45% floor on one-branch orchestrator cards). Skip `absent_agent`. */
+/* RAG tag branch (no regex over the goal). File-covered enabled agents always contribute
+   `input_required` (empty req → `output_provides`) so a later open item cannot drop Excel/SCHEDULE
+   tags while those files are still attached (`CASE-6aacef32-374aa4`). Open plan items add both
+   input and output roles. Always `completion` for the HITL/Verify card. Skip `absent_agent`. */
 function planRetrievalTopics(plan, registry, compact){
   const rows=(Array.isArray(registry)?registry:[]).filter(registryEnabled);
   const open=planOpenItems(plan).filter(p=>p&&p.agent_id);
-  const step0=!open.length;
-  const source=step0
-    ?rows.filter(r=>agentInputsCovered(r, compact||{}))
-    :open.map(p=>rows.find(r=>r&&String(r.agent_id||'')===p.agent_id)).filter(Boolean);
   const out=[];
-  for(const row of source){
-    for(const tag of agentRoleTags(row, step0)){
+  const push=(row, inputsOnly)=>{
+    for(const tag of agentRoleTags(row, inputsOnly)){
       if(!out.includes(tag)) out.push(tag);
     }
+  };
+  for(const row of rows){
+    if(agentInputsCovered(row, compact||{})) push(row, true);
   }
+  for(const p of open){
+    const row=rows.find(r=>r&&String(r.agent_id||'')===p.agent_id);
+    if(row) push(row, false);
+  }
+  if(!out.includes('completion')) out.push('completion');
   return out.slice(0,12);
 }
 /* Shape the callee should produce: datasets the Decision LLM named (latin identifiers, known field
@@ -11737,7 +12082,7 @@ const healthy = (prepared, overrides = {}) => ({
 });
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/tests/mas-orchestrator-smoke.js	145924	utf8
+===BEGIN_FILE===	n8n/tests/mas-orchestrator-smoke.js	148308	utf8
 'use strict';
 /**
  * Thin Orchestrator — MAS: one step, retrieval selector orchestrator_routing, errorWorkflow bound.
@@ -12004,10 +12349,21 @@ async function run(name, json, nodes = {}, binary = {}) {
       { agent_id: 'schedule_builder', enabled: true, input_required: ['schedule_source'], output_provides: ['schedule_out', 'diff'] },
       { agent_id: 'demo_agent', enabled: true, input_required: [], output_provides: ['well_count', 'wells'] },
     ];
-    assert.deepEqual(helpers.planRetrievalTopics([], registry, { inputs: [{ role: 'excel' }, { role: 'schedule_source' }] }), ['excel', 'schedule_source', 'well_count', 'wells']);
-    assert.deepEqual(helpers.planRetrievalTopics([], registry, { inputs: [{ role: 'schedule_source' }] }), ['schedule_source', 'well_count', 'wells']);
-    assert.deepEqual(helpers.planRetrievalTopics([], registry, { inputs: [] }), ['well_count', 'wells']);
-    assert.deepEqual(helpers.planRetrievalTopics([{ id: 'p2', status: 'pending', agent_id: 'schedule_builder' }], registry, { inputs: [{ role: 'excel' }, { role: 'schedule_source' }] }), ['schedule_source', 'schedule_out', 'diff']);
+    assert.deepEqual(helpers.planRetrievalTopics([], registry, { inputs: [{ role: 'excel' }, { role: 'schedule_source' }] }), ['excel', 'schedule_source', 'well_count', 'wells', 'completion']);
+    assert.deepEqual(helpers.planRetrievalTopics([], registry, { inputs: [{ role: 'schedule_source' }] }), ['schedule_source', 'well_count', 'wells', 'completion']);
+    assert.deepEqual(helpers.planRetrievalTopics([], registry, { inputs: [] }), ['well_count', 'wells', 'completion']);
+    assert.deepEqual(helpers.planRetrievalTopics([{ id: 'p2', status: 'pending', agent_id: 'schedule_builder' }], registry, { inputs: [{ role: 'excel' }, { role: 'schedule_source' }] }), ['excel', 'schedule_source', 'well_count', 'wells', 'schedule_out', 'diff', 'completion']);
+    // CASE-6aacef32-374aa4: excel+schedule done, demo still open — file roles stay.
+    assert.deepEqual(helpers.planRetrievalTopics([
+      { id: 'p1', status: 'done', agent_id: 'excel_extractor' },
+      { id: 'p2', status: 'done', agent_id: 'schedule_builder' },
+      { id: 'p3', status: 'pending', agent_id: 'demo_agent' },
+    ], registry, { inputs: [{ role: 'excel' }, { role: 'schedule_source' }] }), ['excel', 'schedule_source', 'well_count', 'wells', 'completion']);
+    assert.deepEqual(helpers.planRetrievalTopics([
+      { id: 'p1', status: 'done', agent_id: 'excel_extractor' },
+      { id: 'p2', status: 'done', agent_id: 'schedule_builder' },
+      { id: 'p3', status: 'pending', agent_id: 'demo_agent' },
+    ], registry, { inputs: [] }), ['well_count', 'wells', 'completion']);
   }
   {
     // Two workbooks in one case: the first keeps the `excel` slot, the second survives as an attachment
@@ -12293,7 +12649,7 @@ async function run(name, json, nodes = {}, binary = {}) {
   for (const gone of ['keyword_families', 'task_patterns']) {
     assert.equal(gone in prepared.schedule_retrieval_request.filters, false, gone);
   }
-  assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, ['excel', 'schedule_source']);
+  assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, ['excel', 'schedule_source', 'completion']);
   assert.match(prepared.schedule_retrieval_request.query, /даты ввода/);
   assert.equal(prepared.schedule_retrieval_request.query.includes('dates.xlsx'), false, 'query must not carry filenames');
   assert.equal(prepared.schedule_retrieval_request.query.includes('Извлечено 40 скважин'), false, 'query must not carry the journal');
@@ -12513,6 +12869,38 @@ async function run(name, json, nodes = {}, binary = {}) {
   assert.equal(attachedFloor.rag.cards[0].knowledge_id, 'strong');
   assert.deepEqual(attachedFloor.rag.cards[0].topics, ['excel']);
 
+  const attachedNoOverlapMulti = await run(
+    'Attach orchestrator RAG evidence',
+    {
+      contract: 'schedule_retrieval_result',
+      status: 'succeeded',
+      results: [
+        {
+          knowledge_id: 'route-excel-extractor',
+          knowledge_type: 'routing_card',
+          target_base: 'orchestrator_routing',
+          title: 'Excel',
+          rrf_score: 0.048,
+          branches: ['lexical', 'semantic'],
+          topics: ['Excel', 'facts', 'new_wells'],
+          body: { text: 'Достаточно длинный текст карточки маршрутизации чтобы пройти порог длины.' },
+        },
+        {
+          knowledge_id: 'route-schedule-builder',
+          knowledge_type: 'routing_card',
+          target_base: 'orchestrator_routing',
+          title: 'Schedule',
+          rrf_score: 0.048,
+          branches: ['lexical', 'semantic', 'tag'],
+          topics: ['schedule_source', 'schedule_out'],
+          body: { text: 'Достаточно длинный текст карточки правки SCHEDULE чтобы пройти порог длины.' },
+        },
+      ],
+    },
+    { 'Prepare decision context': { ...prepared, schedule_retrieval_request: { ...prepared.schedule_retrieval_request, filters: { ...prepared.schedule_retrieval_request.filters, topics: ['schedule_source', 'completion'] } } } },
+  );
+  assert.deepEqual(attachedNoOverlapMulti.rag.cards.map((c) => c.knowledge_id), ['route-schedule-builder']);
+
   const attachedFloorNoTopics = await run(
     'Attach orchestrator RAG evidence',
     {
@@ -12569,7 +12957,7 @@ async function run(name, json, nodes = {}, binary = {}) {
         },
       ],
     },
-    { 'Prepare decision context': prepared },
+    { 'Prepare decision context': { ...prepared, schedule_retrieval_request: { ...prepared.schedule_retrieval_request, filters: { ...prepared.schedule_retrieval_request.filters, topics: [] } } } },
   );
   assert.equal(attachedMultiFloor.rag.cards.length, 1);
   assert.equal(attachedMultiFloor.rag.cards[0].knowledge_id, 'strong-multi');
@@ -13761,7 +14149,7 @@ async function run(name, json, nodes = {}, binary = {}) {
     // A fresh case: the prompt asks for a plan; step 0 topics are roles of agents covered by attached files.
     let prepared = await prepare(baseState);
     assert.match(prepared.planner_input, /План задачи \(твоя декомпозиция; статусы pending, active, done, blocked, dropped\):\n- план ещё не составлен — запиши пункты с идентификатором, заголовком и статусом/);
-    assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, ['excel', 'schedule_source']);
+    assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, ['excel', 'schedule_source', 'completion']);
     const system = wf.nodes.find((n) => n.name === 'Build decision chat').parameters.jsCode;
     assert.match(system, /приоритет над догадкой/);
     assert.match(system, /plan_update/);
@@ -13834,12 +14222,11 @@ async function run(name, json, nodes = {}, binary = {}) {
     assert.ok(prepared.planner_input.indexOf('План задачи') < prepared.planner_input.indexOf('\nДанные агентов:'), 'plan is inside the slice Prepare verify forwards');
     assert.deepEqual(prepared.compact.plan[1], { id: 'p2', title: 'Новый schedule на основе baseline', status: 'pending', agent_id: 'schedule_builder' });
     assert.match(prepared.schedule_retrieval_request.query, /План: Даты ввода скважин из Excel; Новый schedule на основе baseline; Согласование с инженером/);
-    // Tag branch (O4 tail): registry roles of the agents named in *open* plan items — p1 is done (excel roles
-    // gone), p2 names the builder, p3 names nobody. Routing cards carry the same words in `topics`.
-    assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, ['schedule_source', 'schedule_out', 'diff']);
+    // Tag branch: file-covered roles stay after p1 is done (excel still attached); open p2 adds builder outputs.
+    assert.deepEqual(prepared.schedule_retrieval_request.filters.topics, ['excel', 'schedule_source', 'schedule_out', 'diff', 'completion']);
     {
       const bothOpen = await prepare({ ...merged.state, plan: merged.state.plan.map((p) => (p.id === 'p1' ? { ...p, status: 'blocked' } : p)) });
-      assert.deepEqual(bothOpen.schedule_retrieval_request.filters.topics, ['excel', 'facts', 'new_wells', 'schedule_source', 'schedule_out', 'diff']);
+      assert.deepEqual(bothOpen.schedule_retrieval_request.filters.topics, ['excel', 'schedule_source', 'facts', 'new_wells', 'schedule_out', 'diff', 'completion']);
     }
 
     // An update touches only the fields it names: status without title keeps the title; a title without status keeps the status.
@@ -14250,7 +14637,7 @@ async function run(name, json, nodes = {}, binary = {}) {
 });
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/tests/mas-runtime-config-smoke.js	3200	utf8
+===BEGIN_FILE===	n8n/tests/mas-runtime-config-smoke.js	3366	utf8
 'use strict';
 /**
  * MAS — Runtime Config: one Set of service URLs, no secrets, no $env/$vars.
@@ -14292,6 +14679,8 @@ assert.deepEqual(fields, {
   excel_tools_url: 'http://excel-tools:8000',
   schedule_service_url: 'http://schedule-builder:8090',
   math_url: 'http://math-service:8100',
+  // tNav Cluster Agent (tnav-cluster-service): the field stays while the registry row waits for cluster credentials.
+  tnav_cluster_url: 'http://tnav-cluster:8400',
   // Template agent (agents-template/demo_agent): the field stays even while the registry row is disabled.
   demo_agent_url: 'http://demo-agent:8300',
   orchestrator_step_url: 'http://127.0.0.1:5678/webhook/mas-orchestrator-step',
@@ -15503,6 +15892,213 @@ assert.ok(
 console.log('SCHEDULE unlisted-wells policy HITL smoke: passed (4 scenarios)');
 
 ===END_FILE===
+===BEGIN_FILE===	n8n/tests/tnav-cluster-agent-smoke.js	11355	utf8
+'use strict';
+/**
+ * Agent — tNav Cluster Agent: workflow генерируется из AgentSpec (n8n/templates/agents/tnav_cluster.py)
+ * для сервиса tnav-cluster-service (mas-agent-kit + paramiko до ГД-кластера).
+ *
+ * Что доказывает на уровне JSON:
+ *  - форма как у боевых агентов (trigger → open_session → HTTP chat loop → result), без LangChain-нод;
+ *  - оркестратор не тронут: единственная привязка — строка ``agent_registry`` с id workflow;
+ *  - строка реестра посеяна enabled=false (в поле включает инженер, когда прописан доступ к кластеру);
+ *  - Runtime Config несёт tnav_cluster_url, адресов Docker в runtime-нодах нет;
+ *  - долгий расчёт проходит наружу как in_progress с watch.kind=cluster_run (паркинг кейса),
+ *    а мёртвый сервис и молчащая модель дают failed с русским текстом, а не ложный HITL.
+ */
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const workspace = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '../..');
+const read = (rel) => JSON.parse(fs.readFileSync(path.join(workspace, rel), 'utf8'));
+const wf = read('n8n/workflows/core/tnav-cluster-agent.workflow.json');
+const orch = read('n8n/workflows/core/mas-orchestrator.workflow.json');
+const runtime = read('n8n/workflows/core/mas-runtime-config.workflow.json');
+const health = read('n8n/workflows/core/mas-deployment-health-check.workflow.json');
+const seed = read('mas-activity-service/app/sql/agent_registry_seed.json');
+const manifest = read('n8n/import-manifest.json');
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const MACHINE = /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\[\]]|\w\|\w/;
+
+// -- форма: как у Excel / Schedule агентов ---------------------------------------------------------
+assert.equal(wf.name, 'Agent — tNav Cluster Agent');
+assert.equal(wf.active, false);
+assert.equal(wf.nodes.some((n) => n.type === 'n8n-nodes-base.webhook'), false, 'sub-workflow, no webhook');
+const trigger = wf.nodes.find((n) => n.type === 'n8n-nodes-base.executeWorkflowTrigger');
+assert.ok(trigger && trigger.typeVersion === 1.2);
+assert.equal(wf.nodes.some((n) => n.type === '@n8n/n8n-nodes-langchain.agent'), false, 'http_loop: no LangChain agent');
+assert.equal(wf.nodes.some((n) => n.type === '@n8n/n8n-nodes-langchain.lmChatOpenAi'), false, 'http_loop: no Chat Model');
+assert.equal(wf.nodes.some((n) => n.type === 'n8n-nodes-base.httpRequestTool'), false);
+assert.equal(wf.nodes.some((n) => n.type === '@n8n/n8n-nodes-langchain.toolHttpRequest'), false);
+const chat = wf.nodes.find((n) => n.name === 'tNav Cluster Agent Agent chat');
+assert.ok(chat, 'chat node');
+assert.equal(chat.type, 'n8n-nodes-base.httpRequest');
+assert.equal(chat.parameters.nodeCredentialType, 'openAiApi');
+assert.equal(chat.parameters.options.timeout, 600000);
+assert.equal(wf.settings.executionTimeout, 1800);
+// Тело запроса к модели собирает Code-нода (Build chat request), а не сам HTTP-узел.
+assert.equal(String(chat.parameters.jsonBody || ''), '={{ $json.chat_request }}');
+
+function sourceCode(name) {
+  const node = wf.nodes.find((n) => n.name === name);
+  assert.ok(node && node.parameters && node.parameters.jsCode, name);
+  return node.parameters.jsCode;
+}
+const buildJs = sourceCode('Build chat request');
+for (const tool of ['list_models', 'inspect_model', 'prepare_model_version', 'start_calculation', 'check_calculation', 'ask_engineer']) {
+  assert.match(buildJs, new RegExp(tool), `tool ${tool} is in the chat request schema`);
+}
+assert.match(buildJs, /retrieve_knowledge/);
+assert.equal(/excel_extractor|schedule_builder|demo_agent/.test(buildJs), false, 'the cluster prompt knows nothing about other agents');
+assert.equal(/\brm\b|rmdir/.test(buildJs), false, 'the prompt never mentions deleting files');
+assert.equal(wf.connections['Restore after tNav Cluster Agent RAG'].main[0][0].node, 'Build chat request');
+assert.equal(wf.connections['Agent loop router'].main[3][0].node, 'Summarize AI steps');
+assert.equal(wf.connections['Restore after AI tools'].main[0][0].node, 'Fetch cluster result');
+assert.equal(wf.connections['Fetch cluster result'].main[0][0].node, 'Format cluster result');
+for (const node of wf.nodes.filter((n) => n.type === 'n8n-nodes-base.httpRequest')) {
+  assert.equal(String(node.parameters.url).includes('tnav-cluster:8400'), false, `${node.name}: no Compose DNS in runtime nodes`);
+}
+const blob = JSON.stringify(wf);
+assert.equal(blob.includes('$env'), false);
+assert.equal(blob.includes('$vars'), false);
+// Пароль кластера живёт только в tnav-cluster.env на рабочей станции, не в workflow.
+assert.equal(/TNAV_SSH_PASSWORD|cluster-pass/.test(blob), false, 'no cluster credentials in the workflow JSON');
+
+// -- лог разработчика: каждая строка Activity называет свой execution -------------------------------
+const errorWf = read('n8n/workflows/core/mas-error-traces.workflow.json');
+assert.equal(wf.settings.errorWorkflow, errorWf.id, 'settings.errorWorkflow → Error — MAS Node Traces');
+const activityNodes = wf.nodes.filter((n) => n.type === 'n8n-nodes-base.httpRequest' && String(n.parameters.url).includes("'/events'"));
+assert.ok(activityNodes.length >= 3, 'accepted / progress / tools Activity lines');
+for (const node of activityNodes) {
+  const body = String(node.parameters.jsonBody);
+  assert.match(body, /execution_id: String\(\$execution\.id \|\| ''\)/, `${node.name}: payload.execution_id`);
+  assert.match(body, /workflow_id: String\(\$workflow\.id \|\| ''\)/, `${node.name}: payload.workflow_id`);
+  assert.equal(node.onError, 'continueRegularOutput', `${node.name}: a dead Activity never fails the agent`);
+}
+
+// -- оркестратор не тронут: привязка — только строка реестра ----------------------------------------
+assert.equal(JSON.stringify(orch).includes('tnav_cluster'), false, 'adding an agent must not edit the orchestrator');
+const row = seed.find((r) => r.agent_id === 'tnav_cluster');
+assert.ok(row, 'agent_registry seed carries the cluster agent');
+assert.equal(row.enabled, false, 'off until the engineer fills tnav-cluster.env and enables it in Activity');
+assert.equal(row.invoke.kind, 'n8n_workflow');
+assert.equal(row.invoke.workflow_id, wf.id);
+assert.equal(row.invoke.workflow_name, wf.name);
+assert.equal(MACHINE.test(row.when_to_use), false, 'when_to_use is Russian prose for the planner');
+assert.deepEqual(row.output_provides, ['model_version', 'run_status', 'run_results']);
+assert.deepEqual(row.input_required, ['schedule_out']);
+
+// -- Runtime Config, Health Check, манифест импорта --------------------------------------------------
+const runtimeSet = runtime.nodes.find((n) => n.name === 'Runtime URLs');
+const urlField = runtimeSet.parameters.assignments.assignments.find((a) => a.name === 'tnav_cluster_url');
+assert.ok(urlField, 'MAS — Runtime Config has tnav_cluster_url (field-editable)');
+assert.equal(urlField.value, 'http://tnav-cluster:8400');
+assert.equal(JSON.stringify(health).includes('tnav_cluster'), false, 'Health Check does not require a disabled agent');
+assert.ok(manifest.full_clean_import_set.includes('workflows/core/tnav-cluster-agent.workflow.json'));
+assert.ok(manifest.runtime_import_order.includes('workflows/core/tnav-cluster-agent.workflow.json'));
+assert.ok(
+  manifest.ui_configuration.some((line) => line.includes('tnav_cluster_url') && line.includes('tnav-cluster.env')),
+  'the manifest tells the engineer where the cluster URL and credentials go',
+);
+
+// -- Code-ноды: долгий расчёт уходит наружу как in_progress ------------------------------------------
+async function run(name, json, nodes = {}) {
+  const lookup = (nodeName) => {
+    if (!Object.prototype.hasOwnProperty.call(nodes, nodeName)) throw new Error(`node not executed: ${nodeName}`);
+    const items = [{ json: nodes[nodeName] }];
+    return { first: () => items[0], last: () => items[0], all: () => items, item: items[0] };
+  };
+  const fn = new AsyncFunction('$json', '$', '$input', sourceCode(name));
+  const result = await fn(json, lookup, { first: () => ({ json }), last: () => ({ json }), all: () => [{ json }], item: { json } });
+  assert.ok(Array.isArray(result) && result[0]?.json);
+  return result[0].json;
+}
+
+(async () => {
+  const opened = { task_id: 'TASK-9', session_id: 'clu_1' };
+  const steps = await run(
+    'Summarize AI steps',
+    { llm_final_text: 'Запустил расчёт модели на кластере.', tool_log: ['inspect_model', 'prepare_model_version', 'start_calculation'], iteration: 3 },
+    { 'Open cluster session': opened },
+  );
+  assert.equal(steps.total_calls, 3);
+  assert.ok(steps.tools_used.includes('start_calculation'));
+
+  const parked = await run(
+    'Format cluster result',
+    {
+      agent_id: 'tnav_cluster',
+      task_id: 'TASK-9',
+      status: 'in_progress',
+      message: 'Расчёт модели запущен на гидродинамическом кластере. Сообщу, когда он закончится.',
+      data: {},
+      artifacts: {},
+      issues: [],
+      assumptions: [],
+      requests: [],
+      watch: { kind: 'cluster_run', ref: 'run_abc123', poll_hint: '10m' },
+    },
+    { 'Open cluster session': opened },
+  );
+  assert.equal(parked.status, 'in_progress', 'in_progress reaches the orchestrator (case parks as waiting_agent)');
+  assert.deepEqual(parked.watch, { kind: 'cluster_run', ref: 'run_abc123', poll_hint: '10m' }, 'watch survives Format result');
+  assert.equal(MACHINE.test(parked.message), false, parked.message);
+
+  const done = await run(
+    'Format cluster result',
+    {
+      agent_id: 'tnav_cluster',
+      task_id: 'TASK-9',
+      status: 'completed',
+      message: 'Расчёт модели на гидродинамическом кластере завершён: 14 расчётных шагов, время расчёта 2 часа 13 минут.',
+      data: { run_status: 'finished', run_results: { state: 'finished', steps: 14 } },
+      artifacts: {},
+      issues: [],
+      assumptions: [],
+      requests: [],
+    },
+    { 'Open cluster session': opened },
+  );
+  assert.equal('watch' in done, false, 'no watch key when the agent did not send one');
+  assert.equal(done.data.run_status, 'finished');
+
+  const noResult = await run(
+    'Format cluster result',
+    {},
+    { 'Open cluster session': opened, 'Summarize AI steps': { llm_final_text: 'Напишите, какую модель считать на кластере.' } },
+  );
+  assert.equal(noResult.status, 'needs_input');
+  assert.match(noResult.requests[0].question, /модель/i);
+  assert.equal(MACHINE.test(noResult.requests[0].question), false, 'engineer question has no snake_case');
+  assert.deepEqual(noResult.requests[0].accepts.files, ['inc']);
+
+  const down = await run(
+    'Format missing cluster',
+    { error: { message: 'connect ECONNREFUSED' } },
+    { 'Runtime configuration': { tnav_cluster_url: 'http://127.0.0.1:8400' } },
+  );
+  assert.equal(down.status, 'failed');
+  assert.equal(down.issues[0].code, 'service_unreachable');
+  assert.match(down.message, /tNav Cluster Agent/);
+  assert.equal(MACHINE.test(down.message), false, down.message);
+
+  const llmDown = await run(
+    'Format cluster result',
+    {},
+    { 'Open cluster session': opened, 'Summarize AI steps': { llm_final_text: '', llm_unavailable: true } },
+  );
+  assert.equal(llmDown.status, 'failed');
+  assert.equal(llmDown.issues[0].code, 'llm_unavailable');
+  assert.match(llmDown.message, /Модель чата не ответила/);
+
+  console.log('tnav-cluster-agent-smoke: ok');
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+
+===END_FILE===
 ===BEGIN_FILE===	n8n/workflows/README.md	327	utf8
 # n8n workflows
 
@@ -15510,7 +16106,7 @@ console.log('SCHEDULE unlisted-wells policy HITL smoke: passed (4 scenarios)');
 - `support/` — `demo-agent.workflow.json` (lab / рецепт нового агента). Поле его не импортирует.
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/workflows/core/excel-extractor-agent.workflow.json	108041	utf8
+===BEGIN_FILE===	n8n/workflows/core/excel-extractor-agent.workflow.json	108007	utf8
 {
   "id": "3774c645-a20d-53df-9288-130173c400c2",
   "name": "Agent — Excel Extractor",
@@ -15841,7 +16437,7 @@ console.log('SCHEDULE unlisted-wells policy HITL smoke: passed (4 scenarios)');
     },
     {
       "parameters": {
-        "jsCode": "function unwrapRetrieval(raw){\n  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\n  const src=obj(raw)?raw:{};\n  if(obj(src.schedule_retrieval_result)) return src.schedule_retrieval_result;\n  if(obj(src.body)&&obj(src.body.schedule_retrieval_result)) return src.body.schedule_retrieval_result;\n  if(String(src.contract||'')==='schedule_retrieval_result') return src;\n  if(src.error||Number(src.statusCode)>=400) return {status:'failed',findings:[{code:'RETRIEVAL_CALL_FAILED'}],results:[]};\n  return src;\n}\nfunction retrievalOutage(result, raw){\n  if(Boolean(raw&&raw.error)||Number(raw&&raw.statusCode)>=400) return 'failed';\n  const st=String((result&&result.status)||'').toLowerCase();\n  if(st==='failed'||st==='error') return 'failed';\n  if(st==='needs_input') return 'needs_input';\n  if(st==='abstain') return 'abstain';\n  if(st==='unavailable') return 'unavailable';\n  return '';\n}\nfunction compactRetrievalCards(result, selector, limit, textLimit, preferFull){\n  const rows=Array.isArray(result.results)?result.results:[];\n  const wantedBase=String(selector.target_base||'');\n  const wantedTypes=new Set((selector.knowledge_types||[]).map(v=>String(v).toLowerCase()));\n  const cap=Number(limit)||6;\n  const cut=Number(textLimit)||700;\n  const minText=50;\n  const relKeep=0.45;\n  const scored=[];\n  for(const r of rows){\n    if(!r||typeof r!=='object') continue;\n    const body=r.body&&typeof r.body==='object'?r.body:{};\n    const base=String(r.target_base||body.target_base||(result.filters&&result.filters.target_base)||'');\n    const kt=String(r.knowledge_type||body.knowledge_type||'').toLowerCase();\n    if(wantedBase&&base&&base!==wantedBase) continue;\n    if(wantedTypes.size&&kt&&!wantedTypes.has(kt)) continue;\n    const summary=String(body.summary||r.summary||'').trim();\n    const full=String(body.text||body.instruction||r.text||'').trim();\n    const text=preferFull?(full||summary):(summary||full);\n    if(text.length<minText) continue;\n    const score=r.rrf_score!=null?Number(r.rrf_score):(body.rrf_score!=null?Number(body.rrf_score):null);\n    if(Number.isFinite(score)&&score<=0) continue;\n    const topics=Array.isArray(r.topics)?r.topics:(Array.isArray(body.topics)?body.topics:[]);\n    scored.push({\n      knowledge_id:String(r.knowledge_id||body.knowledge_id||''),\n      title:String(r.title||body.title||'').slice(0,160),\n      knowledge_type:kt||null,\n      text:text.slice(0,cut),\n      revision:(r.revision!=null&&r.revision!=='')?r.revision:((body.revision!=null&&body.revision!=='')?body.revision:null),\n      rrf_score:Number.isFinite(score)?score:null,\n      branches:Array.isArray(r.branches)?r.branches.slice(0,6).map(b=>String(b)):(Array.isArray(body.branches)?body.branches.slice(0,6).map(b=>String(b)):[]),\n      topics:topics.slice(0,12).map(t=>String(t||'').trim()).filter(Boolean),\n      _score:Number.isFinite(score)?score:null\n    });\n  }\n  const finite=scored.map(c=>c._score).filter(s=>s!=null);\n  const best=finite.length?Math.max.apply(null,finite):0;\n  const floor=best>0?best*relKeep:0;\n  const want=new Set((Array.isArray(selector.topics)?selector.topics:[]).map(t=>String(t||'').toLowerCase()).filter(Boolean));\n  const orch=String(selector.target_base||'')==='orchestrator_routing';\n  const kept=scored.filter(c=>{\n    if(c._score==null||floor<=0) return true;\n    const cardTopics=(Array.isArray(c.topics)?c.topics:[]).map(t=>String(t||'').toLowerCase());\n    if(want.size&&cardTopics.some(t=>want.has(t))) return true;\n    const n=Array.isArray(c.branches)?c.branches.length:0;\n    if(n<2){\n      if(orch&&want.size) return false;\n      return true;\n    }\n    return c._score>=floor;\n  });\n  kept.sort((a,b)=>{\n    if(a._score==null&&b._score==null) return 0;\n    if(a._score==null) return 1;\n    if(b._score==null) return -1;\n    return b._score-a._score;\n  });\n  return kept.slice(0,cap).map(c=>({knowledge_id:c.knowledge_id,title:c.title,knowledge_type:c.knowledge_type,text:c.text,revision:c.revision,rrf_score:c.rrf_score,branches:c.branches,topics:c.topics}));\n}\nconst prev=$(\"Prepare AI Agent input\").first().json||{};\nconst raw=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst result=unwrapRetrieval(raw);\nconst fallbackSelector={\"target_base\": \"excel_protocol\", \"knowledge_types\": [\"protocol_instruction\"]};\nconst fromPrev=prev.retrieval_selector;\nconst req=obj(prev.schedule_retrieval_request)?prev.schedule_retrieval_request:{};\nconst wantTopics=Array.isArray(req.filters&&req.filters.topics)?req.filters.topics:[];\nconst selector=(fromPrev&&fromPrev.target_base)?{target_base:String(fromPrev.target_base),knowledge_types:Array.isArray(fromPrev.knowledge_types)&&fromPrev.knowledge_types.length?fromPrev.knowledge_types:fallbackSelector.knowledge_types,topics:wantTopics}:Object.assign({},fallbackSelector,{topics:wantTopics});\nconst outage=retrievalOutage(result,raw);\nconst cards=(outage==='failed'||outage==='needs_input')?[]:compactRetrievalCards(result,selector,8,1200);\nconst rag={contract:'mas_rag_evidence',contract_version:'1.0',target_base:selector.target_base,knowledge_types:selector.knowledge_types,status:outage||(cards.length?'ready':'empty'),phase:\"initial\",cards,findings:(Array.isArray(result.findings)?result.findings:[]).slice(0,6).map(f=>f&&f.code).filter(Boolean)};\nconst note=rag.status==='ready'?\"Карточки — срез excel_protocol (protocol_instruction), не schedule_mvp и не orchestrator_routing. Это протокол инструментов (opaque id, extract_table / extract_commissioning, query_table только подглядеть). Строки workbook только из Excel-tools. Не спрашивай HITL про базу знаний.\":\"Срез excel_protocol пуст или недоступен — работай правилами инструментов. Не спрашивай HITL про RAG и не ходи в другие target_base.\";\nconst planner=`${prev.planner_input||prev.agent_input||''}\\n\\nRetrieved knowledge (target_base=${selector.target_base}):\\n${JSON.stringify(rag,null,2)}\\n\\n${note}\\n`;\nconst logCards=(Array.isArray(cards)?cards:[]).map(c=>({knowledge_id:String((c&&c.knowledge_id)||''),revision:(c&&c.revision)!=null?c.revision:null,rrf_score:Number.isFinite(Number(c&&c.rrf_score))?Number(c.rrf_score):null,branches:Array.isArray(c&&c.branches)?c.branches.slice(0,6):[]}));\nconst logFindings=(Array.isArray(result.findings)?result.findings:[]).slice(0,8).map(f=>{if(obj(f)&&f.code)return{code:String(f.code)};const code=String(f||'').trim();return code?{code}:null}).filter(Boolean);\nconst activity={activity_kind:'trace.rag',status_message:`База знаний: ${rag.status} · ${logCards.length} карточек`,activity_payload:{caller:\"excel_extractor\",query:String(req.query||result.query||'').slice(0,800),filters:obj(req.filters)?req.filters:{},status:rag.status,phase:rag.phase,findings:logFindings,cards:logCards}};\nreturn [{json:{...prev,rag,planner_input:planner,agent_input:planner,...activity}}];\n"
+        "jsCode": "function unwrapRetrieval(raw){\n  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\n  const src=obj(raw)?raw:{};\n  if(obj(src.schedule_retrieval_result)) return src.schedule_retrieval_result;\n  if(obj(src.body)&&obj(src.body.schedule_retrieval_result)) return src.body.schedule_retrieval_result;\n  if(String(src.contract||'')==='schedule_retrieval_result') return src;\n  if(src.error||Number(src.statusCode)>=400) return {status:'failed',findings:[{code:'RETRIEVAL_CALL_FAILED'}],results:[]};\n  return src;\n}\nfunction retrievalOutage(result, raw){\n  if(Boolean(raw&&raw.error)||Number(raw&&raw.statusCode)>=400) return 'failed';\n  const st=String((result&&result.status)||'').toLowerCase();\n  if(st==='failed'||st==='error') return 'failed';\n  if(st==='needs_input') return 'needs_input';\n  if(st==='abstain') return 'abstain';\n  if(st==='unavailable') return 'unavailable';\n  return '';\n}\nfunction compactRetrievalCards(result, selector, limit, textLimit, preferFull){\n  const rows=Array.isArray(result.results)?result.results:[];\n  const wantedBase=String(selector.target_base||'');\n  const wantedTypes=new Set((selector.knowledge_types||[]).map(v=>String(v).toLowerCase()));\n  const cap=Number(limit)||6;\n  const cut=Number(textLimit)||700;\n  const minText=50;\n  const relKeep=0.45;\n  const scored=[];\n  for(const r of rows){\n    if(!r||typeof r!=='object') continue;\n    const body=r.body&&typeof r.body==='object'?r.body:{};\n    const base=String(r.target_base||body.target_base||(result.filters&&result.filters.target_base)||'');\n    const kt=String(r.knowledge_type||body.knowledge_type||'').toLowerCase();\n    if(wantedBase&&base&&base!==wantedBase) continue;\n    if(wantedTypes.size&&kt&&!wantedTypes.has(kt)) continue;\n    const summary=String(body.summary||r.summary||'').trim();\n    const full=String(body.text||body.instruction||r.text||'').trim();\n    const text=preferFull?(full||summary):(summary||full);\n    if(text.length<minText) continue;\n    const score=r.rrf_score!=null?Number(r.rrf_score):(body.rrf_score!=null?Number(body.rrf_score):null);\n    if(Number.isFinite(score)&&score<=0) continue;\n    const topics=Array.isArray(r.topics)?r.topics:(Array.isArray(body.topics)?body.topics:[]);\n    scored.push({\n      knowledge_id:String(r.knowledge_id||body.knowledge_id||''),\n      title:String(r.title||body.title||'').slice(0,160),\n      knowledge_type:kt||null,\n      text:text.slice(0,cut),\n      revision:(r.revision!=null&&r.revision!=='')?r.revision:((body.revision!=null&&body.revision!=='')?body.revision:null),\n      rrf_score:Number.isFinite(score)?score:null,\n      branches:Array.isArray(r.branches)?r.branches.slice(0,6).map(b=>String(b)):(Array.isArray(body.branches)?body.branches.slice(0,6).map(b=>String(b)):[]),\n      topics:topics.slice(0,12).map(t=>String(t||'').trim()).filter(Boolean),\n      _score:Number.isFinite(score)?score:null\n    });\n  }\n  const finite=scored.map(c=>c._score).filter(s=>s!=null);\n  const best=finite.length?Math.max.apply(null,finite):0;\n  const floor=best>0?best*relKeep:0;\n  const want=new Set((Array.isArray(selector.topics)?selector.topics:[]).map(t=>String(t||'').toLowerCase()).filter(Boolean));\n  const orch=String(selector.target_base||'')==='orchestrator_routing';\n  const kept=scored.filter(c=>{\n    if(c._score==null||floor<=0) return true;\n    const cardTopics=(Array.isArray(c.topics)?c.topics:[]).map(t=>String(t||'').toLowerCase());\n    if(want.size&&cardTopics.some(t=>want.has(t))) return true;\n    if(orch&&want.size) return false;\n    const n=Array.isArray(c.branches)?c.branches.length:0;\n    if(n<2) return true;\n    return c._score>=floor;\n  });\n  kept.sort((a,b)=>{\n    if(a._score==null&&b._score==null) return 0;\n    if(a._score==null) return 1;\n    if(b._score==null) return -1;\n    return b._score-a._score;\n  });\n  return kept.slice(0,cap).map(c=>({knowledge_id:c.knowledge_id,title:c.title,knowledge_type:c.knowledge_type,text:c.text,revision:c.revision,rrf_score:c.rrf_score,branches:c.branches,topics:c.topics}));\n}\nconst prev=$(\"Prepare AI Agent input\").first().json||{};\nconst raw=$json||{};\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst result=unwrapRetrieval(raw);\nconst fallbackSelector={\"target_base\": \"excel_protocol\", \"knowledge_types\": [\"protocol_instruction\"]};\nconst fromPrev=prev.retrieval_selector;\nconst req=obj(prev.schedule_retrieval_request)?prev.schedule_retrieval_request:{};\nconst wantTopics=Array.isArray(req.filters&&req.filters.topics)?req.filters.topics:[];\nconst selector=(fromPrev&&fromPrev.target_base)?{target_base:String(fromPrev.target_base),knowledge_types:Array.isArray(fromPrev.knowledge_types)&&fromPrev.knowledge_types.length?fromPrev.knowledge_types:fallbackSelector.knowledge_types,topics:wantTopics}:Object.assign({},fallbackSelector,{topics:wantTopics});\nconst outage=retrievalOutage(result,raw);\nconst cards=(outage==='failed'||outage==='needs_input')?[]:compactRetrievalCards(result,selector,8,1200);\nconst rag={contract:'mas_rag_evidence',contract_version:'1.0',target_base:selector.target_base,knowledge_types:selector.knowledge_types,status:outage||(cards.length?'ready':'empty'),phase:\"initial\",cards,findings:(Array.isArray(result.findings)?result.findings:[]).slice(0,6).map(f=>f&&f.code).filter(Boolean)};\nconst note=rag.status==='ready'?\"Карточки — срез excel_protocol (protocol_instruction), не schedule_mvp и не orchestrator_routing. Это протокол инструментов (opaque id, extract_table / extract_commissioning, query_table только подглядеть). Строки workbook только из Excel-tools. Не спрашивай HITL про базу знаний.\":\"Срез excel_protocol пуст или недоступен — работай правилами инструментов. Не спрашивай HITL про RAG и не ходи в другие target_base.\";\nconst planner=`${prev.planner_input||prev.agent_input||''}\\n\\nRetrieved knowledge (target_base=${selector.target_base}):\\n${JSON.stringify(rag,null,2)}\\n\\n${note}\\n`;\nconst logCards=(Array.isArray(cards)?cards:[]).map(c=>({knowledge_id:String((c&&c.knowledge_id)||''),revision:(c&&c.revision)!=null?c.revision:null,rrf_score:Number.isFinite(Number(c&&c.rrf_score))?Number(c.rrf_score):null,branches:Array.isArray(c&&c.branches)?c.branches.slice(0,6):[]}));\nconst logFindings=(Array.isArray(result.findings)?result.findings:[]).slice(0,8).map(f=>{if(obj(f)&&f.code)return{code:String(f.code)};const code=String(f||'').trim();return code?{code}:null}).filter(Boolean);\nconst activity={activity_kind:'trace.rag',status_message:`База знаний: ${rag.status} · ${logCards.length} карточек`,activity_payload:{caller:\"excel_extractor\",query:String(req.query||result.query||'').slice(0,800),filters:obj(req.filters)?req.filters:{},status:rag.status,phase:rag.phase,findings:logFindings,cards:logCards}};\nreturn [{json:{...prev,rag,planner_input:planner,agent_input:planner,...activity}}];\n"
       },
       "id": "10aa56ce-c69e-532e-a7c2-0efd4561415d",
       "name": "Attach excel RAG evidence",
@@ -15963,397 +16559,6 @@ console.log('SCHEDULE unlisted-wells policy HITL smoke: passed (4 scenarios)');
       "waitBetweenTries": 2000,
       "onError": "continueRegularOutput",
       "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst http=$json||{};\nconst prev=fromNode('Build chat request');\nconst choice=obj((http.choices||[])[0])?(http.choices||[])[0]:{};\nconst msg=obj(choice.message)?choice.message:{};\nconst content=stripThink(typeof msg.content==='string'?msg.content:'');\nconst usage=obj(http.usage)?http.usage:{};\nconst details=obj(usage.completion_tokens_details)?usage.completion_tokens_details:{};\nconst finish=String(choice.finish_reason||http.finish_reason||'');\nconst errObj=obj(http.error)?http.error:null;\nconst errText=typeof http.error==='string'?http.error:String((errObj&&(errObj.message||errObj.code))||'');\nconst statusCode=Number(http.statusCode||http.status||(errObj&&errObj.status)||0);\nconst toolCalls=Array.isArray(msg.tool_calls)?msg.tool_calls:[];\nconst pending=toolCalls.map(tc=>{\n  const fn=obj(tc.function)?tc.function:{};\n  return {id:String(tc.id||''),name:String(fn.name||tc.name||''),arguments:fn.arguments!=null?fn.arguments:tc.arguments};\n}).filter(t=>t.name);\nconst iteration=Number(prev.iteration||0)+1;\nconst maxIter=Number(prev.max_iterations||8);\nconst over=iteration>=maxIter;\nlet messages=Array.isArray(prev.messages)?prev.messages.slice():[];\nconst assistant={role:'assistant',content:content||null};\nif(toolCalls.length) assistant.tool_calls=toolCalls;\nmessages.push(assistant);\nconst tool_log=Array.isArray(prev.tool_log)?prev.tool_log.slice():[];\nconst llm_unavailable=(!pending.length)&&(Boolean(errText)||statusCode>=400||!Array.isArray(http.choices)||finish==='error');\nconst loop_route=llm_unavailable?'done':(pending.length?loopRouteForPending(pending, over):'done');\nconst promptMsgs=obj(prev.chat_request)&&Array.isArray(prev.chat_request.messages)?prev.chat_request.messages:[];\nconst tokens=Number(usage.prompt_tokens||0)+Number(usage.completion_tokens||0);\nconst payload={\n  role:'agent',\n  model:String((obj(prev.chat_request)&&prev.chat_request.model)||''),\n  prompt_tokens:Number(usage.prompt_tokens||0),\n  completion_tokens:Number(usage.completion_tokens||0),\n  reasoning_tokens:Number(details.reasoning_tokens||0),\n  finish_reason:llm_unavailable?(finish||'error'):(finish||(errText?'error':'stop')),\n  tool_calls:pending.map(t=>({name:t.name,args_preview:clip(String(t.arguments||''),400)})),\n  prompt_preview:previewChatMessages(promptMsgs, Number(prev.prompt_len||0)),\n  content_preview:clip(content,2000)\n};\nif(errText) payload.error=errText.slice(0,200);\nreturn [{json:{\n  ...prev,\n  messages,\n  pending_tools:llm_unavailable?[]:pending,\n  iteration,\n  over,\n  loop_route,\n  llm_final_text:content,\n  llm_unavailable,\n  prompt_len:promptMsgs.length,\n  tool_log,\n  finish_reason:payload.finish_reason,\n  activity_kind:'trace.llm',\n  status_message:`agent: ${payload.finish_reason} · ${tokens} tok`,\n  activity_payload:payload\n}}];\n"
-      },
-      "id": "6540c4eb-56e7-53aa-b3d8-abc215c549d8",
-      "name": "Parse agent chat",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        4480,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize excel task').first().json.agent_task.case_id + '/events' }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "options": {
-          "timeout": 2000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json",
-              "neverError": true
-            }
-          }
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"excel_extractor\", agent_id: \"excel_extractor\", task_id: $('Normalize excel task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: Object.assign({source: \"excel-extractor-agent-workflow\"}, $json.activity_payload || {}, {execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')})}) }}"
-      },
-      "id": "8f11a349-2a92-5dd5-b169-10eefa94f5db",
-      "name": "Activity — Excel Extractor LLM",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        4760,
-        0
-      ],
-      "onError": "continueRegularOutput",
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const x=$('Parse agent chat').first().json||{}; return [{json:x}];"
-      },
-      "id": "5c62ede5-379f-548b-b67c-8d0c5d7374bb",
-      "name": "Restore after Excel Extractor LLM",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        5040,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "mode": "expression",
-        "numberOutputs": 4,
-        "output": "={{ ({chat:0,tool:1,retrieve:2,done:3})[$json.loop_route] ?? 3 }}"
-      },
-      "id": "b5f9f476-2f3e-5dca-9821-c5e198aa845b",
-      "name": "Agent loop router",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3.4,
-      "position": [
-        5320,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst ALLOWED=new Set([\"workbook_introspect\", \"sheet_preview\", \"detect_tables\", \"match_tables\", \"describe_table\", \"list_column_values\", \"query_table\", \"extract_commissioning\", \"extract_well_parameters\", \"extract_table\", \"ask_engineer\"]);\nconst SERVICE_KEY=\"excel_tools_url\";\nconst OPEN_NAME=\"Open excel session\";\n\nconst prev=$json||{};\nconst pending=Array.isArray(prev.pending_tools)?prev.pending_tools:[];\nconst call=pending[0]||{};\nconst name=String(call.name||'');\nconst args=parseArgs(call.arguments);\nconst opened=fromNode(OPEN_NAME);\nconst sessionId=String(opened.session_id||prev.session_id||'');\nlet cfg={};\ntry{cfg=$('Runtime configuration').first().json||{};}catch(e){cfg={}}\nconst base=String(cfg[SERVICE_KEY]||prev[SERVICE_KEY]||'').replace(/[/]+$/,'');\nconst log=Array.isArray(prev.tool_log)?prev.tool_log:[];\nconst needKb=name==='apply_dataset'&&ALLOWED.has(name)&&!log.includes('retrieve_knowledge');\nconst skip_http=!name||!ALLOWED.has(name)||needKb;\nconst skip_result=needKb?{ok:false,code:'knowledge_required',message:'Сначала вызови retrieve_knowledge с query (смысл набора) и keywords (имя keyword), затем get_keyword, затем apply_dataset. Стартовый срез — краткие summary; полный текст — только из retrieve_knowledge.'}:(skip_http?{ok:false,code:'unknown_tool',message:'Нет такого инструмента',available:[...ALLOWED]}:null);\nconst tool_url=skip_http?'':(base+'/agent-tools/'+name);\nconst tool_body={session_id:sessionId,...args};\nreturn [{json:{...prev,pending_tool:call,tool_url,tool_body,skip_http,skip_result}}];\n"
-      },
-      "id": "bbe3770a-3bc7-5a5a-946a-c82c56bde174",
-      "name": "Prepare tool call",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        5600,
-        -170
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "c6f626b9-81ec-533e-ad59-e33986a3ed85",
-              "leftValue": "={{ Boolean($json.skip_http) }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "true"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "ac0cd7dd-b33e-5166-8023-2859e56f3322",
-      "name": "Skip unknown tool?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        5880,
-        -170
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $json.tool_url }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "options": {
-          "timeout": 120000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json",
-              "neverError": true
-            }
-          }
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ $json.tool_body }}"
-      },
-      "id": "c1c8f5b7-2580-5d35-82ab-6ebd3223e248",
-      "name": "Call agent tool",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        6160,
-        -85
-      ],
-      "onError": "continueRegularOutput",
-      "alwaysOutputData": true,
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
-    },
-    {
-      "parameters": {
-        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst http=$json||{};\nconst prev=fromNode('Prepare tool call');\nconst call=obj(prev.pending_tool)?prev.pending_tool:{};\nlet pending=Array.isArray(prev.pending_tools)?prev.pending_tools.slice(1):[];\nlet messages=Array.isArray(prev.messages)?prev.messages.slice():[];\nconst transport=prev.skip_http?'':toolTransportCode(http);\nconst result=prev.skip_http?prev.skip_result:(transport?{ok:false,code:transport,message:transport==='service_unreachable'?'Сервис агента не отвечает':'Инструмент не ответил'}:http);\nconst body=typeof result==='string'?result:JSON.stringify(result==null?{}:result);\nmessages.push({role:'tool',tool_call_id:String(call.id||''),content:body});\nconst tool_log=Array.isArray(prev.tool_log)?prev.tool_log.slice():[];\nif(call.name) tool_log.push(String(call.name));\nconst down=transport==='service_unreachable';\nconst loop_route=down?'done':loopRouteForPending(pending, Boolean(prev.over));\nreturn [{json:{...prev,messages,pending_tools:down?[]:pending,tool_log,loop_route,skip_http:false,skip_result:null,service_unreachable:Boolean(prev.service_unreachable||down)}}];\n"
-      },
-      "id": "37c35666-3380-5527-a825-2b4310bb0f23",
-      "name": "Append tool result",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        6160,
-        -255
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst prev=$json||{};\nconst pending=Array.isArray(prev.pending_tools)?prev.pending_tools:[];\nconst call=pending[0]||{};\nconst args=parseArgs(call.arguments);\nconst req=obj(prev.schedule_retrieval_request)?{...prev.schedule_retrieval_request}:{};\nconst filters=obj(req.filters)?{...req.filters}:{};\nconst keywords=String(args.keywords||'').split(/[,;]/).map(s=>s.trim().toUpperCase()).filter(Boolean);\nif(keywords.length) filters.keyword_families=[...new Set(keywords)].slice(0,6);\nelse filters.keyword_families=[];\nconst query=clip(String(args.query||'').trim()||String(req.query||''),800);\nreturn [{json:{...prev,pending_tool:call,schedule_retrieval_request:{...req,query,filters}}}];\n"
-      },
-      "id": "309631e2-94a0-5dd5-9b05-b09a596a479c",
-      "name": "Prepare retrieve request",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        5600,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "source": "database",
-        "workflowId": {
-          "__rl": true,
-          "value": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI",
-          "mode": "list",
-          "cachedResultName": "MAS — Knowledge Retrieval"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "schedule_retrieval_request": "={{ $json.schedule_retrieval_request }}"
-          },
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": false
-        },
-        "mode": "once",
-        "options": {
-          "waitForSubWorkflow": true
-        }
-      },
-      "id": "b812eb53-8afd-500d-bafd-c976872fcedc",
-      "name": "Retrieve knowledge",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
-      "position": [
-        5880,
-        0
-      ],
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nfunction unwrapRetrieval(raw){\n  const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\n  const src=obj(raw)?raw:{};\n  if(obj(src.schedule_retrieval_result)) return src.schedule_retrieval_result;\n  if(obj(src.body)&&obj(src.body.schedule_retrieval_result)) return src.body.schedule_retrieval_result;\n  if(String(src.contract||'')==='schedule_retrieval_result') return src;\n  if(src.error||Number(src.statusCode)>=400) return {status:'failed',findings:[{code:'RETRIEVAL_CALL_FAILED'}],results:[]};\n  return src;\n}\nfunction retrievalOutage(result, raw){\n  if(Boolean(raw&&raw.error)||Number(raw&&raw.statusCode)>=400) return 'failed';\n  const st=String((result&&result.status)||'').toLowerCase();\n  if(st==='failed'||st==='error') return 'failed';\n  if(st==='needs_input') return 'needs_input';\n  if(st==='abstain') return 'abstain';\n  if(st==='unavailable') return 'unavailable';\n  return '';\n}\nfunction compactRetrievalCards(result, selector, limit, textLimit, preferFull){\n  const rows=Array.isArray(result.results)?result.results:[];\n  const wantedBase=String(selector.target_base||'');\n  const wantedTypes=new Set((selector.knowledge_types||[]).map(v=>String(v).toLowerCase()));\n  const cap=Number(limit)||6;\n  const cut=Number(textLimit)||700;\n  const minText=50;\n  const relKeep=0.45;\n  const scored=[];\n  for(const r of rows){\n    if(!r||typeof r!=='object') continue;\n    const body=r.body&&typeof r.body==='object'?r.body:{};\n    const base=String(r.target_base||body.target_base||(result.filters&&result.filters.target_base)||'');\n    const kt=String(r.knowledge_type||body.knowledge_type||'').toLowerCase();\n    if(wantedBase&&base&&base!==wantedBase) continue;\n    if(wantedTypes.size&&kt&&!wantedTypes.has(kt)) continue;\n    const summary=String(body.summary||r.summary||'').trim();\n    const full=String(body.text||body.instruction||r.text||'').trim();\n    const text=preferFull?(full||summary):(summary||full);\n    if(text.length<minText) continue;\n    const score=r.rrf_score!=null?Number(r.rrf_score):(body.rrf_score!=null?Number(body.rrf_score):null);\n    if(Number.isFinite(score)&&score<=0) continue;\n    const topics=Array.isArray(r.topics)?r.topics:(Array.isArray(body.topics)?body.topics:[]);\n    scored.push({\n      knowledge_id:String(r.knowledge_id||body.knowledge_id||''),\n      title:String(r.title||body.title||'').slice(0,160),\n      knowledge_type:kt||null,\n      text:text.slice(0,cut),\n      revision:(r.revision!=null&&r.revision!=='')?r.revision:((body.revision!=null&&body.revision!=='')?body.revision:null),\n      rrf_score:Number.isFinite(score)?score:null,\n      branches:Array.isArray(r.branches)?r.branches.slice(0,6).map(b=>String(b)):(Array.isArray(body.branches)?body.branches.slice(0,6).map(b=>String(b)):[]),\n      topics:topics.slice(0,12).map(t=>String(t||'').trim()).filter(Boolean),\n      _score:Number.isFinite(score)?score:null\n    });\n  }\n  const finite=scored.map(c=>c._score).filter(s=>s!=null);\n  const best=finite.length?Math.max.apply(null,finite):0;\n  const floor=best>0?best*relKeep:0;\n  const want=new Set((Array.isArray(selector.topics)?selector.topics:[]).map(t=>String(t||'').toLowerCase()).filter(Boolean));\n  const orch=String(selector.target_base||'')==='orchestrator_routing';\n  const kept=scored.filter(c=>{\n    if(c._score==null||floor<=0) return true;\n    const cardTopics=(Array.isArray(c.topics)?c.topics:[]).map(t=>String(t||'').toLowerCase());\n    if(want.size&&cardTopics.some(t=>want.has(t))) return true;\n    const n=Array.isArray(c.branches)?c.branches.length:0;\n    if(n<2){\n      if(orch&&want.size) return false;\n      return true;\n    }\n    return c._score>=floor;\n  });\n  kept.sort((a,b)=>{\n    if(a._score==null&&b._score==null) return 0;\n    if(a._score==null) return 1;\n    if(b._score==null) return -1;\n    return b._score-a._score;\n  });\n  return kept.slice(0,cap).map(c=>({knowledge_id:c.knowledge_id,title:c.title,knowledge_type:c.knowledge_type,text:c.text,revision:c.revision,rrf_score:c.rrf_score,branches:c.branches,topics:c.topics}));\n}\nconst fallbackSelector={\"target_base\": \"excel_protocol\", \"knowledge_types\": [\"protocol_instruction\"]};\nconst caller=\"excel_extractor\";\nconst maxCards=8;\nconst textLimit=4000;\n\nconst prev=fromNode('Prepare retrieve request');\nconst raw=$json||{};\nconst result=unwrapRetrieval(raw);\nconst fromPrev=prev.retrieval_selector;\nconst selector=(fromPrev&&fromPrev.target_base)?{target_base:String(fromPrev.target_base),knowledge_types:Array.isArray(fromPrev.knowledge_types)&&fromPrev.knowledge_types.length?fromPrev.knowledge_types:fallbackSelector.knowledge_types}:fallbackSelector;\nconst outage=retrievalOutage(result,raw);\nconst cards=(outage==='failed'||outage==='needs_input')?[]:compactRetrievalCards(result,selector,maxCards,textLimit,true);\nconst rag={contract:'mas_rag_evidence',contract_version:'1.0',target_base:selector.target_base,knowledge_types:selector.knowledge_types,status:outage||(cards.length?'ready':'empty'),phase:'on_demand',cards,findings:(Array.isArray(result.findings)?result.findings:[]).slice(0,6).map(f=>f&&f.code).filter(Boolean)};\nconst call=obj(prev.pending_tool)?prev.pending_tool:{};\nlet pending=Array.isArray(prev.pending_tools)?prev.pending_tools.slice(1):[];\nlet messages=Array.isArray(prev.messages)?prev.messages.slice():[];\nmessages.push({role:'tool',tool_call_id:String(call.id||''),content:JSON.stringify({status:rag.status,findings:rag.findings,cards:rag.cards})});\nconst tool_log=Array.isArray(prev.tool_log)?prev.tool_log.slice():[];\ntool_log.push('retrieve_knowledge');\nconst loop_route=loopRouteForPending(pending, Boolean(prev.over));\nconst req=obj(prev.schedule_retrieval_request)?prev.schedule_retrieval_request:{};\nconst logCards=(Array.isArray(cards)?cards:[]).map(c=>({knowledge_id:String((c&&c.knowledge_id)||''),revision:(c&&c.revision)!=null?c.revision:null,rrf_score:Number.isFinite(Number(c&&c.rrf_score))?Number(c.rrf_score):null,branches:Array.isArray(c&&c.branches)?c.branches.slice(0,6):[]}));\nconst logFindings=(Array.isArray(result.findings)?result.findings:[]).slice(0,8).map(f=>{if(obj(f)&&f.code)return{code:String(f.code)};const code=String(f||'').trim();return code?{code}:null}).filter(Boolean);\nreturn [{json:{\n  ...prev,\n  messages,\n  pending_tools:pending,\n  tool_log,\n  loop_route,\n  rag,\n  activity_kind:'trace.rag',\n  status_message:`База знаний: ${rag.status} · ${logCards.length} карточек`,\n  activity_payload:{caller,query:String(req.query||result.query||'').slice(0,800),filters:obj(req.filters)?req.filters:{},status:rag.status,phase:rag.phase,findings:logFindings,cards:logCards}\n}}];\n"
-      },
-      "id": "89777923-24b3-5ce5-97f4-b0c70485fca2",
-      "name": "Attach retrieve evidence",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        6160,
-        85
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize excel task').first().json.agent_task.case_id + '/events' }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "options": {
-          "timeout": 2000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json",
-              "neverError": true
-            }
-          }
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"excel_extractor\", agent_id: \"excel_extractor\", task_id: $('Normalize excel task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: Object.assign({source: \"excel-extractor-agent-workflow\"}, $json.activity_payload || {}, {execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')})}) }}"
-      },
-      "id": "18fae8fb-164c-5ce6-aa3d-cec59ea1c384",
-      "name": "Activity — Excel Extractor retrieve",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        6440,
-        -85
-      ],
-      "onError": "continueRegularOutput",
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const x=$('Attach retrieve evidence').first().json||{}; return [{json:x}];"
-      },
-      "id": "e96adb85-9907-53fe-8044-6cbb69c655a2",
-      "name": "Restore after Excel Extractor retrieve",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        6720,
-        -85
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "\nfunction fromNode(name){\n  try{\n    const n=$(name);\n    if(n&&n.item&&n.item.json) return n.item.json;\n    if(n&&typeof n.last==='function'){const x=n.last(); if(x&&x.json) return x.json;}\n    if(n&&typeof n.first==='function'){const x=n.first(); if(x&&x.json) return x.json;}\n  }catch(e){}\n  return {};\n}\nfunction obj(v){return v&&typeof v==='object'&&!Array.isArray(v);}\nfunction stripThink(text){return String(text||'').replace(/<think>[\\s\\S]*?<\\/think>/gi,' ').replace(/\\s+/g,' ').trim();}\nfunction clip(text,n){const s=String(text||''); return s.length<=n?s:s.slice(0,n-1)+'…';}\nfunction parseArgs(raw){\n  if(obj(raw)) return raw;\n  const s=String(raw||'').trim();\n  if(!s) return {};\n  try{const p=JSON.parse(s); return obj(p)?p:{};}catch(e){return {};}\n}\nfunction looksMachine(text){\n  const s=String(text||'');\n  if(!s.trim()) return false;\n  return /[a-z]+_[a-z_]+|[a-z_]+=[a-z0-9]+|[{}\\[\\]]|\\w\\|\\w/.test(s)||/\\bbaseline\\b/i.test(s)||!/[А-Яа-яЁё]{3,}/.test(s);\n}\nfunction loopRouteForPending(pending, over){\n  const list=Array.isArray(pending)?pending:[];\n  if(list.length){\n    const name=String((list[0]&&list[0].name)||'');\n    return name==='retrieve_knowledge'?'retrieve':'tool';\n  }\n  return over?'done':'chat';\n}\nfunction toolTransportCode(http){\n  if(!http||typeof http.ok==='boolean') return '';\n  const err=obj(http.error)?http.error:(typeof http.error==='string'?{message:http.error}:null);\n  const status=Number(http.statusCode||http.status||(err&&err.status)||0);\n  const blob=String((err&&(err.httpCode||err.code||err.message||err.description))||'').toLowerCase();\n  if(/econnrefused|enotfound|etimedout|econnreset|ehostunreach|socket hang|connection|offline|unreachable/.test(blob)) return 'service_unreachable';\n  if(status>=500) return 'service_unreachable';\n  if(err&&(status===0||!status)&&!http.choices) return 'service_unreachable';\n  if(err||status>=400) return 'tool_http_failed';\n  return '';\n}\nfunction parseChatExtra(cfg){\n  const raw=cfg&&cfg.chat_extra_params;\n  let parsed={};\n  if(raw&&typeof raw==='object'&&!Array.isArray(raw)) parsed=raw;\n  else {\n    const s=String(raw||'').trim();\n    if(s){\n      try{const p=JSON.parse(s); if(p&&typeof p==='object'&&!Array.isArray(p)) parsed=p;}catch(e){parsed={};}\n    }\n  }\n  const out={...parsed};\n  delete out.messages;\n  delete out.tools;\n  delete out.tool_choice;\n  return out;\n}\nfunction previewChatMessages(msgs, fromIdx){\n  const CONTENT=600;\n  const KEEP=10;\n  const list=Array.isArray(msgs)?msgs:[];\n  const slim=(m)=>{\n    const raw=m&&typeof m==='object'&&!Array.isArray(m)?m:{};\n    const c=raw.content;\n    let text='';\n    if(typeof c==='string') text=c;\n    else if(c==null) text='';\n    else { try{text=JSON.stringify(c);}catch(e){text=String(c);} }\n    if(text.length>CONTENT) text=text.slice(0,CONTENT-1)+'…';\n    const out={role:String(raw.role||''),content:text};\n    if(raw.tool_call_id) out.tool_call_id=String(raw.tool_call_id);\n    if(Array.isArray(raw.tool_calls)&&raw.tool_calls.length) out.tool_calls=raw.tool_calls.length;\n    return out;\n  };\n  const all=list.map(slim);\n  const start=Math.max(0,Number(fromIdx)||0);\n  let picked=start>0?all.slice(start):all.slice();\n  let omitted=0;\n  if(start>0&&all[0]&&all[0].role==='system'){\n    omitted=Math.max(0,start-1);\n    picked=[all[0],...(omitted?[{role:'omitted',count:omitted}]:[]),...picked];\n  }\n  if(picked.length>KEEP){\n    omitted += picked.length-KEEP;\n    picked=[picked[0],{role:'omitted',count:omitted},...picked.slice(-(KEEP-2))];\n  }\n  const preview={messages:picked};\n  if(omitted) preview.omitted=omitted;\n  return preview;\n}\nconst OPEN_NAME=\"Open excel session\";\n\nconst prev=$json||{};\nconst opened=fromNode(OPEN_NAME);\nconst tools=Array.isArray(prev.tool_log)?prev.tool_log.filter(Boolean):[];\nconst unique=[...new Set(tools)];\nconst finalText=stripThink(String(prev.llm_final_text||''));\nconst counts={};\nfor(const name of tools) counts[name]=(counts[name]||0)+1;\nconst repeated=Object.keys(counts).some(name=>name!=='retrieve_knowledge'&&counts[name]>3);\nconst total=tools.filter(n=>n!=='retrieve_knowledge').length;\nconst human=finalText.trim();\nconst status_message=(human&&!looksMachine(human))?clip(human,400):'Агент завершил шаг.';\nreturn [{json:{\n  ...prev,\n  llm_final_text:finalText,\n  tools_used:unique,\n  total_calls:total,\n  repeated,\n  activity_kind:'agent.progress',\n  status_message,\n  activity_payload:{source:\"excel-extractor-agent-workflow\",total_calls:total,tools_used:unique,iterations:Number(prev.iteration||0)}\n}}];\n"
-      },
-      "id": "8e5963b8-e599-57ec-905d-0d75952ce797",
-      "name": "Summarize AI steps",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        5600,
-        170
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $('Runtime configuration').first().json.activity_base_url + '/cases/' + $('Normalize excel task').first().json.agent_task.case_id + '/events' }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "options": {
-          "timeout": 2000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json",
-              "neverError": true
-            }
-          }
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({kind: $json.activity_kind || 'agent.progress', actor: \"excel_extractor\", agent_id: \"excel_extractor\", task_id: $('Normalize excel task').first().json.agent_task.task_id, status: $json.status || 'running', status_message: $json.status_message || '', payload: Object.assign({source: \"excel-extractor-agent-workflow\"}, $json.activity_payload || {}, {execution_id: String($execution.id || ''), workflow_id: String($workflow.id || ''), workflow_name: String($workflow.name || '')})}) }}"
-      },
-      "id": "b69862bc-7271-5f43-9eeb-badc4d50fe1e",
-      "name": "Activity — Excel Extractor tools",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        5880,
-        170
-      ],
-      "onError": "continueRegularOutput",
-      "alwaysOutputData": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const x=$('Summarize AI steps').first().json||{}; return [{json:x}];"
-      },
-      "id": "bfff55ca-b120-5b27-b003-90d0be6e781f",
-      "name": "Restore after AI tools",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        6160,
-        255
-      ]
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "={{ $('Runtime configuration').first().json.excel_tools_url + '/sessions/' + $('Open excel session').first().json.session_id + '/result' }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "options": {
-          "timeout": 120000,
-          "response": {
-            "response": {
-              "fullResponse": false,
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "id": "cf896b5f-c322-54db-8650-f141428dbb6e",
-      "name": "Fetch excel result",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        6440,
-        85
-      ],
-      "onError": "continueRegularOutput",
-      "alwaysOutputData": true,
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
     },
     {
       "parameters": {

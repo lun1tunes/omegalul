@@ -101,6 +101,38 @@
     "version": "2"
   },
   {
+    "agent_id": "tnav_cluster",
+    "title": "tNav Cluster Agent",
+    "when_to_use": "Работает с моделями на гидродинамическом кластере по SSH: разбирает устройство модели (секции входного файла, подключённые файлы, основной файл расписания), собирает новую версию модели с новым файлом расписания и запускает расчёт на кластере, а потом сообщает время расчёта и его итог. Вызывать, когда инженер просит посчитать модель на кластере, применить новое расписание к модели или узнать, как идёт расчёт. Готовое расписание он получает от агента, который собирает расписание; если инженер просит только запустить уже готовую модель, файл расписания не нужен. Файлы не удаляет и расписание не составляет.",
+    "input_required": [
+      "schedule_out"
+    ],
+    "output_provides": [
+      "model_version",
+      "run_status",
+      "run_results"
+    ],
+    "invoke": {
+      "kind": "n8n_workflow",
+      "workflow_id": "7aedebc1-4f6e-5ec2-872c-9cc7968e58bc",
+      "workflow_name": "Agent — tNav Cluster Agent"
+    },
+    "input_schema": {
+      "handoff_message": "какую модель считать на кластере и какое расписание применить",
+      "artifact_ids": "[schedule_out — новый файл расписания, если версию модели нужно пересобрать]"
+    },
+    "output_schema": {
+      "data": {
+        "model_version": "{model_path, schedule_path, version, dates_total}",
+        "run_status": "finished | failed | not_started | timeout",
+        "run_results": "{state, model, results_dir, steps, elapsed_seconds, last_date}"
+      }
+    },
+    "hitl_policy": "agent_asks",
+    "enabled": false,
+    "version": "2"
+  },
+  {
     "agent_id": "demo_agent",
     "title": "Demo Agent",
     "when_to_use": "Демонстрационный агент-шаблон: считает скважины, упомянутые в задаче и в фактах других агентов, и умеет запускать долгий расчёт, результат которого приходит позже. Не читает файлы, не пишет SCHEDULE. Использовать только когда инженер прямо просит демонстрацию или подсчёт скважин.",

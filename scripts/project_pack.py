@@ -21,6 +21,7 @@ PACK_DIRS = (
     "mas-activity-service",
     "n8n",
     "schedule-builder-service",
+    "tnav-cluster-service",
     "scripts",
 )
 ROOT_FILES = (".env.example", "docs.md", "README.md", "docker-compose.yml", ".gitignore")

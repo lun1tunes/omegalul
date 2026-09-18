@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-SERVICES = ("excel-agent-tools", "schedule-builder-service", "agents-template/demo_agent")
+SERVICES = ("excel-agent-tools", "schedule-builder-service", "tnav-cluster-service", "agents-template/demo_agent")
 # Names that used to live as module functions in each service and now are AgentService methods.
 PLUMBING = {"open_session", "session_result", "_store_result", "_agent_result", "emit_tool_progress", "normalize_agent_tool_args"}
 

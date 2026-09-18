@@ -1,3 +1,258 @@
+      "knowledge_id": "excel-agent-clarification-and-continuation",
+      "revision": "5",
+      "title": "Спросить инженера — ask_engineer",
+      "keywords": [
+        "ASK_ENGINEER",
+        "CLARIFICATION"
+      ],
+      "topics": [
+        "протокол",
+        "clarification"
+      ],
+      "task_patterns": [
+        "спросить инженера какой лист и колонка",
+        "две колонки дат без пояснений",
+        "варианты как их видит инженер",
+        "не вызывать get_session_state"
+      ],
+      "status": "active",
+      "author": "excel-protocol-maintainer",
+      "access_scope": "petroleum-engineering",
+      "text": "Уточнение у инженера Excel Extractor.\n\nНазначение. Когда по инвентарю и engineer_answers нельзя выбрать таблицу или колонку — один вопрос через ask_engineer.\n\nКогда применять. Две колонки дат, несколько похожих листов, пустые обязательные значения. Не когда инструмент вернул ok:false — это исправляется повторным вызовом.\n\nКанон протокола.\n- ask_engineer — единственный вопрос инженеру: русская проза, варианты как их видит инженер (имена листов и колонок).\n- Имена файлов в вопрос не вставляйте; говорите «в книге», лист, колонка.\n- Ответы уже лежат в engineer_answers сессии — читайте их, книгу заново не открывайте.\n- Не вызывайте get_session_state, submit_clarification, resolve_clarification, save_agent_plan.\n\nВалидация.\n- Вопрос без JSON, snake_case и имён файлов.\n- После ответа — extract_* по выбранным колонкам, не новый обход книги «с нуля».\n",
+      "id": "excel-agent-clarification-and-continuation",
+      "examples": [
+        {
+          "title": "Две колонки дат",
+          "task": "Неясно, какая колонка — новая дата ввода",
+          "schedule_text": "ask_engineer(вопрос прозой, options=имена колонок)",
+          "explanation": "Не угадывайте колонку. Не вызывайте снятые clarification-инструменты."
+        },
+        {
+          "title": "Ответ уже в сессии",
+          "task": "Инженер ответил, какой лист",
+          "schedule_text": "engineer_answers → extract_*",
+          "explanation": "Повторно книгу не загружайте. Берите выбор из ответов инженера в сессии."
+        }
+      ]
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "orchestrator_routing",
+      "knowledge_type": "routing_card",
+      "knowledge_id": "route-excel-extractor",
+      "revision": "9",
+      "title": "Политика: табличные факты из Excel",
+      "keywords": [
+        "XLSX",
+        "EXCEL"
+      ],
+      "topics": [
+        "маршрутизация",
+        "Excel",
+        "facts",
+        "new_wells"
+      ],
+      "task_patterns": [
+        "извлечь таблицу",
+        "даты ввода из Excel",
+        "параметры новых скважин",
+        "extract workbook"
+      ],
+      "status": "active",
+      "author": "orchestrator-routing-maintainer",
+      "access_scope": "petroleum-engineering",
+      "text": "Табличные факты — даты ввода «скважина — дата», параметры новых скважин, дебиты, мероприятия, любая другая таблица из книги — извлекает агент, чей when_to_use — чтение Excel. Вызывай его только если среди приложенных файлов есть роль excel. Что именно извлечь — из цели инженера, не из полного output_schema агента: если цель только про даты ввода, не заказывай параметры новых скважин «на всякий случай». Лист, колонки, единицы и формат дат агент выбирает сам и сам спрашивает инженера при неоднозначности (hitl_policy agent_asks) — оркестратор про листы, колонки, единицы и систему координат не спрашивает. Если таблица нестандартная (не dates/new_wells из output_schema) и цель её требует, заполни action.expected_output.datasets: имя набора латиницей, поля как их будет читать следующий агент (input_schema.data) или как в цели; не выдумывай значения ячеек и не копируй все ключи output_provides. Если таблицы нет, а задача требует табличных данных — ask_user с просьбой приложить таблицу, а не вызов агента и не выдуманные факты. Имена скважин в фактах должны быть как в исходном файле schedule — за это отвечает агент. После успеха запрошенные данные (facts, new_wells или именованный набор) лежат в результатах этого агента; повторно читать Excel без новых файлов или вопросов не нужно.",
+      "id": "route-excel-extractor"
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "orchestrator_routing",
+      "knowledge_type": "routing_card",
+      "knowledge_id": "route-schedule-builder",
+      "revision": "11",
+      "title": "Политика: правка SCHEDULE",
+      "keywords": [
+        "INC",
+        "COMMISSIONING",
+        "GROUP_CONTROL"
+      ],
+      "topics": [
+        "маршрутизация",
+        "SCHEDULE",
+        "schedule_source",
+        "schedule_out",
+        "diff",
+        "facts",
+        "new_wells",
+        "datasets"
+      ],
+      "task_patterns": [
+        "построить прогнозный SCHEDULE",
+        "revise schedule",
+        "новые даты ввода скважин",
+        "даты ввода",
+        "сдвиг дат",
+        "добавить новые скважины",
+        "перепривязка групп",
+        "групповой контроль",
+        "внести таблицу в schedule"
+      ],
+      "status": "active",
+      "author": "orchestrator-routing-maintainer",
+      "access_scope": "petroleum-engineering",
+      "text": "Правку исходного SCHEDULE (.inc) выполняет агент, чей input_required включает schedule_source: сдвиг дат ввода по фактам «скважина — дата», добавление новых скважин по их параметрам, перепривязка скважин в группу по тексту задачи, запись именованного набора строк (не даты ввода) в keyword по схеме. Нужен исходный файл schedule среди приложенных файлов; без него — ask_user. Объём правки — из текста задачи (какие скважины, какие ключевые слова, какой глагол: убери, добавь, измени); не выдумывай ключевые слова и не расширяй задачу. От предыдущего агента жди только данные, которые эта правка требует: для сдвига дат — факты ввода; параметры новых скважин — только если цель просит их добавить; для любой другой таблицы — именованный набор строк. Единицы METRIC и tNavigator 22.2 заданы — у инженера не подтверждать. Агент сам рендерит ключевые слова и не читает Excel: даты, параметры новых скважин и именованные наборы берёт из результатов агента, который читал Excel, и из ответов инженера. Результат — новый файл SCHEDULE и список изменений; после него повторный вызов оправдан только новыми данными или конкретным недостатком (rework_reason).",
+      "id": "route-schedule-builder"
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "orchestrator_routing",
+      "knowledge_type": "routing_card",
+      "knowledge_id": "route-mas-thin-orchestrator",
+      "revision": "7",
+      "title": "Политика декомпозиции задач MAS",
+      "keywords": [
+        "INC",
+        "XLSX",
+        "COMMISSIONING",
+        "GROUP_CONTROL"
+      ],
+      "topics": [
+        "маршрутизация",
+        "декомпозиция",
+        "handoff",
+        "excel",
+        "schedule_source",
+        "facts",
+        "new_wells",
+        "schedule_out"
+      ],
+      "task_patterns": [
+        "новые даты ввода скважин",
+        "даты ввода",
+        "сдвиг дат",
+        "собрать новый schedule.inc",
+        "добавить новые скважины",
+        "перепривязка скважин в группу",
+        "перепривязка групп",
+        "групповой контроль"
+      ],
+      "status": "active",
+      "author": "orchestrator-routing-maintainer",
+      "access_scope": "petroleum-engineering",
+      "text": "Политика декомпозиции. Кого вызывать — только из реестра агентов по полям when_to_use, input_required и output_provides; в этой карточке имён агентов нет. План — разбиение цели инженера, не каталога агента: не включай в план и в expected_output то, что агент умеет, но цель не просит. 1) Факты для правки SCHEDULE берутся из приложенных таблиц Excel агентом, который читает Excel — только те факты, которые нужны цели (даты ввода «скважина — дата», параметры новых скважин, другая таблица). Если цель только про новые даты ввода, не заказывай параметры новых скважин. Агент, который правит SCHEDULE, вызывается после того, как в журнале появились данные, нужные этой правке; не раньше и не ожидая ключей output_provides, которых цель не требовала. 2) Перепривязка скважин в группу и групповой контроль (GRUPTREE, GCONPROD, группа в WELSPECS) решаются по тексту задачи и исходному файлу schedule — таблицы не нужны: сразу агент, который правит SCHEDULE; даты ввода этих скважин он берёт из исходного файла, инженера о них не спрашивают. 3) Когда агент правки SCHEDULE вернул новый файл SCHEDULE и все части цели покрыты записями журнала со статусом completed — finish. 4) Имена приложенных INCLUDE-файлов (GRUPTREE.GRDECL и подобные) — состав пакета, а не постановка задачи: не дописывай перепривязку групп, если инженер её не просил. 5) Если срез знаний пуст — решай по реестру и состоянию, инженера про базу знаний не спрашивай.",
+      "id": "route-mas-thin-orchestrator"
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "orchestrator_routing",
+      "knowledge_type": "routing_card",
+      "knowledge_id": "route-calculation",
+      "revision": "7",
+      "title": "Политика: геометрия скважины",
+      "keywords": [
+        "DEV",
+        "CPS3"
+      ],
+      "topics": [
+        "absent_agent"
+      ],
+      "task_patterns": [
+        "пересечение траектории",
+        "well trajectory intersection",
+        "перфорация",
+        "траектория"
+      ],
+      "status": "active",
+      "author": "orchestrator-routing-maintainer",
+      "access_scope": "petroleum-engineering",
+      "text": "Пересечение траектории скважины со структурной поверхностью и начало интервала перфорации (глубина по стволу) считает агент, чей input_required — surface и trajectory (траектория .dev и одна поверхность ASCII CPS3). Вызывай его только когда оба файла приложены; он не пишет SCHEDULE. Его результат виден в журнале и может понадобиться агенту правки SCHEDULE. Единицы и систему координат у инженера не спрашивай, если файлы приложены; ask_user — только если нет траектории или поверхности.",
+      "id": "route-calculation"
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "orchestrator_routing",
+      "knowledge_type": "routing_card",
+      "knowledge_id": "route-cluster-calculation",
+      "revision": "4",
+      "title": "Политика: расчёты на кластере (агента нет)",
+      "keywords": [
+        "SSH",
+        "JOB"
+      ],
+      "topics": [
+        "absent_agent"
+      ],
+      "task_patterns": [
+        "запуск расчёта на кластере",
+        "статус расчётной задачи"
+      ],
+      "status": "active",
+      "author": "orchestrator-routing-maintainer",
+      "access_scope": "petroleum-engineering",
+      "text": "Запуск расчётов на кластере и статус расчётных задач: если в реестре нет агента с таким when_to_use, эту часть задачи выполнить нельзя. Не выдумывай агента и не спрашивай инженера про учётные данные кластера. Если это единственная часть цели — ask_user, как поступить; если остальные части выполнены — finish с честным итогом, что расчёт на кластере не запускался.",
+      "id": "route-cluster-calculation"
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "orchestrator_routing",
+      "knowledge_type": "routing_card",
+      "knowledge_id": "route-binary-results",
+      "revision": "4",
+      "title": "Политика: бинарные результаты расчёта (агента нет)",
+      "keywords": [
+        "REPORT_FACTS"
+      ],
+      "topics": [
+        "absent_agent"
+      ],
+      "task_patterns": [
+        "извлечь данные из бинарных результатов",
+        "собрать факты для отчёта"
+      ],
+      "status": "active",
+      "author": "orchestrator-routing-maintainer",
+      "access_scope": "petroleum-engineering",
+      "text": "Чтение бинарных результатов расчёта и сбор фактов для отчёта: если в реестре нет агента с таким when_to_use, эту часть задачи выполнить нельзя. Не выдумывай агента и не задавай инженеру вопросов вместо него. Если это единственная часть цели — ask_user, как поступить; иначе — finish с честным итогом, что результаты расчёта не читались.",
+      "id": "route-binary-results"
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "orchestrator_routing",
+      "knowledge_type": "routing_card",
+      "knowledge_id": "route-presentation",
+      "revision": "4",
+      "title": "Политика: презентация результатов (агента нет)",
+      "keywords": [
+        "VISUALIZATION"
+      ],
+      "topics": [
+        "absent_agent"
+      ],
+      "task_patterns": [
+        "собрать презентацию",
+        "визуализация результатов"
+      ],
+      "status": "active",
+      "author": "orchestrator-routing-maintainer",
+      "access_scope": "petroleum-engineering",
+      "text": "Сборка презентации и визуализация результатов: если в реестре нет агента с таким when_to_use, эту часть задачи выполнить нельзя. Не выдумывай агента и не задавай инженеру вопросов вместо него. Если это единственная часть цели — ask_user, как поступить; иначе — finish с честным итогом, что презентация не собиралась.",
+      "id": "route-presentation"
+    },
+    {
+      "contract": "schedule_knowledge_block",
+      "contract_version": "1.0",
+      "target_base": "orchestrator_routing",
+      "knowledge_type": "routing_card",
+      "knowledge_id": "route-hitl-required-evidence",
+      "revision": "8",
+      "title": "Когда спрашивать инженера",
       "keywords": [
         "HITL",
         "REQUIRED-EVIDENCE"
@@ -21561,7 +21816,7 @@
 }
 
 ===END_FILE===
-===BEGIN_FILE===	n8n/templates/agents/__init__.py	704	utf8
+===BEGIN_FILE===	n8n/templates/agents/__init__.py	967	utf8
 """Agent specs — one module per agent; ``ALL`` feeds the registry seed, Runtime Config and the generators.
 
 Add an agent: create ``agents/<agent_id>.py`` with ``SPEC = AgentSpec(...)`` and append it here.
@@ -21571,11 +21826,14 @@ from .calculation_agent import SPEC as CALCULATION_AGENT
 from .demo_agent import SPEC as DEMO_AGENT
 from .excel_extractor import SPEC as EXCEL_EXTRACTOR
 from .schedule_builder import SPEC as SCHEDULE_BUILDER
+from .tnav_cluster import SPEC as TNAV_CLUSTER
 
 # DEMO_AGENT is the template agent (agents-template/demo_agent): seeded ``enabled=False``, lives in workflows/support.
-ALL = (EXCEL_EXTRACTOR, SCHEDULE_BUILDER, CALCULATION_AGENT, DEMO_AGENT)
+# TNAV_CLUSTER (hydrodynamic cluster over SSH) is seeded ``enabled=False`` too: the engineer switches it on
+# in Activity → Агенты once ``tnav-cluster.env`` has the cluster credentials.
+ALL = (EXCEL_EXTRACTOR, SCHEDULE_BUILDER, CALCULATION_AGENT, TNAV_CLUSTER, DEMO_AGENT)
 
-__all__ = ["ALL", "CALCULATION_AGENT", "DEMO_AGENT", "EXCEL_EXTRACTOR", "SCHEDULE_BUILDER"]
+__all__ = ["ALL", "CALCULATION_AGENT", "DEMO_AGENT", "EXCEL_EXTRACTOR", "SCHEDULE_BUILDER", "TNAV_CLUSTER"]
 
 ===END_FILE===
 ===BEGIN_FILE===	n8n/templates/agents/calculation_agent.py	1039	utf8
@@ -21869,191 +22127,3 @@ SPEC = AgentSpec(
     ),
     retrieval_filters_js=r"""
 const inspect=opened.inspect&&typeof opened.inspect==='object'?opened.inspect:{};
-const expected=opened.expected_output&&typeof opened.expected_output==='object'?opened.expected_output:((task.inputs&&task.inputs.expected_output&&typeof task.inputs.expected_output==='object')?task.inputs.expected_output:{});
-for(const t of (Array.isArray(inspect.tables)?inspect.tables:[])){
-  const kind=String(t&&t.kind||'').trim();
-  if(kind) task_patterns.push(kind);
-}
-for(const d of (Array.isArray(expected.datasets)?expected.datasets:[])){
-  const name=String(d&&d.name||'').trim();
-  if(name) task_patterns.push(name);
-}
-""",
-    planner_extra_js="files:Array.isArray(opened.files)?opened.files:[]",
-    result_tools=["extract_", "ask_engineer"],
-    texts=FallbackTexts(
-        no_result_question=NO_EXTRACT,
-        repeated_question=(
-            "Excel Extractor несколько раз просматривал книгу, но не смог выбрать таблицу и колонки. "
-            "Уточните, на каком листе и в каких колонках находятся скважины и нужные значения (даты ввода, режимы, дебиты)."
-        ),
-        done_message="Excel Extractor извлёк данные из книги.",
-        no_result_issue="no_extract",
-        question_id="Q-clarify",
-        accepts_files=["xlsx"],
-        missing_input_message="Нет Excel-файла для извлечения",
-        missing_input_issue="missing_excel",
-        missing_input_question="К задаче не приложен Excel-файл с данными. Приложите книгу .xlsx, из которой нужно взять скважины и даты.",
-        no_result_failed_message="Excel Extractor не вернул факты",
-        no_result_failed_issue="excel_agent_no_result",
-    ),
-    accepted_message="Excel Extractor принял задачу и анализирует workbook",
-    progress_message="Excel Extractor читает листы и таблицы приложенных книг.",
-    sticky_height=380,
-    node_id_namespace="mas-excel-agent",
-    workflow_id=str(uuid.uuid5(uuid.NAMESPACE_URL, "mas-excel-extractor-agent")),
-    example_objective="Достань даты ввода скважин",
-    tool_grid_columns=4,
-)
-
-===END_FILE===
-===BEGIN_FILE===	n8n/templates/agents/schedule_builder.py	16822	utf8
-"""Agent — Schedule Builder: deterministic SCHEDULE tools (parse/apply/emit); the LLM only picks the tool and its arguments."""
-
-from __future__ import annotations
-
-import json
-
-from mas_agent_spec import AgentSpec, FallbackTexts
-from schedule_rag_workflows import KEYWORDS as SCHEDULE_KEYWORDS
-
-SYSTEM = """Ты — инженер-решатель агента Schedule Builder: читаешь задачу инженера, выбираешь инструмент и вызываешь его со структурированными аргументами. Текст SCHEDULE (.INC) пишут инструменты, не ты.
-
-Исходный .INC тебе не показывают — он лежит в сессии FastAPI. session_id привязан workflow: никогда не передавай session_id и обёртку args/input.
-
-Какой инструмент когда:
-- Задача про НОВЫЕ ДАТЫ ВВОДА скважин (Excel «скважина — дата», fact_count > 0) → apply_commissioning. Факты, решение по скважинам вне Excel и параметры новых скважин уже в сессии — аргументов не нужно. Другие apply_* для такой задачи не вызывай.
-- Задача про ГРУППЫ (поместить скважины в группу, групповой контроль GCONPROD) → inspect_schedule (имена скважин, дерево GRUPTREE), затем apply_group_rebind с полным spec: wells, parent_group, parent_of_parent, control (ORAT/WRAT/GRAT/LRAT/RESV), gas_rate числом в м3/сут («200 тыс. м3 газа в сут.» → 200000). Родителя новой группы бери из дерева исходного файла (корень — FIELD или как в inspect), если инженер не сказал иначе.
-- В сессии есть именованные наборы (dataset_count > 0, не пары «скважина — дата ввода»): inspect_dataset по имени → retrieve_knowledge (query — смысл набора, keywords — имя keyword) → get_keyword → apply_dataset с field_map. retrieve_knowledge не пропускай: стартовый срез — краткие summary чужих keyword, полный when-to-use только из retrieve. Нет поля даты в наборе — не спрашивай инженера про дату; apply_dataset без date_field обновляет существующие записи скважины. inspect_schedule и search_keywords не вызывай, если retrieve + get_keyword уже дали keyword и поля. Не выдумывай keyword и не подставляй пустые значения. apply_commissioning сюда не подходит.
-- Точечные правки режимов/keywords без набора: если keyword нет в текущих карточках — retrieve_knowledge, затем get_keyword (details.parameters) → apply_operations или render_ir. search_keywords — только если retrieve пуст.
-- inspect_well / analyze_forecast_controls / list_records — чтобы посмотреть скважину перед правкой. Не вызывай их «на всякий случай» и не больше трёх раз подряд.
-- build_schedule — только если apply уже менял сессию; validate_result — проверки emit.
-- ask_engineer — единственный способ спросить инженера. Только когда данных нет ни в задаче, ни в исходном файле, ни в ответах инженера (engineer_answers), ни в наборе. Не спрашивай дату шага, если в наборе нет поля даты. Один вопрос обычной русской фразой: что нужно и зачем; варианты (options) — как их называет инженер: имена групп из исходного файла, «оставить»/«убрать». Никаких имён полей, JSON, enum, кодов. Инженер отвечает фактами, таблицами и файлами — не строками .INC.
-
-Ответы инструментов:
-- ok:false, code:spec_incomplete — это тебе, не инженеру: заполни missing из текста задачи, inspect_schedule и inspect_dataset (where_to_find подсказывает откуда) и вызови инструмент снова. Спрашивай инженера, только если данных действительно нет.
-- ok:false, code:dataset_values_missing — в наборе пустые обязательные поля: спроси инженера через ask_engineer, не подставляй значения сам.
-- ok:false, code:question_not_human — переформулируй вопрос прозой и вызови ask_engineer снова.
-- ok:false, code:well_not_in_schedule / operations_required / unknown_dataset / unknown_keyword — ошибка твоего вызова; исправь аргументы.
-- ok:false, code:knowledge_required — сначала retrieve_knowledge (query и keywords набора), затем get_keyword, затем apply_dataset.
-- ok:false, code:result_already_stored — результат этого запуска уже зафиксирован (apply или вопрос инженеру). Больше инструменты не вызывай, заверши ответ.
-- status completed или needs_input от apply_* / ask_engineer — результат зафиксирован. STOP: не вызывай build и другие apply.
-
-Инварианты:
-- Не придумывай скважины, даты, группы, дебиты. Имена скважин — только из inspect_schedule.
-- Если комментарий WCONPROD содержит «факт»/«fact», запись фактическая: её нельзя удалять, переносить или считать прогнозным якорем ввода. Якорь commissioning — первый нефактический WCONPROD; следующие WCONPROD — прогнозные режимы, они сохраняются.
-- Один параметр после существующего контроля — WELTARG, не переписывание WCONPROD. Не путай WECON (экономика), WTEST (переоткрытие), WELOPEN (статус), WEFAC (uptime), WPIMULT (CF), GCONPROD (группа).
-- Имена полей — из get_keyword.details (WELL, DATE, CHILD). WCONPROD variant = CONTROL в нижнем регистре (orat, wrat, grat, lrat, bhp, thp, resv, grup); если variant не указан — положи CONTROL в fields.
-- apply_operations принимает JSON-массив [{keyword, operation, fields}], не объект с ключами "0","1".
-- Если analyze_forecast_controls вернул needs_input по границе history/forecast — не применяй операцию, спроси инженера.
-- rework_reason в задаче — замечание оркестратора к прошлому результату: устрани именно его.
-- Retrieved knowledge — срез schedule_mvp (keyword_instruction / worked_example): стартовый Attach — краткие summary. Перед apply_dataset всегда retrieve_knowledge, затем get_keyword. Нет даты в наборе — не спрашивай HITL про дату шага, date_field не передавай. Перед первым apply_operations / render_ir по keyword, которого нет в карточках, — тоже retrieve_knowledge. apply_commissioning для дат ввода — без retrieve. Расклад полей — get_keyword.details. Пустой или unavailable срез — работай инструментами, не спрашивай про базу знаний.
-
-Заверши одним коротким фактическим предложением по-русски о том, что сделано или чего не хватило.
-"""
-
-TOOLS = [
-    ("inspect_schedule", "Объектная инвентаризация исходного SCHEDULE: wells, factual/forecast WCONPROD, commissioning anchors, история режимов, keywords, даты и GRUPTREE. Без полного .INC.", []),
-    (
-        "inspect_well",
-        "Подробно осмотреть одну скважину: identity, factual WCONPROD, commissioning anchor (первый нефактический WCONPROD), последующие forecast control events и связанные records.",
-        [("well", "string", True, "Точное имя скважины из inspect_schedule")],
-    ),
-    (
-        "analyze_forecast_controls",
-        "Детерминированно разобрать timeline одной скважины: history/forecast controls, commissioning, WELTARG, WECON, WTEST, WELOPEN, WEFAC, WPIMULT и правила выбора keyword.",
-        [("well", "string", True, "Точное имя скважины из inspect_schedule")],
-    ),
-    (
-        "search_keywords",
-        "Найти keyword в каталоге по фразе задачи или описания набора: имя, описание, поля схемы. Не словарь синонимов. Имя keyword не выдумывать.",
-        [("intent", "string", True, "Фраза из задачи или заголовок/смысл набора")],
-    ),
-    (
-        "get_keyword",
-        "Объект keyword: details.kind=schedule_keyword, parameters[{name,position,type,required,unit,description,enum}]. Имена полей только отсюда.",
-        [("keyword", "string", True, "DATES / WCONPROD / GRUPTREE / ...")],
-    ),
-    (
-        "inspect_dataset",
-        "Строки и поля именованного набора, уже лежащего в сессии (из Excel). Keyword не выбирает.",
-        [("name", "string", True, "Имя набора из open_session.datasets")],
-    ),
-    (
-        "list_records",
-        "Компактные records keyword. well опционален. Не больше 40 строк.",
-        [
-            ("keyword", "string", True, "Имя keyword"),
-            ("well", "string", False, "Точное имя скважины из inspect"),
-        ],
-    ),
-    (
-        "apply_commissioning",
-        "Сдвинуть даты ввода скважин по фактам «скважина — дата» из Excel, уже лежащим в сессии (fact_count). Решение по скважинам вне Excel и параметры новых скважин тоже берутся из сессии. Аргументов нет. Для задач про даты ввода — это единственный нужный apply.",
-        [],
-    ),
-    (
-        "apply_dataset",
-        "Записать именованный набор в SCHEDULE. Keyword — из retrieve_knowledge/get_keyword, не выдумывать. field_map — поле набора → параметр схемы. Пустые значения не подставляй.",
-        [
-            ("dataset", "string", True, "Имя набора из inspect_dataset / open_session.datasets"),
-            ("keyword", "string", True, "Имя keyword из retrieve_knowledge / get_keyword"),
-            ("field_map", "json", True, "Объект: поле набора → параметр keyword из get_keyword.details.parameters"),
-            ("date_field", "string", False, "Поле набора с датой шага DATES, только если в строках есть дата; пусто/не передавай — обновить существующие записи скважины, не спрашивать инженера про дату"),
-        ],
-    ),
-    (
-        "apply_group_rebind",
-        "Поместить скважины в группу с групповым контролем (WELSPECS + GRUPTREE + GCONPROD). Spec заполняешь ты из задачи и inspect_schedule; ничего не выводится из текста автоматически. Неполный spec вернётся как ok:false spec_incomplete с missing и where_to_find — дополни и вызови снова.",
-        [
-            ("wells", "string", True, "Имена скважин через пробел или запятую, только из inspect_schedule.wells"),
-            ("parent_group", "string", True, "Имя целевой группы из задачи (например DKS)"),
-            ("parent_of_parent", "string", False, "Родитель целевой группы в GRUPTREE: корень дерева исходного файла (FIELD) или группа из задачи. Пусто — возьмётся единственный корень из исходного файла"),
-            ("control", "string", True, "Тип группового контроля: GRAT (газ), ORAT (нефть), WRAT (вода), LRAT (жидкость), RESV"),
-            ("gas_rate", "number", True, "Целевой дебит числом в м3/сут: «200 тыс. м3 в сут.» → 200000"),
-            ("effective_at", "string", False, "Дата начала контроля вида 1 JAN 2026; пусто — с даты ввода этих скважин"),
-        ],
-    ),
-    (
-        "ask_engineer",
-        "Задать инженеру ОДИН вопрос обычной русской фразой, когда данных нет ни в задаче, ни в исходном файле, ни в engineer_answers. options — варианты словами инженера (имена групп из исходного файла, «оставить»/«убрать»). Без имён полей, JSON, enum. После вызова — STOP.",
-        [
-            ("question", "string", True, "Вопрос по-русски: что нужно и зачем, с именами скважин/групп"),
-            ("options", "string", False, "Варианты ответа через точку с запятой, например «Оставить как в исходном файле; Убрать из прогноза». Пусто — свободный ответ"),
-            ("topic", "string", False, "Короткий латинский идентификатор темы вопроса, например target_group"),
-            ("accepts_files", "string", False, "Какие файлы принимаются, через запятую: xlsx, .inc"),
-        ],
-    ),
-    (
-        "apply_operations",
-        "Применить operations. JSON-массив: [{\"keyword\":\"WCONPROD\",\"operation\":\"MODIFY\",\"fields\":{...}}].",
-        [("operations", "json", True, "Массив {keyword, operation, fields}. Не объект с ключами 0,1,2.")],
-    ),
-    (
-        "render_ir",
-        "Собрать текст keyword по schema_catalogue: ir_events[{event_id,operation,keyword,variant,fields,provenance}]. Не пиши .INC руками.",
-        [
-            ("mode", "string", False, "CREATE или REVISE"),
-            ("ir_events", "json", True, "Массив IR-событий с fields по get_keyword.details.parameters"),
-        ],
-    ),
-    (
-        "build_schedule",
-        "Собрать текущий working SCHEDULE, если apply уже отработал. Не вызывай вместо commissioning/group_rebind.",
-        [],
-    ),
-    (
-        "validate_result",
-        "Проверить текущий working text: findings без полного файла.",
-        [],
-    ),
-]
-
-SPEC = AgentSpec(
-    agent_id="schedule_builder",
-    title="Schedule Builder",
-    when_to_use=(
-        "Исходный SCHEDULE (.inc): сдвиг дат ввода по фактам «скважина — дата»; добавление новых скважин по их "
-        "параметрам; перепривязка скважин в группу (GRUPTREE/GCONPROD); запись именованного набора из Excel в keyword "
-        "по схеме (карточка знаний + get_keyword, не словарь в коде). Факты, наборы и параметры новых скважин берёт из "
-        "результатов агента, который читал Excel, и из ответов инженера — сам Excel не читает; для перепривязки групп "

@@ -1074,7 +1074,7 @@ def wait_activity_health(env: dict[str, str]) -> None:
 
 def restart_python_services() -> None:
     """Bind-mount + uvicorn without --reload: restart so live tests the current Python."""
-    run(["docker", "compose", "restart", "excel-tools", "math-service", "schedule-builder", "demo-agent"], check=False, timeout=300)
+    run(["docker", "compose", "restart", "excel-tools", "math-service", "schedule-builder", "demo-agent", "tnav-cluster"], check=False, timeout=300)
     env = load_env()
     def _wait_svc(service: str, inner: str) -> None:
         print(f"wait {service} {inner}")
@@ -1099,7 +1099,7 @@ def restart_python_services() -> None:
         logs = run(["docker", "compose", "logs", "--tail", "15", service], check=False, timeout=30)
         raise SystemExit(f"{service} did not become healthy at {inner}:\n{(logs.stdout or logs.stderr)[-1500:]}")
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=5) as pool:
         futs = [
             pool.submit(_wait_svc, service, inner)
             for service, inner in (
@@ -1107,6 +1107,7 @@ def restart_python_services() -> None:
                 ("schedule-builder", "http://127.0.0.1:8090/health"),
                 ("excel-tools", "http://127.0.0.1:8000/health"),
                 ("demo-agent", "http://127.0.0.1:8300/health"),
+                ("tnav-cluster", "http://127.0.0.1:8400/health"),
             )
         ]
         for fut in futs:
@@ -1130,6 +1131,7 @@ def ensure_compose_up() -> None:
             "math-service",
             "schedule-builder",
             "demo-agent",
+            "tnav-cluster",
         ],
         timeout=300,
     )

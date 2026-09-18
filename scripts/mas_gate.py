@@ -18,7 +18,7 @@ Runs, in order, and prints a summary table (stops at the first failing stage unl
 
 Usage:
   python3 scripts/mas_gate.py                 # offline gate (≈1 min)
-  python3 scripts/mas_gate.py --live          # offline gate + lab redeploy + 12 live cases (≤20 min)
+  python3 scripts/mas_gate.py --live          # offline gate + lab redeploy + 13 live cases (≤25 min)
   python3 scripts/mas_gate.py --live --repeat 3   # α2: 6×N commissioning + one 12-set, ≤20 min
   python3 scripts/mas_gate.py --bundle             # write dist/mas-<VERSION>.zip (field import pack)
   python3 scripts/mas_gate.py --only smokes,pytest
@@ -27,6 +27,7 @@ Usage:
   python3 scripts/mas_gate.py --live --cases demo_agent   # only the template agent cases (long job + three-agent chain)
   python3 scripts/mas_gate.py --live --cases agent_down_recovery
   python3 scripts/mas_gate.py --live --cases excel_datasets  # extract_table + apply_dataset + hole HITL
+  python3 scripts/mas_gate.py --live --cases tnav_cluster    # cluster agent: new model version over SSH + run
 
 Field note: this script needs Node.js, Docker Compose and the lab .venv — it is developer tooling.
 The field path is docs.md and the n8n Health Check form.
@@ -55,6 +56,7 @@ GENERATORS = [
     "generate_mas_health_check.py",
     "generate_excel_extractor_agent.py",
     "generate_schedule_builder_agent.py",
+    "generate_tnav_cluster_agent.py",
     "generate_demo_agent.py",
     "generate_mas_orchestrator.py",
     "generate_schedule_workflows.py",
@@ -164,6 +166,7 @@ def stage_pytest() -> tuple[bool, str]:
         ("Activity", [py(), "-m", "pytest", "-q", "tests"], ROOT / "mas-activity-service", {"PYTHONPATH": "."}),
         ("Schedule Builder", [py(), "-m", "pytest", "-q", "tests"], ROOT / "schedule-builder-service", {"PYTHONPATH": "."}),
         ("Excel Tools", [py(), "-m", "pytest", "-q", "excel-agent-tools/tests"], ROOT, {"PYTHONPATH": "excel-agent-tools", "API_KEY": "test-key"}),
+        ("tNav Cluster", [py(), "-m", "pytest", "-q", "tests"], ROOT / "tnav-cluster-service", {"PYTHONPATH": "."}),
         ("Demo Agent (template)", [py(), "-m", "pytest", "-q", "tests"], ROOT / "agents-template" / "demo_agent", {"PYTHONPATH": "."}),
     ]
     notes: list[str] = []
@@ -191,6 +194,8 @@ _REGEN_DRIFT = False
 DEMO_CASE = "demo_agent"
 DATASETS_CASE = "excel_datasets"
 DEMO_NAMES = ("demo_agent_long_job", "three_agent_chain")
+CLUSTER_CASE = "tnav_cluster"
+CLUSTER_NAMES = ("tnav_cluster_run",)
 RECOVERY_NAMES = ("agent_down_recovery", "rework_round", "step_limit_review")
 
 
@@ -286,16 +291,18 @@ def _repeat_summary(rows: list[dict], n_pass: int) -> tuple[bool, str]:
 
 
 def _live_pass(cases: list[str], *, five_repeat: int = 1) -> tuple[bool, str, list[dict]]:
-    extra = {DEMO_CASE, DATASETS_CASE, *DEMO_NAMES, *RECOVERY_NAMES}
+    extra = {DEMO_CASE, DATASETS_CASE, CLUSTER_CASE, *DEMO_NAMES, *CLUSTER_NAMES, *RECOVERY_NAMES}
     five = [c for c in cases if c not in extra]
     notes: list[str] = []
     reports: list[dict] = []
     ok = True
     demo_sel: list[str] = []
     rec_sel: list[str] = []
+    cluster_sel: list[str] = []
     if not cases:
         demo_sel = list(DEMO_NAMES)
         rec_sel = list(RECOVERY_NAMES)
+        cluster_sel = list(CLUSTER_NAMES)
     else:
         if DEMO_CASE in cases:
             demo_sel.extend(DEMO_NAMES)
@@ -303,6 +310,10 @@ def _live_pass(cases: list[str], *, five_repeat: int = 1) -> tuple[bool, str, li
         rec_sel.extend(c for c in cases if c in RECOVERY_NAMES)
         demo_sel = [n for n in DEMO_NAMES if n in demo_sel]
         rec_sel = [n for n in RECOVERY_NAMES if n in rec_sel]
+        if CLUSTER_CASE in cases:
+            cluster_sel.extend(CLUSTER_NAMES)
+        cluster_sel.extend(c for c in cases if c in CLUSTER_NAMES)
+        cluster_sel = [n for n in CLUSTER_NAMES if n in cluster_sel]
     want_datasets = not cases or DATASETS_CASE in cases
     first: list[tuple[str, list[str], int, dict[str, str] | None]] = []
     if not cases or five:
@@ -333,6 +344,9 @@ def _live_pass(cases: list[str], *, five_repeat: int = 1) -> tuple[bool, str, li
         second.append(("simulation-model-example/run_live_demo_agent.py", demo_sel, 3600, None))
     if want_datasets:
         second.append(("simulation-model-example/run_live_excel_datasets.py", [], 2400, None))
+    if cluster_sel:
+        # Кластерный агент включает свою строку реестра — идёт во второй волне, не с шестью commissioning.
+        second.append(("simulation-model-example/run_live_tnav_cluster.py", cluster_sel, 2400, None))
     if len(second) == 1:
         script, args, timeout, extra_env = second[0]
         part_ok, part_note, part_rows = _run_live_script(script, args, timeout=timeout, extra_env=extra_env)
@@ -476,7 +490,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--live", action="store_true", help="also redeploy the lab and run the live cases")
     parser.add_argument("--repeat", type=int, default=1, metavar="N", help="run each of the six commissioning live cases N times in one pool after one redeploy (α2; default 1)")
-    parser.add_argument("--cases", default="", help="comma-separated run_live_five case ids and/or demo_agent, excel_datasets, agent_down_recovery, rework_round, step_limit_review (default: all six + demo + recovery + excel_datasets)")
+    parser.add_argument("--cases", default="", help="comma-separated run_live_five case ids and/or demo_agent, excel_datasets, tnav_cluster, agent_down_recovery, rework_round, step_limit_review (default: all six + demo + recovery + excel_datasets + tnav_cluster)")
     parser.add_argument("--only", default="", help="comma-separated stages: regen,smokes,pytest,combat,live,bundle")
     parser.add_argument("--bundle", action="store_true", help="write dist/mas-<VERSION>.zip (not part of the default offline gate)")
     parser.add_argument("--keep-going", action="store_true", help="run every stage even after a failure")

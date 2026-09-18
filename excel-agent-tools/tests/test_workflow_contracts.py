@@ -17,6 +17,7 @@ LIVE_WORKFLOWS = {
     "mas-runtime-config.workflow.json",
     "schedule-builder-agent.workflow.json",
     "excel-extractor-agent.workflow.json",
+    "tnav-cluster-agent.workflow.json",
     "mas-error-traces.workflow.json",
     "mas-control-plane-proxy.workflow.json",
     "mas-orchestrator.workflow.json",
@@ -83,7 +84,7 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
     assert manifest["target_n8n_version"] == "2.30.8"
     imported = {Path(value).name for value in manifest["full_clean_import_set"]}
     assert imported == {path.name for path in workflow_files()} == LIVE_WORKFLOWS
-    assert len(imported) == 10  # 9 core + demo-agent
+    assert len(imported) == 11  # 10 core (incl. tNav Cluster Agent) + demo-agent
     assert {path.name for path in CORE.glob("*.workflow.json")} == {
         Path(value).name for value in manifest["runtime_import_order"]
     }
@@ -107,6 +108,8 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
         "Runtime endpoints",
         "Runtime configuration",
         "Runtime configuration",
+        "Runtime configuration",
+        "Call Knowledge Retrieval",
         "Call Knowledge Retrieval",
         "Call Knowledge Retrieval",
         "Call Knowledge Retrieval",
@@ -115,9 +118,11 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
         "Orchestrator — MAS",
         "Agent — Excel Extractor",
         "Agent — Schedule Builder",
+        "Agent — tNav Cluster Agent",
         "Orchestrator — MAS",
         "Agent — Excel Extractor",
         "Agent — Schedule Builder",
+        "Agent — tNav Cluster Agent",
     ]
     assert any("agent_workflow_ids" in line for line in manifest["ui_configuration"])
     assert future_bindings == []
@@ -424,6 +429,7 @@ def test_mas_runtime_config_is_the_only_url_set() -> None:
         "excel_tools_url",
         "schedule_service_url",
         "math_url",
+        "tnav_cluster_url",
         "demo_agent_url",
         "orchestrator_step_url",
             "max_steps",
@@ -527,6 +533,7 @@ def test_universal_engineering_instruction_templates_are_portable() -> None:
         "generate_schedule_builder_agent.py",
         "generate_excel_extractor_agent.py",
         "generate_demo_agent.py",
+        "generate_tnav_cluster_agent.py",
         "mas_state_utils.py",
         "mas_retrieval_client.py",
         "mas_knowledge_spaces.py",
