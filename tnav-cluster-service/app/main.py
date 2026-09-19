@@ -1,6 +1,6 @@
 """tNav Cluster Agent FastAPI: ``create_agent_app`` даёт ``/health`` и четыре маршрута агента.
 
-Запуск: ``python -m uvicorn app.main:app --host 0.0.0.0 --port 8400`` (см. start-windows.bat / start-linux.sh).
+Запуск: ``python -m app`` (host/port из ``tnav-cluster.env`` через kit ``load_service_env``, как Activity).
 ``/health`` дополнительно показывает настройку кластера: адрес, корень, команду расчёта и чего не хватает,
 чтобы инженер правил ``tnav-cluster.env``, а не гадал.
 """

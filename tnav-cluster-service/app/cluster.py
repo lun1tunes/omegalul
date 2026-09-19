@@ -367,7 +367,8 @@ class ClusterWorkspace:
             error_tail = ""
             if shell.is_file(handle.results.err) and shell.file_size(handle.results.err) > 0:
                 error_tail = shell.read_text(handle.results.err, limit=4000, tail=True).strip()
-            if not error_tail and not alive and not digest.finished and shell.is_file(handle.results.console):
+            # nohup stdout is not tNavigator .err — only use it when the process is gone and there is no lock.
+            if not error_tail and not alive and not lock and not digest.finished and shell.is_file(handle.results.console):
                 error_tail = shell.read_text(handle.results.console, limit=2000, tail=True).strip()
             elapsed = int(handle.elapsed_s)
             fraction, eta = estimate(handle, digest, elapsed_s=elapsed)
@@ -390,12 +391,10 @@ def _state_of(*, alive: bool, lock: bool, digest: LogDigest, end_report: EndRepo
     hard_error = bool(digest.errors) or (end_report is not None and end_report.errors > 0)
     if digest.finished and not hard_error:
         return "finished"
-    if alive:
+    if alive or (lock and not hard_error):
         return "running"
     if hard_error or error_tail:
         return "failed"
-    if lock:
-        return "running"  # лог отстаёт, блокировка на месте
     if digest.steps or digest.current_date:
         return "failed"  # считал и пропал, итоговой строки нет
     return "starting"

@@ -1278,6 +1278,9 @@ def test_agents_registry_for_ui() -> None:
     assert sb["invoke"]["kind"] == "n8n_workflow" and sb["invoke"]["workflow_id"]
     assert sb["enabled"] is True and sb["hitl_policy"] == "agent_asks" and sb["version"]
     assert ids["calculation_agent"]["invoke"] == {"kind": "http", "url": "{math_url}/agent/run"}
+    assert ids["tnav_cluster"]["enabled"] is False
+    assert ids["tnav_cluster"]["title"] == "tNav Cluster Agent"
+    assert ids["tnav_cluster"]["invoke"]["kind"] == "n8n_workflow"
 
 
 def test_put_agent_binds_workflow_without_orchestrator_regeneration() -> None:

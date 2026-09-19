@@ -94,7 +94,7 @@ def test_ready_health_and_static_assets() -> None:
     assert "app.js?v=108" in html
     assert "schema.js?v=46" in html
     assert "log.js?v=4" in html
-    assert "app.css?v=116" in html
+    assert "app.css?v=117" in html
     for anchor in ('id="devModeToggle"', "Режим разработчика", 'id="viewLogBtn"', 'id="logView"', 'id="logSteps"', 'id="logDownload"'):
         assert anchor in html, anchor
     log_js = (STATIC / "log.js").read_text(encoding="utf-8")
@@ -129,7 +129,7 @@ def test_ready_health_and_static_assets() -> None:
     assert "schedule_artifact" not in js_text
     assert 'q.required ? "обязательно"' not in js_text
     assert "формат: ${q.expected_format}" not in js_text
-    for agent in ("excel_extractor", "schedule_builder", "calculation_agent"):
+    for agent in ("excel_extractor", "schedule_builder", "calculation_agent", "tnav_cluster"):
         assert agent not in js_text, agent
 
     schema_js = (STATIC / "schema.js").read_text(encoding="utf-8")
@@ -145,7 +145,7 @@ def test_ready_health_and_static_assets() -> None:
         "const lane = isCompact() ? 36 : 56", "function placePeek",
     ):
         assert needle in schema_js, needle
-    for agent in ("excel_extractor", "schedule_builder", "calculation_agent"):
+    for agent in ("excel_extractor", "schedule_builder", "calculation_agent", "tnav_cluster"):
         assert agent not in schema_js, agent
 
     css = (STATIC / "app.css").read_text(encoding="utf-8")
@@ -175,8 +175,8 @@ def test_ready_health_and_static_assets() -> None:
     assert knowledge.status_code == 200
     for anchor in ("agentTabs", "agentSelect", "kbSearch", "addBtn", "ingestBtn", "cardList", "createPanel", 'href="/"'):
         assert anchor in knowledge.text, anchor
-    assert "knowledge.css?v=101" in knowledge.text
-    assert "knowledge.js?v=103" in knowledge.text
+    assert "knowledge.css?v=102" in knowledge.text
+    assert "knowledge.js?v=104" in knowledge.text
 
     registry = client.get("/registry")
     assert registry.status_code == 200
@@ -186,7 +186,7 @@ def test_ready_health_and_static_assets() -> None:
     agents_js = client.get("/static/agents.js")
     assert agents_js.status_code == 200
     assert 'fetch("/agents")' in agents_js.text and "/agents/${encodeURIComponent(agentId)}" in agents_js.text
-    for hardcoded in ("excel_extractor", "schedule_builder", "calculation_agent"):
+    for hardcoded in ("excel_extractor", "schedule_builder", "calculation_agent", "tnav_cluster"):
         assert hardcoded not in agents_js.text and hardcoded not in registry.text, hardcoded
 
 

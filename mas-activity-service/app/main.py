@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from app import control_plane
 from app import knowledge as knowledge_store
 from app.cases_api import router as cases_router
-from app.models import KnowledgeDocumentCreate, KnowledgeDocumentPatch, TASK_ID_RE
+from app.models import KnowledgeDocumentCreate, KnowledgeDocumentPatch, KnowledgeIngestRequest, TASK_ID_RE
 from app.orchestrator import hitl_backend, orchestrator_config_summary, probe_orchestrator_connectivity
 from app.readiness import probe_n8n_stack
 from app.settings import STATIC, VERSION, configure_logging, get_settings
@@ -202,9 +202,13 @@ def knowledge_namespaces() -> dict[str, Any]:
 
 
 @app.get("/v1/knowledge/documents")
-def knowledge_documents(target_base: str = Query(..., min_length=1, max_length=120)) -> dict[str, Any]:
+def knowledge_documents(
+    target_base: str = Query(..., min_length=1, max_length=120),
+    q: str = Query("", max_length=400),
+    tag: str = Query("", max_length=200),
+) -> dict[str, Any]:
     try:
-        docs = knowledge_store.list_documents(target_base)
+        docs = knowledge_store.list_documents(target_base, q=q, tag=tag)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FileNotFoundError as exc:
@@ -213,9 +217,22 @@ def knowledge_documents(target_base: str = Query(..., min_length=1, max_length=1
         "contract": "mas_knowledge_document_list",
         "contract_version": "1.0",
         "target_base": target_base,
+        "q": q,
+        "tag": tag,
         "count": len(docs),
         "documents": docs,
     }
+
+
+@app.get("/v1/knowledge/{target_base}")
+def knowledge_base(
+    target_base: str,
+    q: str = Query("", max_length=400),
+    tag: str = Query("", max_length=200),
+) -> dict[str, Any]:
+    if target_base in {"namespaces", "documents", "ingest"}:
+        raise HTTPException(status_code=404, detail="Unknown target_base")
+    return knowledge_documents(target_base=target_base, q=q, tag=tag)
 
 
 @app.get("/v1/knowledge/documents/{target_base}/{knowledge_id}")
@@ -230,6 +247,24 @@ def knowledge_document(target_base: str, knowledge_id: str) -> dict[str, Any]:
         "contract": "mas_knowledge_document",
         "contract_version": "1.0",
         "document": doc,
+    }
+
+
+@app.get("/v1/knowledge/{target_base}/{knowledge_id}/revisions")
+def knowledge_revisions(target_base: str, knowledge_id: str) -> dict[str, Any]:
+    try:
+        revisions = knowledge_store.list_revisions(target_base, knowledge_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "contract": "mas_knowledge_revisions",
+        "contract_version": "1.0",
+        "target_base": target_base,
+        "knowledge_id": knowledge_id,
+        "count": len(revisions),
+        "revisions": revisions,
     }
 
 
@@ -278,6 +313,8 @@ def knowledge_patch_document(
             keywords=body.keywords,
             topics=body.topics,
             task_patterns=body.task_patterns,
+            knowledge_type=body.knowledge_type,
+            status=body.status,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -296,9 +333,14 @@ def knowledge_patch_document(
 
 
 @app.post("/v1/knowledge/ingest")
-async def knowledge_ingest() -> dict[str, Any]:
+async def knowledge_ingest(body: KnowledgeIngestRequest | None = None) -> dict[str, Any]:
+    payload = body or KnowledgeIngestRequest()
     try:
-        result = await knowledge_store.push_corpus_to_n8n()
+        result = await knowledge_store.push_corpus_to_n8n(
+            target_base=payload.target_base,
+            knowledge_id=payload.knowledge_id,
+            purge_superseded=payload.purge_superseded,
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except knowledge_store.KnowledgeIngestUnavailable as exc:

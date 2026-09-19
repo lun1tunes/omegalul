@@ -90,6 +90,30 @@ def test_handoff_lights_edge_and_progress_shows_agent_bubble() -> None:
     assert done["nodes"]["orchestrator"]["caption"] == "Готово: даты обновлены"
     assert done["nodes"]["excel"]["caption"] == "Таблица готова"
 
+
+def test_cluster_handoff_lights_cluster_node() -> None:
+    events = [
+        _event("case.created", actor="user", status_message="Принял задачу: расчёт на кластере"),
+        _event(
+            "agent.handoff",
+            agent_id="tnav_cluster",
+            status_message="Передаю кластерному агенту",
+            handoff_message="Примени расписание к модели на кластере и запусти расчёт.",
+        ),
+        _event("agent.progress", actor="tnav_cluster", agent_id="tnav_cluster", status_message="Разбираю модель на кластере"),
+        _event("agent.result", actor="tnav_cluster", agent_id="tnav_cluster", status_message="Расчёт завершён"),
+        _event("case.finished", status_message="Готово: модель посчитана"),
+    ]
+    frames = build_schema_frames(events)
+    handoff = frames[1]
+    assert handoff["nodes"]["cluster"]["tone"] == "pending"
+    assert handoff["edges"]["orch_cluster"]["tone"] == "active"
+    progress = frames[2]
+    assert progress["nodes"]["cluster"]["tone"] == "active"
+    assert progress["nodes"]["cluster"]["bubble"] == "Разбираю модель на кластере"
+    done = frames[-1]
+    assert done["nodes"]["cluster"]["caption"] == "Расчёт завершён"
+
     model = build_schema_model(events, state={"goal": "x"}, status="done")
     assert model["complete"] is True
     assert model["start_label"] == START_LABEL

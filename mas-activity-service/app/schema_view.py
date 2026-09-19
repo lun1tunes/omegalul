@@ -12,7 +12,7 @@ from typing import Any
 
 from app.state_shape import artifact_filenames
 
-NODE_KEYS = ("engineer", "orchestrator", "excel", "calc", "schedule", "output")
+NODE_KEYS = ("engineer", "orchestrator", "excel", "calc", "schedule", "cluster", "output")
 EDGE_KEYS = (
     "engineer_orch",
     "orch_engineer",
@@ -20,25 +20,30 @@ EDGE_KEYS = (
     "orch_excel",
     "orch_calc",
     "orch_schedule",
+    "orch_cluster",
     "excel_orch",
     "calc_orch",
     "schedule_orch",
+    "cluster_orch",
 )
 _ANSWER_PREFIX = re.compile(r"^(Пользователь|Инженер)\s+ответил[а]?:\s*", re.I)
 AGENT_NODES = {
     "excel_extractor": "excel",
     "calculation_agent": "calc",
     "schedule_builder": "schedule",
+    "tnav_cluster": "cluster",
 }
 OUTBOUND_EDGE = {
     "excel": "orch_excel",
     "calc": "orch_calc",
     "schedule": "orch_schedule",
+    "cluster": "orch_cluster",
 }
 RETURN_EDGE = {
     "excel": "excel_orch",
     "calc": "calc_orch",
     "schedule": "schedule_orch",
+    "cluster": "cluster_orch",
 }
 START_LABEL = "Постановка задачи"
 END_LABEL = "Результат"

@@ -35,10 +35,27 @@ def _agent_classes(tree: ast.Module) -> list[ast.ClassDef]:
     ]
 
 
+FIELD_ENV = {
+    "tnav-cluster-service": "tnav-cluster.env",
+    "agents-template/demo_agent": "demo-agent.env",
+}
+
+
 @pytest.mark.parametrize("service", SERVICES)
 def test_init_bootstraps_the_repo_kit(service: str) -> None:
     text = (REPO / service / "app" / "__init__.py").read_text(encoding="utf-8")
     assert "mas-agent-kit" in text and "sys.path" in text, f"{service}: app/__init__.py must add ../mas-agent-kit to sys.path"
+
+
+@pytest.mark.parametrize("service,env_name", FIELD_ENV.items())
+def test_field_env_is_loaded_by_python_not_cmd(service: str, env_name: str) -> None:
+    """CMD ``for /f`` poisons a Notepad BOM and passwords with ``=`` — Activity / kit dotenv only."""
+    init = (REPO / service / "app" / "__init__.py").read_text(encoding="utf-8")
+    assert "load_service_env" in init and env_name in init
+    assert (REPO / service / "app" / "__main__.py").is_file()
+    bat = (REPO / service / "start-windows.bat").read_text(encoding="utf-8")
+    assert "for /f" not in bat.lower()
+    assert "-m app" in bat
 
 
 @pytest.mark.parametrize("service", SERVICES)

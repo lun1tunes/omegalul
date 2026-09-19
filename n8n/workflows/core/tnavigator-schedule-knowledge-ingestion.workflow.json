@@ -1,12 +1,12 @@
 {
   "id": "a1f0c963-7bb2-5241-9d9d-61d7e96376e0",
   "name": "MAS — Knowledge Ingestion",
-  "description": "Single MAS ingest: Activity Knowledge webhook, form paste, or packaged Set snapshot. Skips a card only when current chunks exist in the vector table; ignores injection_template.",
+  "description": "Single MAS ingest: Activity Knowledge webhook, form paste, or packaged Set snapshot. Skips a card only when current chunks exist and text/content_hash match; optional purge_superseded; ignores injection_template.",
   "nodes": [
     {
       "parameters": {
-        "content": "## edit after import\n\n**MAS — Knowledge Ingestion** — after UI import, complete bindings before activate:\n\n- Set Postgres credentials on **Ensure parent knowledge tables**\n- Set Postgres credentials on **Lookup existing knowledge keys**\n- Set vector/memory credentials on **PGVector — insert approved SCHEDULE knowledge**\n- Set OpenAI credentials on **SCHEDULE Embeddings — configure same model in retrieval**\n- Set Postgres credentials on **Finalize indexes and deduplicate chunks**\n- Set Postgres credentials on **PostgreSQL — upsert full parent knowledge**\n- Set Postgres credentials on **PostgreSQL — upsert approved schema catalogue**\n- Set Postgres credentials on **Postgres — inspect RAG table contents**\n\nDo not rely on env()/Globals for corporate UI import.",
-        "height": 384,
+        "content": "## edit after import\n\n**MAS — Knowledge Ingestion** — after UI import, complete bindings before activate:\n\n- Set Postgres credentials on **Ensure parent knowledge tables**\n- Set Postgres credentials on **Lookup existing knowledge keys**\n- Set vector/memory credentials on **PGVector — insert approved SCHEDULE knowledge**\n- Set OpenAI credentials on **SCHEDULE Embeddings — configure same model in retrieval**\n- Set Postgres credentials on **Finalize indexes and deduplicate chunks**\n- Set Postgres credentials on **PostgreSQL — upsert full parent knowledge**\n- Set Postgres credentials on **PostgreSQL — upsert approved schema catalogue**\n- Set Postgres credentials on **Postgres — purge superseded chunks**\n- Set Postgres credentials on **Postgres — inspect RAG table contents**\n\nDo not rely on env()/Globals for corporate UI import.",
+        "height": 412,
         "width": 440,
         "color": 1
       },
@@ -16,14 +16,14 @@
       "typeVersion": 1,
       "position": [
         -40,
-        -784
+        -812
       ]
     },
     {
       "parameters": {
-        "content": "## MAS Knowledge Ingestion — n8n 2.30.8\n\nOne ingest for Excel, Orchestrator, and Schedule (`target_base`). Field path: Activity Knowledge → **Загрузить в RAG** (`POST /webhook/mas-knowledge-ingest`). That posts the live `excel-agent-operating-guide.documents.json` sheet. Form paste and Execute Sub-workflow still work. Manual trigger uses the **Packaged MAS corpus** Set snapshot from import time (not the live file).\n\nSkip only when current chunks already exist in `tnavigator_schedule_knowledge_v2` (same `target_base` + `knowledge_id` + `revision`). Parent-only rows are re-embedded. Ignores `injection_template`. To update text, bump `revision`. Embeddings: `baai/bge-m3`, Dimensions empty (provider default 1024). Same model on Ingestion and Retrieval. Do not mix with `tnavigator_schedule_knowledge_v1`. Activate this workflow so the Activity webhook is registered.",
+        "content": "## MAS Knowledge Ingestion — n8n 2.30.8\n\nOne ingest for Excel, Orchestrator, and Schedule (`target_base`). Field path: Activity Knowledge → **Загрузить в RAG** (`POST /webhook/mas-knowledge-ingest`). That posts the live `excel-agent-operating-guide.documents.json` sheet. Optional body: `knowledge_id`/`target_base` (one card), `purge_superseded` (delete superseded chunks). Form paste and Execute Sub-workflow still work. Manual trigger uses the **Packaged MAS corpus** Set snapshot from import time (not the live file).\n\nSkip only when current chunks exist for the same `target_base` + `knowledge_id` + `revision` **and** stored text/`content_hash` match. Same id/rev with different text → `CONTENT_HASH_CHANGED_BUMP_REVISION` (`needs_input`). Parent-only rows are re-embedded. Ignores `injection_template`. Embeddings: `baai/bge-m3`, Dimensions empty (provider default 1024). Same model on Ingestion and Retrieval. Do not mix with `tnavigator_schedule_knowledge_v1`. Activate this workflow so the Activity webhook is registered.",
         "width": 620,
-        "height": 620,
+        "height": 680,
         "color": 5
       },
       "id": "376cacbb-28c0-5b3e-b81d-59de261e05a7",
@@ -32,7 +32,7 @@
       "typeVersion": 1,
       "position": [
         -700,
-        -1000
+        -1060
       ]
     },
     {
@@ -72,13 +72,29 @@
       "parameters": {
         "authentication": "n8nUserAuth",
         "formTitle": "MAS knowledge ingestion",
-        "formDescription": "Field path: Activity Knowledge → Загрузить в RAG. Or paste the whole excel-agent-operating-guide.documents.json sheet. Existing target_base+knowledge_id+revision rows are skipped; injection_template is ignored. One-card fields below are optional.",
+        "formDescription": "Field path: Activity Knowledge → Загрузить в RAG. Or paste the whole excel-agent-operating-guide.documents.json sheet. Skip only when the same target_base+knowledge_id+revision is already in the vector table AND text/content_hash match. Same id/rev with different text → bump revision (needs_input). injection_template is ignored. One-card fields and purge_superseded are optional.",
         "formFields": {
           "values": [
             {
               "fieldName": "corpus_json",
               "fieldLabel": "Paste the full knowledge sheet (excel-agent-operating-guide.documents.json)",
               "fieldType": "textarea",
+              "requiredField": false
+            },
+            {
+              "fieldName": "purge_superseded",
+              "fieldLabel": "purge_superseded: delete vector chunks marked superseded",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "false"
+                  },
+                  {
+                    "option": "true"
+                  }
+                ]
+              },
               "requiredField": false
             },
             {
@@ -398,7 +414,7 @@
                   "target_base": "orchestrator_routing",
                   "knowledge_type": "routing_card",
                   "knowledge_id": "route-schedule-builder",
-                  "revision": "11",
+                  "revision": "12",
                   "title": "Политика: правка SCHEDULE",
                   "keywords": [
                     "INC",
@@ -429,7 +445,7 @@
                   "status": "active",
                   "author": "orchestrator-routing-maintainer",
                   "access_scope": "petroleum-engineering",
-                  "text": "Правку исходного SCHEDULE (.inc) выполняет агент, чей input_required включает schedule_source: сдвиг дат ввода по фактам «скважина — дата», добавление новых скважин по их параметрам, перепривязка скважин в группу по тексту задачи, запись именованного набора строк (не даты ввода) в keyword по схеме. Нужен исходный файл schedule среди приложенных файлов; без него — ask_user. Объём правки — из текста задачи (какие скважины, какие ключевые слова, какой глагол: убери, добавь, измени); не выдумывай ключевые слова и не расширяй задачу. От предыдущего агента жди только данные, которые эта правка требует: для сдвига дат — факты ввода; параметры новых скважин — только если цель просит их добавить; для любой другой таблицы — именованный набор строк. Единицы METRIC и tNavigator 22.2 заданы — у инженера не подтверждать. Агент сам рендерит ключевые слова и не читает Excel: даты, параметры новых скважин и именованные наборы берёт из результатов агента, который читал Excel, и из ответов инженера. Результат — новый файл SCHEDULE и список изменений; после него повторный вызов оправдан только новыми данными или конкретным недостатком (rework_reason)."
+                  "text": "Правку исходного SCHEDULE (.inc) выполняет агент, чей input_required включает schedule_source: сдвиг дат ввода по фактам «скважина — дата», добавление новых скважин по их параметрам, перепривязка скважин в группу по тексту задачи, запись именованного набора строк (не даты ввода) в keyword по схеме. Нужен исходный файл schedule среди приложенных файлов; без него — ask_user. Объём правки — из текста задачи (какие скважины, какие ключевые слова, какой глагол: убери, добавь, измени); не выдумывай ключевые слова и не расширяй задачу. От предыдущего агента жди только данные, которые эта правка требует: для сдвига дат — факты ввода; параметры новых скважин — только если цель просит их добавить; для любой другой таблицы — именованный набор строк. Единицы METRIC и tNavigator 22.2 заданы — у инженера не подтверждать. Агент сам рендерит ключевые слова и не читает Excel: даты, параметры новых скважин и именованные наборы берёт из результатов агента, который читал Excel, и из ответов инженера. Результат — новый файл SCHEDULE и список изменений; после него повторный вызов оправдан только новыми данными или конкретным недостатком (rework_reason). Если цель — применить уже готовое расписание к модели на гидродинамическом кластере и запустить расчёт, а не править исходный файл — этого агента не вызывай."
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -502,23 +518,26 @@
                   "target_base": "orchestrator_routing",
                   "knowledge_type": "routing_card",
                   "knowledge_id": "route-cluster-calculation",
-                  "revision": "4",
-                  "title": "Политика: расчёты на кластере (агента нет)",
+                  "revision": "6",
+                  "title": "Политика: расчёт на гидродинамическом кластере",
                   "keywords": [
                     "SSH",
                     "JOB"
                   ],
                   "topics": [
-                    "absent_agent"
+                    "model_version",
+                    "run_status",
+                    "run_results"
                   ],
                   "task_patterns": [
                     "запуск расчёта на кластере",
-                    "статус расчётной задачи"
+                    "статус расчётной задачи",
+                    "применить расписание к модели на кластере"
                   ],
                   "status": "active",
                   "author": "orchestrator-routing-maintainer",
                   "access_scope": "petroleum-engineering",
-                  "text": "Запуск расчётов на кластере и статус расчётных задач: если в реестре нет агента с таким when_to_use, эту часть задачи выполнить нельзя. Не выдумывай агента и не спрашивай инженера про учётные данные кластера. Если это единственная часть цели — ask_user, как поступить; если остальные части выполнены — finish с честным итогом, что расчёт на кластере не запускался."
+                  "text": "Применить новое расписание к модели на гидродинамическом кластере и запустить расчёт — агент, чей when_to_use про модели на кластере по SSH. Вызывай его, когда цель про кластер, расчёт модели или новую версию модели с новым расписанием; не для обычных дат ввода и не для перепривязки групп. Приложенный готовый файл расписания в такой задаче — вход этого агента, а не повод править исходный SCHEDULE. Учётные данные кластера у инженера не спрашивай — они в настройках сервиса. Если такого агента в реестре нет или он выключен — эту часть цели выполнить нельзя: не выдумывай агента. Если это единственная часть цели — ask_user, как поступить; если остальные части выполнены — finish с честным итогом, что расчёт на кластере не запускался."
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -614,7 +633,88 @@
                   "status": "active",
                   "author": "specialist-template-maintainer",
                   "access_scope": "petroleum-engineering",
-                  "text": "Выполняйте только bounded task из agent_task (objective, handoff_message, inputs). Используйте rag_evidence как протокол возможности. Не расширяйте scope, не утверждайте high-risk, не выдавайте self-check за independent verification. Крупные артефакты — только ссылки. Missing material fact → needs_input."
+                  "text": "Выполняйте только bounded task из agent_task (objective, handoff_message, inputs). Используйте rag_evidence как протокол возможности. Не расширяйте scope, не утверждайте high-risk, не выдавайте self-check за independent verification. Крупные артефакты — только ссылки. Missing material fact → needs_input.",
+                  "source_hash": "sha256:09fd4ca3dd48d8fdc5a659b43cf993dd1e79714445e4b458d0da8025f07473e4"
+                },
+                {
+                  "contract": "schedule_knowledge_block",
+                  "contract_version": "1.0",
+                  "target_base": "specialist_template",
+                  "knowledge_type": "capability_instruction",
+                  "knowledge_id": "cluster-model-layout",
+                  "revision": "1",
+                  "title": "Устройство модели на кластере",
+                  "keywords": [
+                    "CLUSTER_MODEL",
+                    "INCLUDE"
+                  ],
+                  "topics": [
+                    "specialist",
+                    "capability",
+                    "cluster"
+                  ],
+                  "task_patterns": [
+                    "разобрать модель на кластере",
+                    "найти основной файл расписания",
+                    "секции входного файла модели"
+                  ],
+                  "status": "active",
+                  "author": "cluster-agent-maintainer",
+                  "access_scope": "petroleum-engineering",
+                  "text": "Устройство модели tNavigator на кластере.\n\nНазначение. Входной файл модели (.data) состоит из секций RUNSPEC, GRID, EDIT, PROPS, REGIONS, SOLUTION, SUMMARY, SCHEDULE. Другие файлы подключаются директивой INCLUDE.\n\nКогда применять. Любая задача «посмотреть модель», «какое расписание основное», «подготовить версию».\n\nКанон.\n- Пути моделей — относительно рабочего каталога кластера из настроек сервиса. Выход за этот каталог запрещён.\n- Основной файл расписания — тот INCLUDE в секции SCHEDULE, в котором больше всего строк DATES. Это обычно прогнозный файл, который собирает агент правки расписания.\n- Сначала inspect_model с путём из списка моделей сессии. list_models — только если пути в списке нет.\n- Строки расписания модель не пишет и не правит: новый файл приходит готовым.\n"
+                },
+                {
+                  "contract": "schedule_knowledge_block",
+                  "contract_version": "1.0",
+                  "target_base": "specialist_template",
+                  "knowledge_type": "capability_instruction",
+                  "knowledge_id": "cluster-prepare-version",
+                  "revision": "1",
+                  "title": "Новая версия модели: копия, не удаление",
+                  "keywords": [
+                    "CLUSTER_VERSION"
+                  ],
+                  "topics": [
+                    "specialist",
+                    "capability",
+                    "cluster"
+                  ],
+                  "task_patterns": [
+                    "собрать новую версию модели",
+                    "подложить новое расписание",
+                    "скопировать входной файл модели"
+                  ],
+                  "status": "active",
+                  "author": "cluster-agent-maintainer",
+                  "access_scope": "petroleum-engineering",
+                  "text": "Сборка новой версии модели на кластере.\n\nНазначение. Рядом со старым файлом расписания появляется новый; копия входного файла модели указывает INCLUDE на этот новый файл. Исходные файлы остаются на месте.\n\nКогда применять. Цель просит применить приложенное расписание к модели на кластере.\n\nКанон.\n- Только prepare_model_version. Инструмент сам копирует входной файл, кладёт расписание и переписывает путь подключения.\n- Ничего не удалять и не предлагать удалять: удаление на кластере запрещено.\n- Имя версии — короткое латинское, если инженер его назвал; иначе инструмент выберет сам.\n- Если расписаний несколько — выбери карточку из списка сессии или спроси инженера одним вопросом прозой, какое расписание применить.\n- После статуса prepared либо запускай расчёт, либо завершай, если считать не просили.\n"
+                },
+                {
+                  "contract": "schedule_knowledge_block",
+                  "contract_version": "1.0",
+                  "target_base": "specialist_template",
+                  "knowledge_type": "capability_instruction",
+                  "knowledge_id": "cluster-run-calculation",
+                  "revision": "1",
+                  "title": "Запуск и ожидание расчёта",
+                  "keywords": [
+                    "CLUSTER_RUN",
+                    "TNAVIGATOR"
+                  ],
+                  "topics": [
+                    "specialist",
+                    "capability",
+                    "cluster"
+                  ],
+                  "task_patterns": [
+                    "запустить расчёт модели",
+                    "сколько осталось считать",
+                    "статус расчёта на кластере"
+                  ],
+                  "status": "active",
+                  "author": "cluster-agent-maintainer",
+                  "access_scope": "petroleum-engineering",
+                  "text": "Запуск расчёта tNavigator на кластере.\n\nНазначение. Команда расчёта целиком задана в настройках сервиса; агент подставляет только путь к входному файлу модели. Расчёт длится от минут до суток.\n\nКогда применять. Цель просит посчитать модель или узнать, как идёт уже запущенный расчёт.\n\nКанон.\n- start_calculation сразу возвращает «в работе». Дальше инструменты не вызывай: итог придёт сам, когда расчёт закончится.\n- Команду, ядра, очередь и пароль кластера у инженера не спрашивай и не выдумывай.\n- check_calculation — только если инженер явно спросил про текущее состояние уже запущенного расчёта.\n- Второй запуск той же модели, пока идёт первый, запрещён: либо дождись конца, либо считай другую версию.\n- Итог инженеру — факты: сколько шагов, сколько времени, чем закончилось. Пути файлов и имена полей в фразу не вставляй.\n"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -880,7 +980,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:eda8ffb2101cd095bb4a2f60794519e90b59015ddf45b85b467b7e1c19f2b473"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -1024,7 +1125,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:9f1bf8bd5ed3e66bbff8f3d89d6fb05490186342a88b8081edb89d6b951b1cfb"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -1170,7 +1272,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:d76a96e9d8fa066cf27601de88d8034833d5379f107e4d5ef55c9f32c216b6ae"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -1528,7 +1631,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:875cd2bba8043972f11b595ecb4b30ae5dfa333b57bdd4f3bf6b12c11019180c"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -1702,7 +1806,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:50b5f05b9cd6b2273c148b54af8846f5d78e18874af7f1ccaddf8a27ef78c792"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -2308,7 +2413,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:14c712b5c98063b690cb6434aef89632dac01e2cecee8ed14215e94c81f38d94"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -3518,7 +3624,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:c42f5bebb086ba9027579f095ec8cc5a986cd99d0b4d20c75a191477cca4cbc1"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -4099,7 +4206,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:035da2f9fcd6c0ce3f30301db8cbe7cad9b0eb686688ac26889abf892b574857"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -5196,7 +5304,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:858bbd62b39f9f8ae74ec09a9fbbd5b4580fd41977f2677aa3bbb1ab2531bf50"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -5622,7 +5731,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:9b3df09b0d6f6a48cabac75806a6f902d676dc7d7ebdb4fc1e8862d2f7ac2e41"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -6083,7 +6193,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:e315be6c6c9a66acbc08517f2faa382b4d46505c9c9da07826eec18d0fe557ad"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -6654,7 +6765,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:c3bd6db93216ac2c35a0425f4c7d578a1ad6dc5f3215242347963c9d3d78fba7"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -7192,7 +7304,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:c8054c61eb6fdcd1b3907bb426a274878cff094bb5c832c34aed1eddfaaef33c"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -8333,7 +8446,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:ea29743af6a913431f17d269fa14c3af2198f1bb6abb09118637b0a6c4a8d629"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -8483,7 +8597,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:976e3d11894bb233e2b2f08675534bf106559cd72c30d52bc46c771dae69bd78"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -9784,7 +9899,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:1d508712eb7f225cb5a126bef790baf0166163b63b360b38bb3ae2cbf32fa8d6"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -9931,7 +10047,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:90dd03df4b90c1a648e835b81acde30600c7be1304c25ee4b5e3b945074acba6"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -10269,7 +10386,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:c22362bf3af506f93d54989f25459b6248a756bb7f722be42cdf8572639a6318"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -10580,7 +10698,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:61cb7942a6527064db0b2909bebfcedc104aa41004771e7199bcbc9ec2c7c8bc"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -10911,7 +11030,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:0a848c83c0178c256ef93c6976fc4c6062b0d77777f4b3d846e7c7ee64460c7e"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -11320,7 +11440,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:1d4916f2e4b1f85e3d62f3149328ed45eae3cd116b9f697baaf1d41aff94c12e"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -11472,7 +11593,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:d7744889cb9d6a9e928b1253417bf389411cb0da29367dfcd7c427849dc8571f"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -11983,7 +12105,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:0f10c5ef9a939b3effe2b674ed1981caad2de94658d717c3420ee04c7ec3cf6b"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -12905,7 +13028,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:ed1a26f80b8698d961b116659bf035cb26460b41498092d2ac5640353d91fc5a"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -13554,7 +13678,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:85b5c99afd3834176d68e44becc24e8da9af6e4ae88449fc27a63483a37c1849"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -14582,7 +14707,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:7d1624e1ea0196383c86dbd2558826c53a5a86eb992c48141eb4e3b66f0353d5"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -15392,7 +15518,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:399a8ba7e57ccbb2a527df727b50d06e0b787c969235ffcfdc0ea9aad0dfca31"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -15991,7 +16118,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:a1e388a03c2d699b1e5a723a4c3c41712ae3c5030490c32c9ea638e34af0e697"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -16560,7 +16688,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:05bbed4c6b22d77ff1ef5a974216dc97bc6b635b6df3b993c0f27bdc48e15a3e"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -16707,7 +16836,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:6bf114cd9c2c2fd2cabd7d46b0c52f5f7cfad964d0a69f2ba80ea7c7c320430a"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -17188,7 +17318,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:61d22d27495a45aa49e42b04b2cbd82a213fbffaac32de8399df4bb52410ecad"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -17576,7 +17707,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:0a6d3ac6d776a1b2f51c395c33da67abfc43a755e4abe9050336cc6b733a019e"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -17821,7 +17953,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:961f3d1e784d0af7205e7e76002caff7e346ef56d4d931fcdb605ad9dbc4f8bb"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -18064,7 +18197,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:836586a86d820607e48b46a55abfb7c40a03d3621fa45bfa380502933917aeb6"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -18171,7 +18305,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:6cc197a6cd6cdeee236ce8457cd168518a8aa6ab748aeb85125a40f69f399d57"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -18341,7 +18476,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:9baa6f8c6dce23272fc759a7799fcd87712ae6d706e16734b9b4e812ba4ec6db"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -18650,7 +18786,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:6917dcfd37771489b36f9ccace255bdee43144385378e7b64c2c888de96f4f08"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -18913,7 +19050,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:854ac087dc4e008da1cba22ddbe654060023bcfb94b1b2476d211a695f94aebe"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -19049,7 +19187,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:da06918fa70947093ca10f04306f067a872b1bd3addb2bd31e7a639cb7ee5cd4"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -19243,7 +19382,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:b2bf7c44ba9719880a54b8fc64e240c97875e6407738183f3aa7cb5d3859102e"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -19437,7 +19577,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:844c8ef6397e060eee6d5662ad6ed3f6031015eee5be3bf7ec7aa4efdee40f4a"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -19594,7 +19735,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:a78ff8137c7d59338dd1341abe4df320d0a6812ff6dec6d358e87e99f55fcc1b"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -19644,7 +19786,8 @@
                       "schedule_text": "-- keep engineering notes\nWCONPROD\n  'P01' OPEN ORAT 150 /\n/\n",
                       "explanation": "MODIFY только record WCONPROD. Строка `-- keep engineering notes` остаётся (preserve_unmentioned)."
                     }
-                  ]
+                  ],
+                  "source_hash": ""
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -19808,7 +19951,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:5cea4a2ca83071ca7b3860bcb7aed95b22b5f15fe5843c0353b3b6537e70f194"
                 },
                 {
                   "contract": "schedule_knowledge_block",
@@ -20086,7 +20230,8 @@
                         }
                       }
                     ]
-                  }
+                  },
+                  "source_hash": "sha256:bc405ac737328e32d3ab0d1d68a134d2345e7a87120b67b592f05a789e297ab8"
                 }
               ],
               "type": "array"
@@ -20107,7 +20252,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);const arr=Array.isArray;const clean=v=>typeof v==='string'?v.trim():'';\nconst skipDoc=d=>!d||d.role==='injection_template'||d.do_not_ingest===true;\nconst asBlock=v=>{if(!obj(v))return null;if(obj(v.schedule_knowledge_block))return v.schedule_knowledge_block;if(v.contract==='schedule_knowledge_block'||clean(v.knowledge_id))return v;return null;};\nconst parseJson=v=>{if(obj(v)||arr(v))return v;if(typeof v!=='string'||!v.trim())return null;try{let x=JSON.parse(v.replace(/^\\uFEFF/,''));if(typeof x==='string'){try{x=JSON.parse(x)}catch{}}return (obj(x)||arr(x))?x:null;}catch{return null;}};\nconst fromPayload=p=>{if(!p)return[];let docs;if(arr(p.documents))docs=p.documents;else if(arr(p.schedule_knowledge_blocks))docs=p.schedule_knowledge_blocks;else if(arr(p))docs=p;else if(obj(p)&&(obj(p.schedule_knowledge_block)||p.contract==='schedule_knowledge_block'||clean(p.knowledge_id)))docs=[p];else docs=[];return docs.filter(d=>!skipDoc(d)).map(asBlock).filter(b=>b&&!skipDoc(b)&&clean(b.knowledge_id)&&clean(b.text||b.document_text));};\nconst canon=b=>{const target_base=clean(b.target_base||(obj(b.metadata)&&b.metadata.target_base)||'schedule_mvp');const revision=clean(b.revision||b.document_revision||(obj(b.metadata)&&b.metadata.revision)||'1');return {...b,target_base,revision};};\nconst dedupe=list=>{const by=new Map();for(const b of list){const x=canon(b);by.set(`${x.target_base}|${x.knowledge_id}|${x.revision}`,x);}return [...by.values()];};\nconst raw0=$json||{};\nconst inner=obj(raw0.body)||arr(raw0.body)||typeof raw0.body==='string'?raw0.body:raw0;\nconst raw=typeof inner==='string'?(parseJson(inner)||{}):inner;\nconst corpusRaw=clean((obj(raw)?raw.corpus_json:'')||raw0.corpus_json);\nconst pasted=corpusRaw?parseJson(corpusRaw):null;\nconst corpusInvalid=Boolean(corpusRaw)&&pasted==null;\nif(corpusInvalid)return[{json:{ingest_error:'CORPUS_JSON_INVALID',collect_error:'CORPUS_JSON_INVALID'}}];\nconst explicit=pasted!=null||arr(raw.documents)||arr(raw.schedule_knowledge_blocks)||arr(raw0.documents)||arr(raw0.schedule_knowledge_blocks)||arr(raw);\nlet blocks=fromPayload(pasted||raw);\nif(!blocks.length)blocks=fromPayload(raw0);\nif(!blocks.length&&!explicit){const one=asBlock(raw);if(one&&!skipDoc(one)&&clean(one.knowledge_id)&&clean(one.text||one.document_text))blocks=[one];}\nblocks=dedupe(blocks);\nif(!blocks.length)return[{json:{collect_empty:true,collect_error:'CORPUS_EMPTY',ingest_error:'CORPUS_EMPTY'}}];\nreturn blocks.map(b=>({json:canon(b)}));"
+        "jsCode": "const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);const arr=Array.isArray;const clean=v=>typeof v==='string'?v.trim():'';\nconst skipDoc=d=>!d||d.role==='injection_template'||d.do_not_ingest===true;\nconst asBlock=v=>{if(!obj(v))return null;if(obj(v.schedule_knowledge_block))return v.schedule_knowledge_block;if(v.contract==='schedule_knowledge_block'||clean(v.knowledge_id))return v;return null;};\nconst parseJson=v=>{if(obj(v)||arr(v))return v;if(typeof v!=='string'||!v.trim())return null;try{let x=JSON.parse(v.replace(/^\\uFEFF/,''));if(typeof x==='string'){try{x=JSON.parse(x)}catch{}}return (obj(x)||arr(x))?x:null;}catch{return null;}};\nconst fromPayload=p=>{if(!p)return[];let docs;if(arr(p.documents))docs=p.documents;else if(arr(p.schedule_knowledge_blocks))docs=p.schedule_knowledge_blocks;else if(arr(p))docs=p;else if(obj(p)&&(obj(p.schedule_knowledge_block)||p.contract==='schedule_knowledge_block'||clean(p.knowledge_id)))docs=[p];else docs=[];return docs.filter(d=>!skipDoc(d)).map(asBlock).filter(b=>b&&!skipDoc(b)&&clean(b.knowledge_id)&&clean(b.text||b.document_text));};\nconst canon=b=>{const target_base=clean(b.target_base||(obj(b.metadata)&&b.metadata.target_base)||'schedule_mvp');const revision=clean(b.revision||b.document_revision||(obj(b.metadata)&&b.metadata.revision)||'1');return {...b,target_base,revision};};\nconst dedupe=list=>{const by=new Map();for(const b of list){const x=canon(b);by.set(`${x.target_base}|${x.knowledge_id}|${x.revision}`,x);}return [...by.values()];};\nconst truthy=v=>v===true||v===1||v==='t'||v==='true'||v==='True'||v==='yes'||v==='on';\nconst raw0=$json||{};\nconst inner=obj(raw0.body)||arr(raw0.body)||typeof raw0.body==='string'?raw0.body:raw0;\nconst raw=typeof inner==='string'?(parseJson(inner)||{}):inner;\nconst corpusRaw=clean((obj(raw)?raw.corpus_json:'')||raw0.corpus_json);\nconst pasted=corpusRaw?parseJson(corpusRaw):null;\nconst corpusInvalid=Boolean(corpusRaw)&&pasted==null;\nconst purgeSuperseded=truthy((obj(raw)?raw.purge_superseded:null)??raw0.purge_superseded??(obj(raw0.body)&&raw0.body.purge_superseded));\nconst knowledgeIdFilter=clean((obj(raw)?raw.knowledge_id:'')||raw0.knowledge_id||(obj(raw0.body)&&raw0.body.knowledge_id)||'');\nconst targetBaseFilter=clean((obj(raw)?raw.target_base:'')||raw0.target_base||(obj(raw0.body)&&raw0.body.target_base)||'');\nif(corpusInvalid)return[{json:{ingest_error:'CORPUS_JSON_INVALID',collect_error:'CORPUS_JSON_INVALID',purge_superseded:purgeSuperseded}}];\nconst explicit=pasted!=null||arr(raw.documents)||arr(raw.schedule_knowledge_blocks)||arr(raw0.documents)||arr(raw0.schedule_knowledge_blocks)||arr(raw);\nlet blocks=fromPayload(pasted||raw);\nif(!blocks.length)blocks=fromPayload(raw0);\nif(!blocks.length&&!explicit){const one=asBlock(raw);if(one&&!skipDoc(one)&&clean(one.knowledge_id)&&clean(one.text||one.document_text))blocks=[one];}\nif(targetBaseFilter)blocks=blocks.filter(b=>clean(b.target_base||(obj(b.metadata)&&b.metadata.target_base)||'schedule_mvp')===targetBaseFilter);\nif(knowledgeIdFilter)blocks=blocks.filter(b=>clean(b.knowledge_id)===knowledgeIdFilter);\nblocks=dedupe(blocks);\nif(!blocks.length)return[{json:{collect_empty:true,collect_error:'CORPUS_EMPTY',ingest_error:'CORPUS_EMPTY',purge_superseded:purgeSuperseded}}];\nreturn blocks.map(b=>({json:{...canon(b),purge_superseded:purgeSuperseded}}));"
       },
       "id": "990079a7-9648-56e0-a7e2-5ddc523928d3",
       "name": "Collect MAS knowledge blocks",
@@ -20148,7 +20293,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT d.target_base, d.knowledge_id, d.revision, d.content_hash,\n EXISTS (\n   SELECT 1 FROM tnavigator_schedule_knowledge_v2 t\n   WHERE t.metadata->>'target_base'=d.target_base\n     AND t.metadata->>'knowledge_id'=d.knowledge_id\n     AND coalesce(t.metadata->>'revision','')=d.revision\n     AND coalesce(t.metadata->>'knowledge_status','')='current'\n ) AS in_vector\nFROM tnavigator_schedule_knowledge_documents_v1 d\nWHERE d.status='active'",
+        "query": "SELECT d.target_base, d.knowledge_id, d.revision, d.content_hash,\n d.body_json->>'text' AS stored_text,\n EXISTS (\n   SELECT 1 FROM tnavigator_schedule_knowledge_v2 t\n   WHERE t.metadata->>'target_base'=d.target_base\n     AND t.metadata->>'knowledge_id'=d.knowledge_id\n     AND coalesce(t.metadata->>'revision','')=d.revision\n     AND coalesce(t.metadata->>'knowledge_status','')='current'\n ) AS in_vector\nFROM tnavigator_schedule_knowledge_documents_v1 d\nWHERE d.status='active'",
         "options": {
           "queryBatching": "single",
           "largeNumbersOutput": "text",
@@ -20175,7 +20320,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const clean=v=>typeof v==='string'?v.trim():'';\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst keyOf=row=>{\n  const target=clean(row.target_base||(obj(row.metadata)&&row.metadata.target_base)||'schedule_mvp');\n  const id=clean(row.knowledge_id);\n  const rev=clean(row.revision||row.document_revision||'1');\n  return `${target}|${id}|${rev}`;\n};\nconst isErr=row=>Boolean(row.error)||row.success===false||(clean(row.level)==='error'&&clean(row.message));\nconst lookupRows=$input.all().map(i=>i.json||{});\nconst collected=$('Collect MAS knowledge blocks').all().map(i=>i.json||{});\nconst collectError=collected.find(j=>j.ingest_error||j.collect_error);\nif(collectError){\n  return [{json:{ingest_action:'collect_failed',status:'needs_input',inserted:0,skipped:0,skipped_ids:[],findings:[{code:collectError.ingest_error||collectError.collect_error,severity:'error'}]}}];\n}\nif(lookupRows.some(isErr)){\n  return [{json:{ingest_action:'lookup_failed',status:'needs_input',inserted:0,skipped:0,skipped_ids:[],findings:[{code:'EXISTING_KNOWLEDGE_LOOKUP_FAILED',severity:'error'}]}}];\n}\nconst inVector=new Set();\nconst truthy=v=>v===true||v===1||v==='t'||v==='true'||v==='True';\nfor(const row of lookupRows){\n  if(clean(row.knowledge_id)&&truthy(row.in_vector))inVector.add(keyOf(row));\n}\nconst candidates=collected.filter(j=>j&&clean(j.knowledge_id));\nconst fresh=[],skipped=[],seen=new Set();\nfor(const block of candidates){\n  const k=keyOf(block);\n  if(seen.has(k)||inVector.has(k)){\n    skipped.push({target_base:block.target_base||'schedule_mvp',knowledge_id:block.knowledge_id,revision:block.revision||'1'});\n    continue;\n  }\n  seen.add(k);\n  fresh.push(block);\n}\nif(!fresh.length){\n  return [{json:{ingest_action:'skip_all',status:'already_present',inserted:0,skipped:skipped.length,skipped_ids:skipped}}];\n}\nreturn fresh.map(block=>({json:{ingest_action:'insert',schedule_knowledge_block:block,inserted:fresh.length,skipped:skipped.length,skipped_ids:skipped}}));"
+        "jsCode": "const clean=v=>typeof v==='string'?v.trim():'';\nconst obj=v=>v&&typeof v==='object'&&!Array.isArray(v);\nconst truthy=v=>v===true||v===1||v==='t'||v==='true'||v==='True'||v==='yes'||v==='on';\nconst keyOf=row=>{\n  const target=clean(row.target_base||(obj(row.metadata)&&row.metadata.target_base)||'schedule_mvp');\n  const id=clean(row.knowledge_id);\n  const rev=clean(row.revision||row.document_revision||'1');\n  return `${target}|${id}|${rev}`;\n};\nconst incomingHash=row=>clean(row.content_hash||row.source_hash||(obj(row.metadata)&&row.metadata.source_hash)||'').toLowerCase();\nconst contentStatus=(ex,block)=>{\n  if(!ex)return 'new';\n  const incomingText=clean(block.text||block.document_text);\n  const storedText=clean(ex.stored_text);\n  if(storedText&&incomingText)return storedText===incomingText?'same':'changed';\n  const sh=clean(ex.content_hash).toLowerCase();\n  const ih=incomingHash(block);\n  if(sh&&ih)return sh===ih?'same':'changed';\n  return 'unknown';\n};\nconst isErr=row=>Boolean(row.error)||row.success===false||(clean(row.level)==='error'&&clean(row.message));\nconst lookupRows=$input.all().map(i=>i.json||{});\nconst collected=$('Collect MAS knowledge blocks').all().map(i=>i.json||{});\nconst purgeSuperseded=collected.some(j=>truthy(j&&j.purge_superseded));\nconst collectError=collected.find(j=>j.ingest_error||j.collect_error);\nif(collectError){\n  return [{json:{ingest_action:'collect_failed',status:'needs_input',inserted:0,skipped:0,skipped_ids:[],purge_superseded:purgeSuperseded,findings:[{code:collectError.ingest_error||collectError.collect_error,severity:'error'}]}}];\n}\nif(lookupRows.some(isErr)){\n  return [{json:{ingest_action:'lookup_failed',status:'needs_input',inserted:0,skipped:0,skipped_ids:[],purge_superseded:purgeSuperseded,findings:[{code:'EXISTING_KNOWLEDGE_LOOKUP_FAILED',severity:'error'}]}}];\n}\nconst existing=new Map();\nfor(const row of lookupRows){\n  if(!clean(row.knowledge_id))continue;\n  const rec={content_hash:clean(row.content_hash),stored_text:clean(row.stored_text),in_vector:truthy(row.in_vector)};\n  const k=keyOf(row);\n  const prev=existing.get(k);\n  if(!prev||(rec.in_vector&&!prev.in_vector))existing.set(k,rec);\n}\nconst candidates=collected.filter(j=>j&&clean(j.knowledge_id));\nconst fresh=[],skipped=[],conflicts=[],seen=new Set();\nfor(const block of candidates){\n  const k=keyOf(block);\n  if(seen.has(k)){\n    skipped.push({target_base:block.target_base||'schedule_mvp',knowledge_id:block.knowledge_id,revision:block.revision||'1'});\n    continue;\n  }\n  const ex=existing.get(k);\n  const st=contentStatus(ex,block);\n  if(ex&&ex.in_vector&&(st==='same'||st==='unknown')){\n    skipped.push({target_base:block.target_base||'schedule_mvp',knowledge_id:block.knowledge_id,revision:block.revision||'1'});\n    continue;\n  }\n  if(ex&&ex.in_vector&&st==='changed'){\n    conflicts.push({code:'CONTENT_HASH_CHANGED_BUMP_REVISION',severity:'error',target_base:block.target_base||'schedule_mvp',knowledge_id:block.knowledge_id,revision:block.revision||'1',stored_content_hash:ex.content_hash||null,incoming_content_hash:incomingHash(block)||null});\n    continue;\n  }\n  seen.add(k);\n  fresh.push(block);\n}\nif(conflicts.length){\n  return [{json:{ingest_action:'needs_input',status:'needs_input',inserted:0,skipped:skipped.length,skipped_ids:skipped,purge_superseded:purgeSuperseded,findings:conflicts}}];\n}\nif(!fresh.length){\n  return [{json:{ingest_action:'skip_all',status:'already_present',inserted:0,skipped:skipped.length,skipped_ids:skipped,purge_superseded:purgeSuperseded,findings:[]}}];\n}\nreturn fresh.map(block=>({json:{ingest_action:'insert',schedule_knowledge_block:block,inserted:fresh.length,skipped:skipped.length,skipped_ids:skipped,purge_superseded:purgeSuperseded,findings:[]}}));"
       },
       "id": "f673d0f9-da63-5a55-a687-a5807bfbfe66",
       "name": "Select new MAS knowledge",
@@ -20570,6 +20715,48 @@
     },
     {
       "parameters": {
+        "jsCode": "const truthy=v=>v===true||v===1||v==='t'||v==='true'||v==='True'||v==='yes'||v==='on';\nlet purge=false;\ntry{purge=truthy(($('Select new MAS knowledge').first().json||{}).purge_superseded);}catch(_){}\nif(!purge){\n  try{purge=$('Collect MAS knowledge blocks').all().some(i=>truthy((i.json||{}).purge_superseded));}catch(_){}\n}\nif(!purge){\n  return [{json:{query:'SELECT 0::int AS chunks_purged',sql_parameters:[]}}];\n}\nreturn [{json:{\n  query: \"WITH deleted AS (DELETE FROM tnavigator_schedule_knowledge_v2 t WHERE coalesce(t.metadata->>'knowledge_status','')='superseded' RETURNING t.id) SELECT count(*)::int AS chunks_purged FROM deleted\",\n  sql_parameters: [],\n}}];"
+      },
+      "id": "1337c6b1-391c-520a-92cf-5032080be633",
+      "name": "Prepare superseded chunk purge",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4200,
+        0
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.query }}",
+        "options": {
+          "queryReplacement": "={{ $json.sql_parameters }}",
+          "queryBatching": "single",
+          "largeNumbersOutput": "text",
+          "replaceEmptyStrings": false
+        }
+      },
+      "id": "bc228cd9-17cb-5774-970a-125234405e7a",
+      "name": "Postgres — purge superseded chunks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4480,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_IN_UI",
+          "name": "REPLACE: SCHEDULE PostgreSQL / PGVector credential"
+        }
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
         "jsCode": "let expected = [];\ntry {\n  expected = [...new Set(\n    $('Collect MAS knowledge blocks').all()\n      .map((item) => item.json || {})\n      .map((row) => String(row.knowledge_id || '').trim())\n      .filter((id) => id)\n  )];\n} catch {}\nconst table = 'tnavigator_schedule_knowledge_v2';\nconst query = [\n  'WITH inv AS (',\n  '  SELECT',\n  \"    coalesce(metadata->>'document_id', metadata->>'knowledge_id', '(missing document_id)') AS document_id\",\n  \"    , coalesce(metadata->>'target_base', '') AS target_base\",\n  '    , count(*)::int AS chunk_count',\n  '    , min(left(text, 120)) AS text_preview',\n  '  FROM ' + table,\n  '  GROUP BY 1, 2',\n  '), meta AS (',\n  '  SELECT (SELECT count(*)::int FROM ' + table + ') AS total_rows',\n  \"       , (SELECT count(DISTINCT nullif(coalesce(metadata->>'document_id', metadata->>'knowledge_id', ''), ''))::int FROM \" + table + ') AS distinct_documents',\n  '       , (',\n  '            SELECT pg_catalog.format_type(a.atttypid, a.atttypmod)',\n  '            FROM pg_catalog.pg_attribute AS a',\n  \"            WHERE a.attrelid = to_regclass('\" + table + \"')\",\n  \"              AND a.attname = 'embedding'\",\n  '              AND NOT a.attisdropped',\n  '            LIMIT 1',\n  '          ) AS embedding_type',\n  ')',\n  \"SELECT coalesce(inv.document_id, '(none)') AS document_id,\",\n  \"       coalesce(inv.target_base, '') AS target_base,\",\n  '       coalesce(inv.chunk_count, 0)::int AS chunk_count,',\n  '       inv.text_preview,',\n  '       meta.total_rows, meta.distinct_documents, meta.embedding_type',\n  'FROM meta',\n  'LEFT JOIN inv ON TRUE',\n  'ORDER BY 1;',\n].join('\\n');\nreturn [{ json: {\n  rag_table_name: table,\n  expected_document_ids: expected,\n  expected_document_count: expected.length,\n  query,\n} }];"
       },
       "id": "5b899b69-0bd0-5ca1-b592-9b67e5d8e2c4",
@@ -20577,7 +20764,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4200,
+        4760,
         0
       ],
       "executeOnce": true
@@ -20597,7 +20784,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        4480,
+        5040,
         0
       ],
       "credentials": {
@@ -20611,14 +20798,14 @@
     },
     {
       "parameters": {
-        "jsCode": "const prepared = $('Prepare RAG inventory query').first().json || {};\nconst rows = $input.all().map((item) => item.json || {});\nconst expected = Array.isArray(prepared.expected_document_ids) ? prepared.expected_document_ids : [];\nlet skipped = [];\nlet diff = {};\ntry {\n  diff = $('Select new MAS knowledge').first().json || {};\n  skipped = Array.isArray(diff.skipped_ids) ? diff.skipped_ids : [];\n} catch {}\nif (diff.ingest_action === 'lookup_failed' || diff.ingest_action === 'collect_failed') {\n  return [{ json: {\n    status: 'rag_inventory_incomplete',\n    rag_table_name: prepared.rag_table_name,\n    ingest_action: diff.ingest_action,\n    findings: Array.isArray(diff.findings) ? diff.findings : [],\n    inserted: Number(diff.inserted) || 0,\n    skipped: Number(diff.skipped) || skipped.length,\n    skipped_existing: skipped,\n    warnings: [diff.ingest_action],\n    note: 'Ingest refused to insert because collect or existing-key lookup failed. Existing rows were not treated as absent.',\n  } }];\n}\nconst found = [...new Set(\n  rows.map((row) => String(row.document_id || '')).filter((id) => id && id !== '(none)' && id !== '(missing document_id)')\n)];\nconst missing = expected.filter((id) => !found.includes(id));\nconst totalRows = Number(rows[0]?.total_rows ?? 0);\nconst distinctDocuments = Number(rows[0]?.distinct_documents ?? found.length);\nconst embeddingType = typeof rows[0]?.embedding_type === 'string' ? rows[0].embedding_type : null;\nconst ok = expected.length\n  ? (missing.length === 0 && distinctDocuments >= expected.length && totalRows > 0)\n  : totalRows > 0;\nconst duplicateIngestSuspected = ok && totalRows >= expected.length * 4;\nconst warnings = [];\nif (duplicateIngestSuspected) warnings.push('total_rows looks high for a single ingest; re-running insert without skip would append chunks.');\nif (!embeddingType) warnings.push('embedding column type was not found; confirm the table exists in this credential/database.');\nreturn [{ json: {\n  status: ok ? 'rag_inventory_ok' : 'rag_inventory_incomplete',\n  rag_table_name: prepared.rag_table_name,\n  total_rows: totalRows,\n  distinct_documents: distinctDocuments,\n  expected_document_count: expected.length,\n  expected_document_ids: expected,\n  found_document_ids: found.sort(),\n  missing_document_ids: missing,\n  inserted: Number(diff.inserted) || 0,\n  skipped: Number(diff.skipped) || skipped.length,\n  skipped_existing: skipped,\n  embedding_type: embeddingType,\n  duplicate_ingest_suspected: duplicateIngestSuspected,\n  warnings,\n  note: 'expected_document_ids are this-run Collect knowledge_id values, not the import-time packaged snapshot. Packaged rows already in the parent table are skipped. Compare distinct_documents/found_document_ids, not only total_rows.',\n  documents: rows\n    .filter((row) => row.document_id && row.document_id !== '(none)')\n    .map((row) => ({\n      document_id: row.document_id,\n      target_base: row.target_base,\n      chunk_count: Number(row.chunk_count || 0),\n      text_preview: row.text_preview,\n    })),\n} }];"
+        "jsCode": "const prepared = $('Prepare RAG inventory query').first().json || {};\nconst rows = $input.all().map((item) => item.json || {});\nconst expected = Array.isArray(prepared.expected_document_ids) ? prepared.expected_document_ids : [];\nlet skipped = [];\nlet diff = {};\ntry {\n  diff = $('Select new MAS knowledge').first().json || {};\n  skipped = Array.isArray(diff.skipped_ids) ? diff.skipped_ids : [];\n} catch {}\nif (diff.ingest_action === 'lookup_failed' || diff.ingest_action === 'collect_failed') {\n  return [{ json: {\n    status: 'rag_inventory_incomplete',\n    rag_table_name: prepared.rag_table_name,\n    ingest_action: diff.ingest_action,\n    findings: Array.isArray(diff.findings) ? diff.findings : [],\n    inserted: Number(diff.inserted) || 0,\n    skipped: Number(diff.skipped) || skipped.length,\n    skipped_existing: skipped,\n    warnings: [diff.ingest_action],\n    note: 'Ingest refused to insert because collect or existing-key lookup failed. Existing rows were not treated as absent.',\n  } }];\n}\nconst found = [...new Set(\n  rows.map((row) => String(row.document_id || '')).filter((id) => id && id !== '(none)' && id !== '(missing document_id)')\n)];\nconst skippedIds = [...new Set(skipped.map((item) => {\n  if (item && typeof item === 'object') return String(item.knowledge_id || '').trim();\n  return String(item || '').trim();\n}).filter(Boolean))];\nconst missing = expected.filter((id) => !found.includes(id) && !skippedIds.includes(id));\nconst totalRows = Number(rows[0]?.total_rows ?? 0);\nconst distinctDocuments = Number(rows[0]?.distinct_documents ?? found.length);\nconst embeddingType = typeof rows[0]?.embedding_type === 'string' ? rows[0].embedding_type : null;\nconst ok = expected.length\n  ? (missing.length === 0 && totalRows > 0)\n  : totalRows > 0;\nconst duplicateIngestSuspected = ok && totalRows >= expected.length * 4;\nconst warnings = [];\nif (duplicateIngestSuspected) warnings.push('total_rows looks high for a single ingest; re-running insert without skip would append chunks.');\nif (!embeddingType) warnings.push('embedding column type was not found; confirm the table exists in this credential/database.');\nreturn [{ json: {\n  status: ok ? 'rag_inventory_ok' : 'rag_inventory_incomplete',\n  rag_table_name: prepared.rag_table_name,\n  total_rows: totalRows,\n  distinct_documents: distinctDocuments,\n  expected_document_count: expected.length,\n  expected_document_ids: expected,\n  found_document_ids: found.sort(),\n  missing_document_ids: missing,\n  inserted: Number(diff.inserted) || 0,\n  skipped: Number(diff.skipped) || skipped.length,\n  skipped_existing: skipped,\n  embedding_type: embeddingType,\n  duplicate_ingest_suspected: duplicateIngestSuspected,\n  warnings,\n  note: 'expected_document_ids are this-run Collect knowledge_id values, not the import-time packaged snapshot. Keys skipped as already present (same text/hash) count as found. Compare distinct_documents/found_document_ids, not only total_rows.',\n  documents: rows\n    .filter((row) => row.document_id && row.document_id !== '(none)')\n    .map((row) => ({\n      document_id: row.document_id,\n      target_base: row.target_base,\n      chunk_count: Number(row.chunk_count || 0),\n      text_preview: row.text_preview,\n    })),\n} }];"
       },
       "id": "64c28138-ec6c-5f59-80aa-cf64a21ede71",
       "name": "Summarize RAG inventory",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4760,
+        5320,
         0
       ],
       "executeOnce": true,
@@ -20647,7 +20834,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5040,
+        5600,
         0
       ],
       "executeOnce": true,
@@ -20767,7 +20954,7 @@
         ],
         [
           {
-            "node": "Prepare RAG inventory query",
+            "node": "Prepare superseded chunk purge",
             "type": "main",
             "index": 0
           }
@@ -20892,6 +21079,28 @@
       ]
     },
     "PostgreSQL — upsert approved schema catalogue": {
+      "main": [
+        [
+          {
+            "node": "Prepare superseded chunk purge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare superseded chunk purge": {
+      "main": [
+        [
+          {
+            "node": "Postgres — purge superseded chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres — purge superseded chunks": {
       "main": [
         [
           {

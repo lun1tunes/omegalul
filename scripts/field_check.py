@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Windows field check: four FastAPI /health + Activity /ready. Stdlib only.
+"""Windows field check: FastAPI /health + Activity /ready. Stdlib only.
 
 Usage (repo root or unpacked pack):
   python scripts/field_check.py
   check-all-windows.bat
 
-URLs (env, else 127.0.0.1): EXCEL_TOOLS_URL, SCHEDULE_SERVICE_URL, MATH_URL, ACTIVITY_URL.
+URLs (env, else 127.0.0.1): EXCEL_TOOLS_URL, SCHEDULE_SERVICE_URL, MATH_URL,
+ACTIVITY_URL, TNAV_CLUSTER_URL.
+
+tNav Cluster is optional: if the service is not running, the row is skipped and
+the overall check can still PASS. A running cluster with the wrong VERSION fails.
 """
 
 from __future__ import annotations
@@ -24,10 +28,11 @@ from mas_version import read_mas_version  # noqa: E402
 
 TIMEOUT_S = 5
 PROBES = (
-    ("Excel Tools", "EXCEL_TOOLS_URL", "http://127.0.0.1:8000", False),
-    ("Schedule Builder", "SCHEDULE_SERVICE_URL", "http://127.0.0.1:8090", False),
-    ("Math", "MATH_URL", "http://127.0.0.1:8100", False),
-    ("Activity", "ACTIVITY_URL", "http://127.0.0.1:8200", True),
+    ("Excel Tools", "EXCEL_TOOLS_URL", "http://127.0.0.1:8000", False, False),
+    ("Schedule Builder", "SCHEDULE_SERVICE_URL", "http://127.0.0.1:8090", False, False),
+    ("Math", "MATH_URL", "http://127.0.0.1:8100", False, False),
+    ("Activity", "ACTIVITY_URL", "http://127.0.0.1:8200", True, False),
+    ("tNav Cluster", "TNAV_CLUSTER_URL", "http://127.0.0.1:8400", False, True),
 )
 
 
@@ -86,7 +91,7 @@ def check_once(*, expected: str = "") -> tuple[bool, list[dict], str]:
     expected = expected or read_mas_version()
     rows: list[dict] = []
     all_ok = True
-    for title, env_key, default, want_ready in PROBES:
+    for title, env_key, default, want_ready, optional in PROBES:
         base = _url(env_key, default)
         h_code, h_body, h_err = fetch_json(base + "/health")
         h_pass = h_code == 200 and health_ok(h_body)
@@ -98,18 +103,21 @@ def check_once(*, expected: str = "") -> tuple[bool, list[dict], str]:
             r_code, r_body, r_err = fetch_json(base + "/ready")
             ready_pass = ready_ok(r_code, r_body)
             ready_note = "OK" if ready_pass else (r_err or f"HTTP {r_code}")
+        skipped = bool(optional and not h_pass)
         note = ""
-        if not h_pass:
+        if skipped:
+            note = "не запущен (необязателен)"
+        elif not h_pass:
             note = h_err or f"HTTP {h_code}"
         elif not ver_pass:
             note = f"версия {got_ver or 'нет'} ≠ {expected}"
-        ok = h_pass and ver_pass and ready_pass
+        ok = True if skipped else (h_pass and ver_pass and ready_pass)
         all_ok = all_ok and ok
         rows.append(
             {
                 "title": title,
                 "url": base,
-                "health": "OK" if h_pass else "FAIL",
+                "health": "—" if skipped else ("OK" if h_pass else "FAIL"),
                 "ready": ready_note if want_ready else "—",
                 "version": got_ver or "—",
                 "expected": expected or "—",

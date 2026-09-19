@@ -1,6 +1,6 @@
 """Demo Agent FastAPI app: ``create_agent_app`` gives ``/health`` and the four agent routes over ``agent``.
 
-Run: ``python -m uvicorn app.main:app --host 0.0.0.0 --port 8300`` (see start-windows.bat / start-linux.sh).
+Run: ``python -m app`` (host/port from ``demo-agent.env`` via kit ``load_service_env``, not CMD ``for /f``).
 """
 
 from __future__ import annotations

@@ -36,6 +36,7 @@ from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
 
 from .activity import ActivityClient
 from .dataset import expected_output
+from .env import loaded_env_files
 from .version import read_mas_version
 from .errors import SessionNotFound
 from .hitl import engineer_answers
@@ -261,6 +262,7 @@ def create_agent_app(
             "agent_id": agent.agent_id,
             "tools": agent.tools.names,
             "mas_version": read_mas_version(),
+            "env_files": loaded_env_files(),
         }
         if extra_health is not None:
             try:

@@ -55,6 +55,7 @@ for (const tool of ['list_models', 'inspect_model', 'prepare_model_version', 'st
   assert.match(buildJs, new RegExp(tool), `tool ${tool} is in the chat request schema`);
 }
 assert.match(buildJs, /retrieve_knowledge/);
+assert.match(buildJs, /function calling/, 'CASE-6aae41e4-a48ba9: Qwen wrote inspect_model as content; prompt must require tool_calls');
 assert.equal(/excel_extractor|schedule_builder|demo_agent/.test(buildJs), false, 'the cluster prompt knows nothing about other agents');
 assert.equal(/\brm\b|rmdir/.test(buildJs), false, 'the prompt never mentions deleting files');
 assert.equal(wf.connections['Restore after tNav Cluster Agent RAG'].main[0][0].node, 'Build chat request');
@@ -92,7 +93,7 @@ assert.equal(row.invoke.workflow_id, wf.id);
 assert.equal(row.invoke.workflow_name, wf.name);
 assert.equal(MACHINE.test(row.when_to_use), false, 'when_to_use is Russian prose for the planner');
 assert.deepEqual(row.output_provides, ['model_version', 'run_status', 'run_results']);
-assert.deepEqual(row.input_required, ['schedule_out']);
+assert.deepEqual(row.input_required, []);
 
 // -- Runtime Config, Health Check, манифест импорта --------------------------------------------------
 const runtimeSet = runtime.nodes.find((n) => n.name === 'Runtime URLs');
@@ -106,6 +107,13 @@ assert.ok(
   manifest.ui_configuration.some((line) => line.includes('tnav_cluster_url') && line.includes('tnav-cluster.env')),
   'the manifest tells the engineer where the cluster URL and credentials go',
 );
+const redeploy = fs.readFileSync(path.join(workspace, 'scripts/lab_soft_redeploy.py'), 'utf8');
+assert.ok(redeploy.includes('"Agent — tNav Cluster Agent"'), 'lab import activates the cluster agent workflow');
+const corpus = read('n8n/rag/excel-agent-operating-guide.documents.json');
+const clusterCard = (corpus.documents || []).find((d) => d.knowledge_id === 'route-cluster-calculation');
+assert.ok(clusterCard, 'orchestrator routing has the cluster policy card');
+assert.deepEqual(clusterCard.topics, ['model_version', 'run_status', 'run_results']);
+assert.equal((clusterCard.topics || []).includes('absent_agent'), false, 'cluster card is retrieved when the agent is enabled, not via absent_agent');
 
 // -- Code-ноды: долгий расчёт уходит наружу как in_progress ------------------------------------------
 async function run(name, json, nodes = {}) {

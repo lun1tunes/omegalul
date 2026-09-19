@@ -1,10 +1,10 @@
-# NOVATEK RE MASter — план развития «от рабочей альфы к умной MAS» (ревизия 54: оркестратор и знания)
+# NOVATEK RE MASter — план развития «от рабочей альфы к умной MAS» (ревизия 58: ingest и UI знаний)
 
-Ревизия 54 — 2026-09-18. 8.6/O24/O28/O29/O30: запрос RAG без файлов/журнала, `topics` из файлов + открытого плана + `completion`, overlap-only compact на `orchestrator_routing`, секции `planner_input`, политика в SYSTEM и Verify. История ревизий — §7; закрытый долг ревизий 1–42 — Приложение A; критерии закрытых фаз 0–6 — Приложение B (не переписываются). Как работать по плану — `AGENTS.md` (карта, инварианты, цикл задачи), гейт — `python3 scripts/mas_gate.py [--live [--repeat N]]` (`--bundle` — полевой zip, не стадия офлайн-гейта). Полевой гайд для инженера — `docs.md`. Очередь простыми словами — §2.8, бриф на пункт — `/mas-brief` → `briefs/`.
+Ревизия 58 — 2026-09-19. 8.7: ingest по тексту/`content_hash`, `purge_superseded`, серверный поиск знаний, локальный `marked`/шрифты. История ревизий — §7; закрытый долг ревизий 1–42 — Приложение A; критерии закрытых фаз 0–6 — Приложение B (не переписываются). Как работать по плану — `AGENTS.md` (карта, инварианты, цикл задачи), гейт — `python3 scripts/mas_gate.py [--live [--repeat N]]` (`--bundle` — полевой zip, не стадия офлайн-гейта). Полевой гайд для инженера — `docs.md`. Очередь простыми словами — §2.8, бриф на пункт — `/mas-brief` → `briefs/`.
 
-**Синхрон.** Шапка, §3 «Состояние», §4 сводка и критерий *текущего* гейта, §2.7, «Ближайшие шаги» (конец §7) = код на дату ревизии. Номер шапки = последняя запись §7. Журнал §7 и Приложения A/B не переписывать. Счётчики pytest в шапке не фиксировать — плывут; писать «17 smokes, 5 pytest-наборов». `--live` сейчас **12 слотов**: шесть `run_live_five` + `demo_agent_long_job` + `three_agent_chain` + `excel_datasets` (extract + apply + дырка) + `agent_down_recovery` + `rework_round` + `step_limit_review`. `--repeat N` — шесть commissioning ×N в одном пуле, остальные сценарии один раз (не 12×N); стена ~25 мин. `--hot`, если lab здоров и JSON без дрейфа. **Требование заказчика: полный прогон (`--live`) ≤ 20 мин** — закрепляется как критерий гейта в Фазе 12 (T2), до этого — контроль по `LIVE_WALL_BUDGET_S`.
+**Синхрон.** Шапка, §3 «Состояние», §4 сводка и критерий *текущего* гейта, §2.7, «Ближайшие шаги» (конец §7) = код на дату ревизии. Номер шапки = последняя запись §7. Журнал §7 и Приложения A/B не переписывать. Счётчики pytest в шапке не фиксировать — плывут; писать «smokes по glob, pytest-наборы гейта». `--live` сейчас **13 слотов**: шесть `run_live_five` + `demo_agent_long_job` + `three_agent_chain` + `excel_datasets` (extract + apply + дырка) + `tnav_cluster_run` + `agent_down_recovery` + `rework_round` + `step_limit_review`. `--repeat N` — шесть commissioning ×N в одном пуле, остальные сценарии один раз (не 13×N); стена ~25 мин. `--hot`, если lab здоров и JSON без дрейфа. **Требование заказчика: полный прогон (`--live`) ≤ 20 мин** — закрепляется как критерий гейта в Фазе 12 (T2), до этого — контроль по `LIVE_WALL_BUDGET_S`.
 
-**Где проект.** Фазы 0–6.1 и альфа α1–α5 закрыты (Приложение B). Ревизия 54 — оркестратор с политикой под цель (8.6). Ревизия 53 — корпус 8.5 + эмбеддинги `baai/bge-m3`. Ревизия 52 — KB по требованию (8.4). Ревизия 51 — RAG-фильтры из инвентаря (8.3). Ревизия 50 — live 12/12 на коде 8.1+8.2. Ревизия 49 — retrieval без ложного `SCHEMA_KEYWORD_SCOPE_REQUIRED`. Ревизия 48 — лог и честный отказ цикла. Ревизия 47 — hotfix цикла. Ревизия 46 — пороги LLM/RAG и матрица секретов. Ревизия 45 — HTTP-цикл агента. Ревизия 44 — лог RAG/LLM оркестратора. Ревизия 43 (аудит) остаётся диагнозом оркестраторского среза (три routing-карточки) и kit без типов. Очередь — §7 «Ближайшие шаги» с 8.7, фазы 8–12 — §4.
+**Где проект.** Фазы 0–6.1 и альфа α1–α5 закрыты (Приложение B). Ревизия 58 — 8.7 ingest/UI знаний. Ревизия 57 — сверка docs/плана. Ревизия 56 — полевой env кластера и шаблона через kit (как Activity). Ревизия 55 — tNav Cluster Agent (10.1–10.2 и один live-слот 10.3) на текущем kit, раньше Фазы 9 по запросу заказчика. Ревизия 54 — оркестратор с политикой под цель (8.6). Ревизия 53 — корпус 8.5 + эмбеддинги `baai/bge-m3`. Ревизия 52 — KB по требованию (8.4). Ревизия 51 — RAG-фильтры из инвентаря (8.3). Ревизия 50 — live 12/12 на коде 8.1+8.2. Ревизия 49 — retrieval без ложного `SCHEMA_KEYWORD_SCOPE_REQUIRED`. Ревизия 48 — лог и честный отказ цикла. Ревизия 47 — hotfix цикла. Ревизия 46 — пороги LLM/RAG и матрица секретов. Ревизия 45 — HTTP-цикл агента. Ревизия 44 — лог RAG/LLM оркестратора. Ревизия 43 (аудит) остаётся диагнозом оркестраторского среза (три routing-карточки) и kit без типов. Очередь — §7 «Ближайшие шаги»: удаление `n8n_agent`, затем фазы 9–12.
 
 Ограничения, которые план не нарушает: n8n **2.30.8**, только UI (Import from File, Credentials, Set-ноды); FastAPI на Windows — только Python (`.venv` + `requirements.txt`, wheels для 3.11–3.13); БД — только через `MAS — Control Plane Proxy`; вся правка адресов и лимитов — в `MAS — Runtime Config`; секретов в JSON нет; модель — `qwen/qwen3.6-27b` (lab — OpenRouter, поле — корпоративный OpenAI-compatible endpoint).
 
@@ -65,7 +65,7 @@
 - **Excel Tools**: инвентарь книг (таблицы, колонки, образцы) → LLM выбирает → `extract_*` / `ask_engineer`; `extract_table` с `expected_output`; ошибки аргументов возвращаются модели с подсказками.
 - **Один контракт агента** и один kit (`AgentService`, `ToolRegistry`, `SessionStore`, `ActivityClient`, `CasePacket`), одна форма сервиса (`test_service_shape`), одна форма workflow из `AgentSpec` (оркестратор для `demo_agent` не правился).
 - **Русская лента + лог разработчика** как один поток событий; `trace.*` скрыт из чата; ссылки на executions; `human_text_problems` как гейт машинности.
-- **Гейт**: regen drift, 17 smokes, 5 pytest-наборов, офлайн combat, 12 live-слотов с порогами α2 (`rag_empty: 0`) и семантическим сравнением; отказные сценарии (`agent_down_recovery`, `rework_round`, `step_limit_review`).
+- **Гейт**: regen drift, smokes по glob (сейчас 18), pytest-наборы гейта (kit, Activity, Schedule, Excel, tNav Cluster, demo), офлайн combat, **13 live-слотов** с порогами α2 (`rag_empty: 0`) и семантическим сравнением; отказные сценарии (`agent_down_recovery`, `rework_round`, `step_limit_review`).
 - **UI**: корпоративная палитра (`--brand-blue #0033A0`, `--brand-cyan #00B8F0`), три панели, план под постановкой, HITL как чат с вариантами, deliverables по производителям, режим разработчика → «Лог».
 
 ---
@@ -100,8 +100,8 @@
 | R8 | routing-карточки `route-cluster-calculation`, `route-binary-results`, `route-presentation` («агента нет»), `route-calculation` (несуществующий geometry-агент), `specialist-template-bounded-work` (`specialist_packet`) | Заглушки конкурируют за семантические слоты на шаге 0; упоминание снятого контракта | ✅ ревизия 53: `topics: [absent_agent]`; RRF не отдаёт их без фильтра; `specialist_packet` вычищен | commissioning шаг 0 ⊆ {thin-orchestrator, excel, schedule, hitl-required-evidence} |
 | R9 | `mas_retrieval_client.py` `attach_retrieval_js`; kit/Activity `EVENT_KINDS` | ✅ ревизия 44: `trace.rag` из Attach оркестратора (persist) и агентов (`POST /events` после Attach) | Ранжирование/45 % не трогали (Фаза 8) | live `CASE-6aa95bf0-c2a4a1`: orch 3 карточки, Excel 5, Builder `unavailable` + `SCHEMA_KEYWORD_SCOPE_REQUIRED`; `mas_trace_case.py` печатает query/cards |
 | R10 | Builder `search_keywords` (`keywords.py` 276–306) — локальная лексика; retrieval один раз до первого хода | Модель не может спросить базу знаний в середине работы (выбрала WEFAC — карточку WEFAC не видит) | ✅ ревизия 52: `retrieve_knowledge` в HTTP-цикле, полный текст on-demand, `knowledge_required` на `apply_dataset` без retrieve; commissioning без обязательного `kb_calls` | Live `CASE-6aac2e92-d1ad07`: `trace.rag` `wefac-well-efficiency-v1` **до** `apply_dataset`; `kb_calls: 1`; Builder `tool_calls: 4` |
-| R11 | `SELECT_NEW_KNOWLEDGE_JS` 358–396, `LOOKUP_EXISTING_SQL` 140–142, `FINALIZE_INGEST_SQL` | Skip по тройке `(base, id, revision)` игнорирует `content_hash`; ручная правка JSON без bump ревизии молча не попадает в PG; `superseded` чанки не удаляются | Сравнивать `content_hash`: отличается → finding «bump revision» или авто-bump; опция `purge_superseded` в форме ingestion | Smoke: тот же id/rev, другой текст → `needs_input`/insert; UI путь без изменений |
-| R12 | `knowledge.py` `list_documents`/`list_namespaces` 90–105, `knowledge.js` | Поиск — подстрока по 160-символьному превью на клиенте; `document_count` не отдаётся; нет истории ревизий, per-card ingest, смены типа/статуса, просмотра `schema_catalogue` | `GET /v1/knowledge/{base}?q=&tag=` (сервер, по полному тексту и тегам), `document_count`, `GET …/revisions` через прокси, ingest одной карточки, просмотр (read-only) схемы и примеров | Вкладки показывают счётчики; клик по тегу фильтрует; ревизии видны |
+| R11 | `SELECT_NEW_KNOWLEDGE_JS`, `LOOKUP_EXISTING_SQL`, inventory | Skip по тройке `(base, id, revision)` игнорирует текст/`content_hash`; `superseded` чанки не удаляются; skipped id считались missing (ложный 61/61 incomplete) | ✅ ревизия 58: skip только `in_vector` и тот же текст/hash (иначе `CONTENT_HASH_CHANGED_BUMP_REVISION`); `purge_superseded`; skipped id = found | Smoke: другой текст при том же id/rev → `needs_input`; inventory skip-as-found ok |
+| R12 | `knowledge.py` `list_documents`/`list_namespaces`, `knowledge.js` | Поиск — подстрока по 160-символьному превью на клиенте; `document_count` не отдаётся; нет истории ревизий, per-card ingest, смены типа/статуса, просмотра `schema_catalogue` | ✅ ревизия 58: `GET /v1/knowledge/{base}?q=&tag=`, `document_count`, `GET …/revisions` через прокси, ingest одной карточки, schema/examples read-only | `test_knowledge_api`; live probe `?q=DATES`; UI: теги, ревизии, «Загрузить эту карточку» |
 | R13 | `excel_extractor.py`, `schedule_builder.py` (`retrieval_filters_js`); `compact_inspect.tables[].kind` | ✅ ревизия 51: Excel `task_patterns` из `kind` + `expected_output.datasets[].name`; Schedule `keyword_families` из `keywords_present` ∪ allowlist-имён наборов; query — текст задачи | Smoke Prepare: WCONPROD в тексте без инвентаря → семьи пустые; `test_agent_retrieval_filters_js_does_not_regex_the_task_text` | live `CASE-6aac0f0d-9b70a2` Builder `ready` · 6 (INCLUDE/DATES с инвентаря) |
 | R14 | `mas_knowledge_spaces.py` KEYWORDS/NAMESPACES/SELECTORS ≡ Builder `keywords.py` (тест) | Allowlist и пространства знаний жили в 2–4 копиях | ✅ ревизия 49: один модуль шаблонов; Builder — полевая копия + `test_keywords_equal_rag_allowlist` | Тест равенства; regen drift 0 |
 
@@ -146,21 +146,21 @@
 | B9 | `settings.py` 88 (`MAS_ACTIVITY_HOST=127.0.0.1`), `mas-activity.env.example` | ✅ ревизия 46: все aliases `Settings` в `mas-activity.env.example` (`test_settings`); Excel/Schedule/Math/Demo `.env.example` полные. Дефолт хоста Activity всё ещё `127.0.0.1` — на поле ставят `0.0.0.0` (в example и матрице) | — | `test_settings`: каждая переменная `Settings` есть в `.env.example` |
 | B10 | `case_log.py` 432–450 `metrics_for_cases` | Снимок каждого кейса на каждый запрос метрик — шторм в прокси | Агрегат по `summarize` с кэшем `since`/TTL или предрасчёт в `GET /cases` | Страница метрик (U10) держит 200 кейсов < 2 с |
 | B11 | `contracts.py` (`CaseState`, `Decision`, `AgentTask`, `AgentResult` не на HTTP-границе; `AgentRequest.options: list[str]` vs живой `{value,label}`; `retryable_error` вне `CASE_STATUSES`) | Pydantic-модели Activity описывают не тот контракт, что летает | После K8: Activity импортирует модели kit'а (`sys.path`, как агенты) и валидирует `POST /run source=agent` и `POST /events`; мёртвые статусы удалить | `AgentResult` один на репозиторий; `test_cases_api` валидирует `finish_task` моделью |
-| B12 | `schema_view.py` 28–32 (три агента руками) vs `schema.js` (реестр) | Python-двойник схемы отстал | Удалить `feed.schema` из Python (UI рисует по реестру) или генерировать из реестра | `demo_agent`/кластер появляются на схеме без правки Python |
+| B12 | `schema_view.py` `AGENT_NODES` vs `schema.js` (реестр) | 🟡 ревизия 55: узел `cluster` / `tnav_cluster` в Python. UI рисует по реестру; Python-карта всё ещё руками (нет `demo_agent` как отдельного узла) | Удалить `feed.schema` из Python или генерировать из реестра | новый агент на схеме без правки `schema_view.py` |
 
 ### 2.5 Activity UI
 
 | # | Где | Факт | Как закрыть | Готово, когда |
 |---|---|---|---|---|
 | U1 | `index.html` 287 `log.js?v=1` | Cache-bust не бампается → устаревший рендер лога у инженера | Хэш содержимого в `?v=` при сборке страницы (Python отдаёт `index.html` с подстановкой) или тест «изменился файл — изменился v» | `test_activity_api`: `?v=` каждого static = его хэшу |
-| U2 | `index.html`/`knowledge.html` (Google Fonts, jsDelivr `marked@15.0.7`) | Поле без интернета: шрифты — fallback, markdown карточек — `<pre>` | Локальные шрифты и `marked` в `static/vendor/`; никаких внешних URL | Страницы работают при `network offline` (тест: в HTML нет `http(s)://` кроме своих) |
-| U3 | `knowledge.py` 90–105 (`document_count` нет), `NAMESPACE_LABELS` 20–25 (EN/RU) | Пустые бейджи вкладок, смесь языков | Отдавать `document_count`; подписи по-русски («Сборщик расписания», «Извлечение из Excel», «Маршрутизация», «Шаблон специалиста») | Бейджи с числами; подписи RU |
+| U2 | `index.html`/`knowledge.html` (Google Fonts, jsDelivr `marked@15.0.7`) | Поле без интернета: шрифты — fallback, markdown карточек — `<pre>` | ✅ ревизия 58: `static/vendor/marked.min.js` + IBM Plex woff2; HTML без `fonts.googleapis`/`jsdelivr` | `test_knowledge_page_assets`; live probe HTML |
+| U3 | `knowledge.py` (`document_count` нет), `NAMESPACE_LABELS` (EN/RU) | Пустые бейджи вкладок, смесь языков | ✅ ревизия 58: `document_count`; подписи «Сборщик расписания», «Извлечение из Excel», «Маршрутизация», «Шаблон специалиста» | live probe `schedule_mvp` label + count |
 | U4 | `app.js` 424 (`CASE-…` в шапке), `n8n ↗`, «Загрузить в RAG», `Excel Extractor`/`Schedule Builder` из seed, строка `orchestrator.resume` в чате | Технические подписи инженеру | `CASE-…` только в режиме разработчика; `title` агентов в seed — RU; «Загрузить в базу знаний»; `orchestrator.resume` — только лог | Снимок UI без английских подписей вне dev-mode |
 | U5 | `app.js` 94–104, 1789–1804 (`applyResumeWaitHint`) | «Ответ принят, ждём оркестратор…» не гаснет при таймауте/ошибке | Гасить по `orchestrator.status timeout`, `case.failed`, `cancelled`; показывать «Продолжить»/ошибку | Тест на состояние подсказки по ленте |
 | U6 | `agents.html`/`agents.js` (JSON-схемы, id-regex UI ≠ API, EN-подпись при переключении) | Страница «Агенты» перегружена для задачи «привязать workflow id» | Карточка: название, «когда звать», одно поле id/URL, включатель; JSON — за «Дополнительно»; один regex id | Инженер привязывает агента без чтения JSON |
 | U7 | `log.js` | 🟡 ревизия 46: чипы карточек, заголовок LLM, `gap_ms`, счётчики `kb_calls`/`rag_empty`/`llm_truncated` в шапке. Нет группировки цепи по `task_id` и отдельного фильтра агента | Остаток — фаза 11 | Live-лог: карточки и токены без n8n; цепь/фильтр агента — не этот бриф |
 | U8 | `app.css` (< 390 px, `.brand-sub` 11.5 px, нет skip-to-content) | Мелочи доступности | Точечно | Ручной чек на 390 px; skip-link |
-| U9 | = R12 | Знания: поиск/теги/ревизии/ingest карточки | см. R12 | см. R12 |
+| U9 | = R12 | Знания: поиск/теги/ревизии/ingest карточки | ✅ ревизия 58: см. R12 | см. R12 |
 | U10 | 6.3 (Приложение B) | Страницы «Метрики» нет | Поверх `GET /metrics/cases` (B10): шаги, HITL, инструменты, `warnings`/`guard`, `rag_empty`, `llm_truncated`, длительности — по агентам и во времени | Регресс `warnings`/`steps`/`rag_empty` виден раньше красного гейта |
 
 ### 2.6 Kit, спеки, расширяемость
@@ -173,41 +173,42 @@
 | K11 | `agents/__init__.py` `ALL`; `mas_gate.py` `GENERATORS` 51–61, `BUNDLE_EXTRAS` 382–405; `import-manifest.json` (`runtime_import_order`, `health_check.live_probes` 94–101); `generate_mas_health_check.py` MANUAL 362–368; `docker-compose.yml`; `lab_soft_redeploy.py`; `test_workflow_contracts.py` 403–415, 490–514 | ≥ 10 файлов вне папки агента | Discovery `agents/*.py`; манифест, пробы Health, MANUAL-чеклист, `GENERATORS`, `BUNDLE_EXTRAS` — производные от спек (`service_dir`, `enabled`); compose-сниппет печатается, не патчится; списки имён в тестах — из `agents.ALL` | Новый агент = папка сервиса + `agents/<id>.py` + `generate_<id>.py`; `git diff --stat` вне них ≤ 3 файла (compose, docs, live-харнесс) |
 | K12 | `demo_agent/app/agent.py` 62, 130–157 (`threading.Thread`, dict `jobs`); `ActivityClient.finish_task` 213–222 | Долгое задание умирает с процессом; нет heartbeat/cancel/recover; `finish_task` без retry и идемпотентности | `jobs.py`: `JobSpec` (pydantic), `JobStore` на диске (рядом с сессией), `AgentService.start_job/recover_jobs/heartbeat/should_cancel` (опрос `GET /cases/{id}/state` на heartbeat), `finish_task` с retry/backoff и `result_id`; оркестратор игнорирует повторный `result_id` для `task_id` | Тест: `kill` процесса demo во время job → рестарт → `finish_task` один раз; cancel кейса останавливает цикл |
 | K13 | `ActivityClient.download/upload` (bytes целиком, 60/120 с); `role_for_artifact_id` в kit/`state_shape.py`/`mas_state_utils.py` | Бинарные модели (`.DATA`, restart, UNSMRY) не пройдут через память/BYTEA; роли — три копии | `upload_file(path)`/`download_to(path)` потоково; `inputs` допускает путь на общем диске (поле); роли артефактов — одна таблица → три двойника генерируются/тестируются | 100 МБ round-trip в pytest; новая роль — одна правка |
-| K14 | Excel `main.py` (свой `/health`), Schedule `/health {status,…}`, Math `{status,service}`, `create_agent_app` `{ok,agent_id,tools}` | Четыре формы `/health` | `create_agent_app(..., extra_health=…)`; Health Check уже терпит `ok`/`status` | `test_service_shape`: `/health` всех агентов содержит `ok`, `agent_id`, `tools`, `mas_version` |
+| K14 | Excel `main.py` (свой `/health`), Schedule свой, Math `{status,service}`, kit `create_agent_app` | 🟡 ревизия 56: demo и кластер — `create_agent_app` (`ok`, `agent_id`, `tools`, `mas_version`, `env_files`). Excel/Schedule/Math — свои формы | Все агенты через `create_agent_app(..., extra_health=…)` | `test_service_shape`: `/health` всех агентов содержит `ok`, `agent_id`, `tools`, `mas_version` |
 | K15 | `EVENT_KINDS` kit ⊂ Activity (две таблицы); `boundedForLog` vs `compact_for_log`; `looksMachineText` vs `human_text_problems` | Двойники с расхождениями | Одна таблица видов в kit, Activity импортирует и объединяет с оркестраторными; тест `kit ⊆ activity`; JS-двойники получают тесты равенства на фикстурах | Новый вид в kit без Activity → красный pytest |
 | K16 | `fastapi-math-service/app/main.py` (pydantic `AgentTaskBody`, без kit, без `agent_id` в ответе) | Четвёртая форма сервиса | `CalculationAgent(AgentService)` с одним инструментом **или** явное исключение `invoke.kind=http` в `test_service_shape` | Math в `test_service_shape` или исключён явно |
 | K17 | `agents/demo_agent.py` 70 (`rag_selector="excel"`) | Демо читает чужой срез знаний | `rag_selector="specialist"` (пустой срез допустим) | Smoke demo |
 | K18 (= K11 частично) | `import-manifest.json` `health_check.live_probes` | Три агента руками | Генерировать манифест из спек (`generate_import_manifest.py`) | Manifest в regen drift |
 
-### 2.7 Сводка пробелов: что мешает «умной» системе и масштабированию (ревизия 54)
+### 2.7 Сводка пробелов: что мешает «умной» системе и масштабированию (ревизия 58)
 
 LLM-транспорт Qwen (Q) и гейт/документация (T) — здесь же, как сквозные.
 
 | # | Где | Что | Статус / как закрыть |
 |---|---|---|---|
-| 🆕 Q1 | Excel/Schedule/Demo JSON | ✅ ревизия 45: `http_loop`; 🟡 двойной граф `n8n_agent` ещё в генераторе | ⬜ ревизия 55: удалить `llm_transport=n8n_agent` |
+| 🆕 Q1 | Excel/Schedule/Demo JSON | ✅ ревизия 45: `http_loop`; 🟡 двойной граф `n8n_agent` ещё в генераторе | ⬜ ревизия 59: удалить `llm_transport=n8n_agent` |
 | 🆕 Q2 | `llm_runtime_options.CHAT_THINKING_OFF` | ✅ ревизия 45: три выключателя, включая `chat_template_kwargs.enable_thinking=false`. Qwen3.6 soft switch `/no_think` **не поддерживает** | smoke Decision/Agent chat |
 | 🆕 Q3 | профили `SAMPLING` | ✅ ревизия 45: `decision` T=0.2/top_p=0.9; `agent` T=0.7/top_p=0.8/top_k=20/presence=1.5. `--repeat 3` GREEN на стартовых значениях — не меняли | таблица в §7 ревизия 45 |
 | 🆕 Q4 | лог | ✅ ревизия 48: `trace.rag`/`trace.llm` **до** decision/handoff/finished; `prompt_preview.messages[{role,content}]`; `log.js` блоки промпта | — |
 | 🆕 Q5 | `LLM_HTTP_TIMEOUT_MS` 600 с, `executionTimeout` 1800 с, Activity `ORCHESTRATOR_INVOKE_TIMEOUT_S` 1800 | Таймауты подобраны под thinking; после Фазы 7 пересмотреть вниз (латентность non-thinking 3–5× ниже) | ⬜ Фаза 12: по метрикам `llm_ms` из лога |
 | 🆕 T2 | `mas_gate.py` `stage_live`, `LIVE_WALL_BUDGET_S`; 6 commissioning 63–115 с параллельно, `--repeat 3` = 1219 с | Требование ≤ 20 мин на полный прогон не закреплено как критерий | ⬜ Фаза 12: `--live` падает при стене > 1200 с; recovery-слоты последовательно, но после параллельных; `--repeat 3` — ночной режим вне «полного прогона» |
 | 🆕 T3 | `docs.md` §3 «Матрица секретов и связей» | ✅ ревизия 48: credentials → ноды (+ function calling / thinking-off проба); Runtime Config → потребители (`chat_extra_params`); `.env` сервисов поле/lab | — |
-| 🆕 T4 | `.cursor/rules/excel-agent-tools.mdc`, `AGENTS.md` §6 «Новый агент» | Правило описывает старый конверт ошибки; рецепт нового агента не перечисляет правки вне папки (K11) | ⬜ Фаза 9 по факту закрытия K11: рецепт = три файла + список «что ещё» |
-| 🆕 T5 | live-харнессы (`run_live_five.py`, `run_live_excel_datasets.py`), `case_log.threshold_violations` | ✅ ревизия 52: `max_rag_empty=0` на commissioning/datasets; `excel_apply_dataset` `min_kb_calls=1`. ✅ ревизия 53: commissioning шаг 0 `trace.rag` ⊆ четырёх policy-карточек. ✅ ревизия 54: golden_1 ≠ golden_2 `orch_rag_ids`; file-less demo не несёт сразу excel и schedule | — |
+| 🆕 T4 | `.cursor/rules/excel-agent-tools.mdc`, `AGENTS.md` §6 «Новый агент» | 🟡 ревизия 57: правило Excel — конверт `{ok:false, code, …}` без ключа `error`. Рецепт нового агента всё ещё не перечисляет правки вне папки (K11) | ⬜ Фаза 9 по факту закрытия K11: рецепт = три файла + список «что ещё» |
+| 🆕 T6 | `excel-agent-tools/start-windows.bat`, `schedule-builder-service/start-windows.bat` | CMD `for /f` — тот же полевой дефект, что у кластера до ревизии 56 (BOM, пароль с `=`) | Как Activity/кластер/шаблон: `python -m app` + kit `load_service_env` | bat без `for /f`; pytest shape на Excel/Schedule |
+| 🆕 T5 | live-харнессы (`run_live_five.py`, `run_live_excel_datasets.py`, `run_live_tnav_cluster.py`), `case_log.threshold_violations` | ✅ ревизия 52: `max_rag_empty=0` на commissioning/datasets; `excel_apply_dataset` `min_kb_calls=1`. ✅ ревизия 53: commissioning шаг 0 `trace.rag` ⊆ четырёх policy-карточек. ✅ ревизия 54: golden_1 ≠ golden_2 `orch_rag_ids`; file-less demo не несёт сразу excel и schedule. ✅ ревизия 55: слот `tnav_cluster_run` (13-й). ✅ ревизия 58: `--live` сначала knowledge probe (без Google Fonts/jsDelivr, RU `document_count`, `?q=DATES`) | — |
 | F2 (из Приложения A) | `run_live_five.specs()` | Golden-набор — commissioning-формы; нет: два HITL от разных агентов, `review_scope: agent`, rebind + commissioning в одной задаче, `REVISE` с INCLUDE/`.dev` | 🟡 Фаза 12 (6.5) |
-| F4/F5/F6 (из Приложения A) | метрики, Health Check по живому реестру, боевой агент | 🟡/⬜ | Фазы 12, 9, 10 соответственно |
+| F4/F5/F6 (из Приложения A) | метрики, Health Check по живому реестру, боевой агент | 🟡 F6: tNav Cluster на kit v1 (ревизия 55); live-слот стабилизирован в ревизии 58 (function calling в промпте, сброс leftover-файлов мока). F4/F5 ⬜ | Фазы 12, 9; хвост 10.3 |
 
 ### 2.8 Очередь и хвосты — простыми словами
 
-**Что закрыто (фазы и альфа).** Стабильный контур «Excel → вопросы инженеру → новый `.INC`» на поле; оркестратор с планом и проверкой; долгие агенты; реестр; deliverables; лог; таблица → схема → `.INC`; live-гейт 12/12 (Приложение B, журнал §7 ревизии 2–42). **7.1+7.2 (ревизия 44):** `trace.rag`/`trace.llm`, payload решения с RAG/токенами, `orchestrator.resume` с execRef, рендер в логе. **7.3+7.4 (ревизия 45):** HTTP-цикл агента, thinking off, `SAMPLING`, `retrieve_knowledge` в графе, X7 из сессии, `trace.llm` `role=agent`. **7.5+7.6 (ревизия 46):** порог `llm_truncated: 0`, счётчики `rag_empty`/`kb_calls` в `report.json`, матрица секретов, полные `.env.example`. **7.7 (ревизия 47):** hotfix цикла (валидный JSON инструмента, человеческий `agent.progress`, `failed`≠`abstain`, `kb_calls` on-demand, status в `/log`). **7.8 (ревизия 48):** порядок RAG/LLM до decision, `prompt_preview` блоками, `llm_unavailable` / mid-loop `service_unreachable`, `chat_extra_params`, матрица function calling. **8.1+8.2 (ревизия 49):** retrieval без ложного schema-abstain, теги/русский FTS/`summary`, `rag_empty: 0`. **8.3 (ревизия 51):** фильтры RAG из инвентаря. **8.4 (ревизия 52):** `retrieve_knowledge` в цикле, `kb_calls ≥ 1` на apply. **8.5 (ревизия 53):** корпус R6–R8; эмбеддинги `baai/bge-m3` / `tnavigator_schedule_knowledge_v2`. **8.6 (ревизия 54):** политика оркестратора под цель (разные `orch_rag_ids`).
+**Что закрыто (фазы и альфа).** Стабильный контур «Excel → вопросы инженеру → новый `.INC`» на поле; оркестратор с планом и проверкой; долгие агенты; реестр; deliverables; лог; таблица → схема → `.INC`; live-гейт **13/13** (ревизия 55; альфа 12/12 — Приложение B, журнал §7 ревизии 2–42). **7.1+7.2 (ревизия 44):** `trace.rag`/`trace.llm`, payload решения с RAG/токенами, `orchestrator.resume` с execRef, рендер в логе. **7.3+7.4 (ревизия 45):** HTTP-цикл агента, thinking off, `SAMPLING`, `retrieve_knowledge` в графе, X7 из сессии, `trace.llm` `role=agent`. **7.5+7.6 (ревизия 46):** порог `llm_truncated: 0`, счётчики `rag_empty`/`kb_calls` в `report.json`, матрица секретов, полные `.env.example`. **7.7 (ревизия 47):** hotfix цикла (валидный JSON инструмента, человеческий `agent.progress`, `failed`≠`abstain`, `kb_calls` on-demand, status в `/log`). **7.8 (ревизия 48):** порядок RAG/LLM до decision, `prompt_preview` блоками, `llm_unavailable` / mid-loop `service_unreachable`, `chat_extra_params`, матрица function calling. **8.1+8.2 (ревизия 49):** retrieval без ложного schema-abstain, теги/русский FTS/`summary`, `rag_empty: 0`. **8.3 (ревизия 51):** фильтры RAG из инвентаря. **8.4 (ревизия 52):** `retrieve_knowledge` в цикле, `kb_calls ≥ 1` на apply. **8.5 (ревизия 53):** корпус R6–R8; эмбеддинги `baai/bge-m3` / `tnavigator_schedule_knowledge_v2`. **8.6 (ревизия 54):** политика оркестратора под цель (разные `orch_rag_ids`). **tNav Cluster (ревизия 55, раньше kit v2 по запросу заказчика):** сервис `tnav-cluster-service`, workflow, слот `tnav_cluster_run`. **Полевой `*.env` (ревизия 56):** кластер и шаблон `demo_agent` читают env через kit `load_service_env` (`utf-8-sig`), `start-windows.bat` = `python -m app`; Excel/Schedule ещё парсят CMD `for /f`.
 
 **Делать, в этом порядке (почему так).**
 
 1. **Сначала видеть — ✅ ревизия 44.** Лог показывает запрос в базу, карточки, ходы Decision/Verify/Interpret и токены. Факты 1–3 из §0.3 читаются с каждого кейса (`CASE-6aa95bf0-c2a4a1`). Дальше правки RAG/промпта опираются на этот лог.
 2. **Затем убрать thinking у агентов — ✅ ревизия 45.** HTTP-цикл (Q1), `role=agent` (Q4 часть), `SAMPLING` (Q3), место для `retrieve_knowledge` (R10 часть). Спеки агентов и FastAPI не менялись.
-3. **Потом пороги и матрица секретов — ✅ ревизия 46.** `llm_truncated: 0` в гейте; `rag_empty`/`kb_calls` считаются. **Hotfix цикла — ✅ ревизия 47.** **Лог и честный отказ — ✅ ревизия 48.** **Оживить базу — ✅ ревизия 49 (8.1+8.2).** **Live 12/12 — ✅ ревизия 50.** **Фильтры RAG из инвентаря — ✅ ревизия 51 (8.3).** **KB по требованию — ✅ ревизия 52 (8.4).** **Корпус + bge-m3 — ✅ ревизия 53 (8.5).** **Оркестратор с политикой под цель — ✅ ревизия 54 (8.6).** Дальше Фаза 8: ingest по хэшу и знания в UI (R11, R12).
-4. **Затем kit v2.** Фаза 9: pydantic-контракты (K8–K9), «чеклист нового агента» как тест (K10), discovery спек и производные манифест/гейт/zip (K11), `LongJob` и потоковые бинари (K12–K13), одна форма `/health` и событий (K14–K15). Без этого кластерный агент снова пройдёт «по README с секундомером» и упрётся в kit.
-5. **Кластерный агент** (Фаза 10) — первый боевой агент на новых рельсах, по спеке заказчика: найти SCHEDULE по `.DATA`, собрать версию модели с новым `.INC`, запустить tNavigator CLI, следить, отдать результат дальше. В lab — заглушка CLI; на поле — реальный.
+3. **Потом пороги и матрица секретов — ✅ ревизия 46.** `llm_truncated: 0` в гейте; `rag_empty`/`kb_calls` считаются. **Hotfix цикла — ✅ ревизия 47.** **Лог и честный отказ — ✅ ревизия 48.** **Оживить базу — ✅ ревизия 49 (8.1+8.2).** **Live 12/12 — ✅ ревизия 50.** **Фильтры RAG из инвентаря — ✅ ревизия 51 (8.3).** **KB по требованию — ✅ ревизия 52 (8.4).** **Корпус + bge-m3 — ✅ ревизия 53 (8.5).** **Оркестратор с политикой под цель — ✅ ревизия 54 (8.6).** **Ingest и UI знаний — ✅ ревизия 58 (8.7).** Фаза 8 закрыта.
+4. **Затем kit v2.** Фаза 9: pydantic-контракты (K8–K9), «чеклист нового агента» как тест (K10), discovery спек и производные манифест/гейт/zip (K11), `LongJob` и потоковые бинари (K12–K13), одна форма `/health` и событий (K14–K15). Кластерный агент уже на kit v1 — перенос на `LongJob` остаётся в 10.3/9.5.
+5. **Хвост кластерного агента** (Фаза 10.3): четырёхагентная цепь, отмена во время расчёта, пространство `cluster_ops` вместо `specialist`.
 6. **Activity до production** (Фаза 11): надёжность краёв (B1–B4, B7), UI-мелочи (U1–U8), страница «Агенты» для инженера.
 7. **Гейт ≤ 20 мин, метрики, golden-2** (Фаза 12): пороги знаний/LLM, страница «Метрики», новые live-кейсы, таймауты вниз.
 
@@ -234,20 +235,20 @@ LLM-транспорт Qwen (Q) и гейт/документация (T) — з�
 15. 🆕 **Kit типизирован и порождает двойники.** Контракты — pydantic v2 модели в `mas-agent-kit/models.py`; JS-allowlist, Activity-модели, таблицы видов событий и ролей артефактов — генерируются/сверяются из них тестами. Агент = `agents/<id>.py` (спека) + папка сервиса; всё остальное (workflow, Runtime Config, реестр, Health, манифест, гейт, zip) — производные.
 16. 🆕 **Долгое задание — на диске, не в потоке.** `JobStore` рядом с сессией, heartbeat в ленту, cancel по статусу кейса, recover на старте процесса, `finish_task` идемпотентен по `result_id`, бинарные артефакты — потоково или по пути на общем диске.
 
-**Состояние (ревизия 54).** Принципы 1–11 и live 12/12 подтверждены. Принцип 12 частично: Builder на commissioning получает карточки (`trace.rag` `ready`, `rag_empty: 0`); фильтры среза — из инвентаря (8.3); `retrieve_knowledge` в цикле — live `kb_calls ≥ 1` на apply (8.4); корпус без снятых контрактов, эмбеддинги `baai/bge-m3` на `tnavigator_schedule_knowledge_v2` (8.5); политика оркестратора под цель — разные `knowledge_id` на commissioning / rebind / file-less demo (8.6). Принцип 13: лог RAG/LLM перед решением. Принцип 14: HTTP-чат, thinking off. Принципы 15–16 — фазы 9–12.
+**Состояние (ревизия 58).** Принципы 1–11 подтверждены; live-гейт 13/13 GREEN (ревизия 55 слот кластера; ревизия 58 — 8.7 + повтор 13/13). Полевой env кластера и шаблона — Python dotenv как Activity (ревизия 56). Docs/план/правила сверены с кодом (ревизия 57). Принцип 12: Builder на commissioning получает карточки (`trace.rag` `ready`, `rag_empty: 0`); фильтры среза — из инвентаря (8.3); `retrieve_knowledge` в цикле — live `kb_calls ≥ 1` на apply (8.4); корпус без снятых контрактов, эмбеддинги `baai/bge-m3` на `tnavigator_schedule_knowledge_v2` (8.5); политика оркестратора под цель — разные `knowledge_id` на commissioning / rebind / file-less demo (8.6); ingest по тексту/`content_hash`, `purge_superseded`, UI знаний с серверным поиском и локальным `marked` (8.7). Принцип 13: лог RAG/LLM перед решением. Принцип 14: HTTP-чат, thinking off. Принципы 15–16 — фазы 9–12. Кластерный агент на kit v1 (не LongJob). Фаза 8 закрыта.
 
 ---
 
-## 4. План по фазам (ревизия 54)
+## 4. План по фазам (ревизия 58)
 
-**Сводка.** Фазы 0–6.1 и α1–α5 закрыты — критерии в Приложении B. Фаза 7 закрыта (ревизии 44–48). 8.1+8.2 закрыты (ревизия 49), live 12/12 — ревизия 50, 8.3 — ревизия 51, 8.4 — ревизия 52, 8.5 — ревизия 53, 8.6 — ревизия 54. Остаток Фазы 8 — 8.7. Остаток B6 (`llm_ms`/`tool_ms`) и U7 — фаза 11. **Текущий гейт:** `mas_gate.py` (17 smokes, 5 pytest-наборов, combat) + `--live` 12/12, `mismatch_count: 0`, α2 (`warnings: 0`, `steps ≤ 6`, `tool_calls ≤ 4`), `llm_truncated: 0`, `rag_empty: 0`; commissioning-лог: `trace.rag`/`trace.llm` **перед** `orchestrator.decision`, Builder `trace.rag` `ready`; шаг 0 ⊆ четырёх policy-карточек; golden_1 ≠ golden_2 `orch_rag_ids`; file-less demo не несёт сразу excel и schedule; `prompt_preview.messages`; отказ чата не маскируется под «не вернул факты»; в JSON агентов нет `lmChatOpenAi`; `excel_apply_dataset` `kb_calls ≥ 1`. Оценка объёма — в «сессиях» (одна сессия = один бриф до зелёного гейта).
+**Сводка.** Фазы 0–6.1 и α1–α5 закрыты — критерии в Приложении B. Фаза 7 закрыта (ревизии 44–48). Фаза 8 закрыта: 8.1+8.2 (ревизия 49), live 12/12 (ревизия 50), 8.3 (51), 8.4 (52), 8.5 (53), 8.6 (54), 8.7 (58). tNav Cluster (10.1/10.2 и один слот 10.3) — ревизия 55 на kit v1, live 13/13. Полевой env кластера и шаблона — ревизия 56. Сверка docs/плана — ревизия 57. Остаток B6 (`llm_ms`/`tool_ms`) и U7 — фаза 11. **Текущий гейт:** `mas_gate.py` (smokes по glob, pytest-наборы включая tNav Cluster, combat) + `--live` 13/13, knowledge probe, `mismatch_count: 0`, α2 (`warnings: 0`, `steps ≤ 6`, `tool_calls ≤ 4`), `llm_truncated: 0`, `rag_empty: 0`; commissioning-лог: `trace.rag`/`trace.llm` **перед** `orchestrator.decision`, Builder `trace.rag` `ready`; шаг 0 ⊆ четырёх policy-карточек; golden_1 ≠ golden_2 `orch_rag_ids`; file-less demo не несёт сразу excel и schedule; `prompt_preview.messages`; отказ чата не маскируется под «не вернул факты»; в JSON агентов нет `lmChatOpenAi`; `excel_apply_dataset` `kb_calls ≥ 1`; `tnav_cluster_run` — `waiting_agent` → `run_status=finished`. Оценка объёма — в «сессиях» (одна сессия = один бриф до зелёного гейта).
 
 | Фаза | Цель | Закрывает | Сессий |
 |---|---|---|---|
 | 7 Прозрачность и транспорт LLM | лог показывает RAG/LLM; агенты без thinking на поле | O25, O27, R9, Q1–Q4, B5–B6, U7, T3, T5 (часть) | ✅ 44–48 |
-| 8 Живая база знаний | Builder и оркестратор получают нужные карточки; KB по требованию; чистый корпус; знания в UI | R1–R8, R10–R14, O24, O28–O30, S1, X-карточки | 7–8 |
+| 8 Живая база знаний | Builder и оркестратор получают нужные карточки; KB по требованию; чистый корпус; знания в UI | R1–R8, R10–R14, O24, O28–O30, S1, X-карточки | ✅ 49–54, 58 |
 | 9 Kit v2 | pydantic, чеклист-тест, discovery, LongJob, бинари, одна форма | K8–K18, X1, X3, X6–X9, S5–S6, S9–S11, B11–B12, T4 | 7–9 |
-| 10 Кластерный агент | первый боевой агент по спеке заказчика на новых рельсах | F6, R8 (замена заглушки), новый live-слот | 4–6 |
+| 10 Кластерный агент | первый боевой агент по спеке заказчика на текущем kit | F6, R8 (замена заглушки), новый live-слот | 🟡 55 |
 | 11 Activity production | надёжность краёв, UI-мелочи, «Агенты» для инженера | B1–B4, B7, B10, U1–U6, U8 | 5–6 |
 | 12 Гейт ≤ 20 мин, метрики, golden-2 | закреплённый бюджет, пороги знаний/LLM, страница метрик, новые кейсы | T2, T5, Q5, U10, F2, F4, S3/S7 live | 5–6 |
 
@@ -278,7 +279,7 @@ LLM-транспорт Qwen (Q) и гейт/документация (T) — з�
 
 **Границы:** RAG-ранжирование не трогать (Фаза 8); спеки и FastAPI агентов не менять, кроме X7 (результат из сессии).
 
-### Фаза 8 — Живая база знаний ⬜
+### Фаза 8 — Живая база знаний ✅
 
 **Зачем.** Принцип 12: Builder получает знания, оркестратор — политику под цель, модель может спросить базу.
 
@@ -293,10 +294,10 @@ LLM-транспорт Qwen (Q) и гейт/документация (T) — з�
    *Готово:* тест корпуса: типы/теги/`summary`/нет снятых токенов (`clr_`, `continuation_state`, `specialist_packet`); live `trace.rag` шага 0 ⊆ четырёх policy-карточек.
 6. **8.6 Оркестратор и знания** — ✅ ревизия 54. O24, O28, O29, O30: запрос без файлов/журнала; `topics` из файлов + открытого плана + `completion`; overlap-only compact на `orchestrator_routing`; секции `planner_input`; SYSTEM/Verify про политику.
    *Готово:* golden_1 ≠ golden_2 `orch_rag_ids`; demo без пары excel+schedule; chain план 3/3 `rag_empty: 0`; `steps ≤ 6`; `warnings: 0`.
-7. **8.7 Ingest и UI знаний** — R11, R12/U9, U3: `content_hash`, `purge_superseded`, серверный поиск `?q=&tag=`, `document_count`, ревизии через прокси, ingest одной карточки, локальный `marked` (U2 для страницы знаний).
-   *Готово:* `test_knowledge_api`; ручной чек UI.
+7. **8.7 Ingest и UI знаний** — ✅ ревизия 58. R11, R12/U9, U3: skip ingest только при том же тексте/`content_hash`; иначе `CONTENT_HASH_CHANGED_BUMP_REVISION`; `purge_superseded`; серверный поиск `?q=&tag=`; `document_count`; ревизии через прокси; ingest одной карточки; локальный `marked` и IBM Plex (U2).
+   *Готово:* `test_knowledge_api`, `schedule-rag-runtime-smoke.js`, knowledge probe в `--live`; Activity `/knowledge` без googleapis/jsdelivr. Live 13/13 `CASE-6aae475d-*` / `CASE-6aae47f3-*` / `CASE-6aae480f-4f6c99` / `CASE-6aae488f-4357e2`.
 
-**Критерий фазы:** `--live` 12/12 с порогами `rag_empty: 0`, `kb_calls ≥ 1` на `excel_datasets`; Builder на всех commissioning видит карточки; оркестратор получает разные политики; корпус без снятых контрактов; knowledge UI с поиском по тегам.
+**Критерий фазы:** `--live` 13/13 с порогами `rag_empty: 0`, `kb_calls ≥ 1` на `excel_apply_dataset`; Builder на всех commissioning видит карточки; оркестратор получает разные политики; корпус без снятых контрактов; knowledge UI с поиском по тегам; ingest skip по тексту/`content_hash`.
 
 **Границы:** новые keyword'ы SCHEDULE (S12) не добавлять; PDF мануала не ингестить (отдельное решение заказчика — объём и лицензия).
 
@@ -326,19 +327,18 @@ LLM-транспорт Qwen (Q) и гейт/документация (T) — з�
 
 **Границы:** доменная логика агентов не меняется; форматы `.INC` не трогаются.
 
-### Фаза 10 — Кластерный агент (первый боевой) ⬜
+### Фаза 10 — Кластерный агент (первый боевой) 🟡
 
 **Зачем.** Спека заказчика: работа с файлами модели на кластере, запуск tNavigator CLI, наблюдение, передача результата.
 
 **Deliverables:**
 
-1. **10.1 Спека и сервис** — `agents/hydro_cluster.py` (`AgentSpec`: `when_to_use`, `input_required: [schedule_out|model_path]`, `output_provides: [run_results, model_version]`, `hitl_policy: agent_asks`, `rag_selector: cluster`), `cluster-agent-service/` из шаблона (kit v2). Инструменты: `locate_model(data_path)` → граф INCLUDE `.DATA` → путь SCHEDULE, версия, размеры (детерминированно); `create_model_version(schedule_artifact_id | path, version_name)` → копия каталога модели с новым `.INC` и переписанным INCLUDE; `launch_run(model_version, cli_profile)` → `LongJob` + `in_progress` с `watch{kind: external, ref: run_id}`; фон: опрос статуса tNavigator (лог/CLI), heartbeat `agent.progress` (`waiting_agent`), при завершении — `finish_task` с артефактами (сводка расчёта, пути результатов, ключевые показатели) и `upload_file` небольших файлов; `ask_engineer` — выбор модели/версии/профиля запуска.
-   Lab — заглушка CLI (`fake_tnav.py`: пишет прогресс в лог-файл, завершается через N с); поле — реальный CLI (путь и профиль — `.env` сервиса).
-2. **10.2 Знания** — пространство `cluster_ops` (`NAMESPACES`/`SELECTORS` из одного модуля R14): карточки «структура модели tNavigator и INCLUDE», «CLI: флаги, статусы, типичные ошибки», «когда спрашивать инженера»; замена заглушки `route-cluster-calculation` реальной политикой (R8).
-3. **10.3 Live-слот** — `run_live_cluster.py`: `.INC` из Builder → кластерный агент → `waiting_agent` → `done` с deliverables; четырёхагентная цепь (Excel → Builder → Cluster) с планом 3/3 `done`; `agent_down_recovery` для кластера; отмена во время `waiting_agent` останавливает job.
-4. **10.4 Учёт трения** — каждая правка kit/генераторов/оркестратора по следам агента — строка K19+ с тестом.
+1. **10.1 Спека и сервис** — ✅ ревизия 55 на kit v1 (не kit v2 / не `LongJob`): `agents/tnav_cluster.py`, `tnav-cluster-service/` (paramiko SSH, белый список команд без `rm`, pydantic `ClusterSettings`). Инструменты: `list_models`, `inspect_model`, `prepare_model_version`, `start_calculation` (`in_progress` + поток), `check_calculation`, `ask_engineer`. Lab — `mock_cluster/` (SSH-сервер + заглушка `tNavigator-con`); поле — `tnav-cluster.env`.
+2. **10.2 Знания** — ✅ ревизия 55 карточки `cluster-model-layout` / `cluster-prepare-version` / `cluster-run-calculation` в `specialist_template` (пространство `cluster_ops` не заводили — долг). `route-cluster-calculation` r6: `topics` = `output_provides` агента (`model_version`, `run_status`, `run_results`) — карточка в срезе оркестратора только когда `tnav_cluster` включён в реестре.
+3. **10.3 Live-слот** — 🟡 ревизия 55: слот `tnav_cluster_run` в `--live` 13/13 GREEN. Нет: четырёхагентная цепь Excel → Builder → Cluster; `agent_down_recovery` для кластера; отмена во время `waiting_agent`.
+4. **10.4 Учёт трения** — kit `extra_health`; схема Activity: JS реестровый, Python `schema_view` получил узел `cluster`. Discovery манифеста/гейта по-прежнему руками (K11).
 
-**Критерий фазы:** `done` в live с заглушкой; оркестратор и Activity не правились; `git diff --stat` вне папки агента и спеки ≤ 3 файла; `--live` 13/13 ≤ 20 мин (T2 учитывает новый слот).
+**Критерий фазы:** `done` в live с заглушкой; оркестратор JSON не правился; `--live` 13/13. Полный критерий «`git diff --stat` вне папки ≤ 3» не выполнен: агент селился в манифест/гейт/docs/compose (ожидаемо до K11).
 
 **Границы:** реальный кластер, очереди, лицензии tNavigator — поле, не lab; разбор бинарных результатов (UNSMRY/UNRST) — следующий агент.
 
@@ -346,7 +346,7 @@ LLM-транспорт Qwen (Q) и гейт/документация (T) — з�
 
 **Deliverables:** 11.1 B1 (намерение до вызова, single-flight); 11.2 B2 (часы stale по оркестратору); 11.3 B3 (кэш по генерации прокси); 11.4 B4 (`run_generation`); 11.5 B7 (ключ идемпотентности по payload); 11.6 B9/B10 (host по умолчанию для поля документирован, метрики без шторма); 11.7 UI U1–U6, U8 (cache-bust по хэшу, локальные шрифты/`marked`, счётчики и RU-подписи, `CASE-…` только в dev-mode, подсказка «ждём оркестратор» гаснет, «Агенты» для инженера, мелочи доступности).
 
-**Критерий фазы:** тесты B1–B4/B7 в `test_cases_api`; UI работает при `network offline`; ни одной английской подписи вне dev-mode; `--live` 12/12 (13/13 после Фазы 10).
+**Критерий фазы:** тесты B1–B4/B7 в `test_cases_api`; UI работает при `network offline`; ни одной английской подписи вне dev-mode; `--live` 13/13.
 
 ### Фаза 12 — Гейт ≤ 20 мин, метрики, golden второго поколения ⬜
 
@@ -354,7 +354,7 @@ LLM-транспорт Qwen (Q) и гейт/документация (T) — з�
 
 **Критерий фазы:** `--live` GREEN ≤ 20 мин при ≥ 15 слотах; страница метрик показывает тренды `steps`/`warnings`/`rag_empty`/`llm_ms`; F2 закрыт.
 
-**Критерий текущего гейта (ревизия 54).** Офлайн: regen drift 0, 17 smokes, 5 pytest-наборов, combat; live: 12/12, `mismatch_count: 0`, `warnings: 0`, `steps ≤ 6`, `tool_calls ≤ 4`, `llm_truncated: 0`, `rag_empty: 0`, без повторных HITL и `completion_review`; `excel_apply_dataset` `kb_calls ≥ 1`; commissioning шаг 0 ⊆ четырёх policy; golden_1 ≠ golden_2 `orch_rag_ids`; file-less demo не несёт сразу excel и schedule; стена одиночного `--live` ≤ 20 мин (контроль, не критерий — T2). Prepare RAG без regex по постановке. Embeddings `baai/bge-m3` / v2.
+**Критерий текущего гейта (ревизия 57).** Офлайн: regen drift 0, smokes по glob (18, включая `tnav-cluster-agent-smoke.js`), pytest-наборы включая tNav Cluster и demo, combat; live: 13/13, `mismatch_count: 0`, `warnings: 0`, `steps ≤ 6`, `tool_calls ≤ 4`, `llm_truncated: 0`, `rag_empty: 0`, без повторных HITL и `completion_review`; `excel_apply_dataset` `kb_calls ≥ 1`; commissioning шаг 0 ⊆ четырёх policy; golden_1 ≠ golden_2 `orch_rag_ids`; file-less demo не несёт сразу excel и schedule; `tnav_cluster_run` `waiting_agent` → `run_status=finished`; стена одиночного `--live` ≤ 20 мин (контроль, не критерий — T2). Prepare RAG без regex по постановке. Embeddings `baai/bge-m3` / v2. Полевой `*.env` кластера и шаблона — Python `load_service_env`, не CMD `for /f`.
 
 ---
 
@@ -943,19 +943,54 @@ Live 3: golden_1 `CASE-6aacf221-68489c` orch excel+thin+schedule steps 3; golden
 
 Гейт: офлайн GREEN (17 smokes, 5 pytest-наборов, combat); live 12/12 GREEN.
 
-Не сделано: 8.7; удаление `n8n_agent` (ревизия 55); inventory `rag_inventory_incomplete` при 61/61 в v2 (ложный missing id, 8.7); file-less demo `rag_empty: 2` / пустой orch срез (routing-карточки не пересекаются с `well_count`/`wells`); трекинг `run_live_*.py` вне gitignore.
+Не сделано: 8.7; удаление `n8n_agent` (ревизия 57); inventory `rag_inventory_incomplete` при 61/61 в v2 (ложный missing id, 8.7); file-less demo `rag_empty: 2` / пустой orch срез (routing-карточки не пересекаются с `well_count`/`wells`); трекинг `run_live_*.py` вне gitignore.
+
+### Ревизия 55 (2026-09-18) — tNav Cluster Agent (10.1 / 10.2 / слот 10.3)
+
+Сделано по запросу заказчика, раньше kit v2. Сервис `tnav-cluster-service` (pydantic v2, paramiko, белый список команд без `rm`, корень `TNAV_CLUSTER_ROOT`, команда `{model}` в `TNAV_CLI_COMMAND`). Мок ГД-кластера: дерево моделей, фейковый `tNavigator-con`, SSH-сервер; lab Compose — сервис ходит к моку по SSH. Спека `agents/tnav_cluster.py`, workflow `Agent — tNav Cluster Agent`, `tnav_cluster_url` в Runtime Config, строка реестра `enabled=false`. Карточки `cluster-*` в `specialist_template`; `route-cluster-calculation` r6 (`topics` = `output_provides`, слот кластера в `--live` сериализован после demo∥datasets — иначе карточка текла в step-0, `CASE-6aad611d-4df69e`). Схема Activity: JS по реестру; Python `schema_view` — узел `cluster`. Полевой путь: `docs.md` §8 и `tnav-cluster-service/README.md` (куда писать адрес, логин, пароль, корень, команду). Live-слот `tnav_cluster_run` в `--live` (13-й). `field_check` пропускает кластер, если он не запущен.
+
+Live RED → GREEN. Мок SSH закрывал сессию после первой exec (`CASE-6aad611c-732bd3`, `open_session` EOFError); SFTP-абсолютный путь и nohup-консоль как `.err` при отсутствии `ps` в slim (`CASE-6aad780d-952112`); после `start_calculation` Qwen крутила `check_calculation` пока мок заканчивал расчёт (`CASE-6aad7bd4-871c26`, два `agent.result`, не было `waiting_agent`). Фикс: много-exec SSH + `_real` для абсолютных путей; `process_alive` через `/proc/<pid>`; `.lock` важнее баннера консоли; `result_guard` на инструментах после `in_progress`.
+
+Live 13/13 GREEN (`--only live` 596 с после офлайн GREEN той же сессии): golden_1 `CASE-6aad7d24-0f6aaf`; golden_2 `CASE-6aad7d24-22836f`; combat_0 `CASE-6aad7d24-dd5c1d`; combat_1 `CASE-6aad7d24-ce61da`; combat_2 `CASE-6aad7d24-2f970c`; combat_3 `CASE-6aad7d24-7586bd`; demo `CASE-6aad7db8-741ae8`; chain `CASE-6aad7db8-f8355f`; extract `CASE-6aad7db8-6bad88`; apply `CASE-6aad7df0-6ff3c0` `kb_calls: 1`; gap `CASE-6aad7e5f-a2821e`; cluster `CASE-6aad7e84-755c20` `waiting_agent` → `run_status=finished` steps 2 tool_calls 3; down `CASE-6aad7ec9-0bdcf1`; step_limit `CASE-6aad7f09-106f2c`; rework `CASE-6aad7f09-f73af9`.
+
+Гейт: офлайн GREEN (regen/smokes/pytest/combat); live 13/13 GREEN.
+
+Не сделано: четырёхагентная цепь; отмена расчёта; `cluster_ops`; `LongJob`; удаление `n8n_agent` (ревизия 57); 8.7; Excel/Schedule `start-windows.bat` ещё `for /f`.
+
+### Ревизия 56 (2026-09-19) — полевой `*.env` как у Activity (kit + кластер + шаблон)
+
+Прод: CMD `for /f` в `tnav-cluster-service/start-windows.bat` портил UTF-8 BOM и пароли/`TNAV_CLI_COMMAND` с `=`; Python `load_dotenv(..., override=False)` кривые ключи не перебивал. Канон Activity: bat не парсит файл, `python -m app`, `utf-8-sig`.
+
+Сделано: `mas_agent_kit.env.load_service_env`; `/health.env_files`; кластер и `agents-template/demo_agent` — `app/__init__.py` + `app/__main__.py` + `start-windows.bat` / `start-linux.sh` без `for /f`/`source`. `python-dotenv` в requirements kit и шаблона. Тесты: BOM/`=` в kit, пароль с `=` и bind в cluster, `test_service_shape` на шаблон и кластер.
+
+Не сделано: Excel Tools и Schedule Builder всё ещё парсят env через CMD (тот же дефект); `--live` на этой ревизии не гоняли (оркестратор/агентный граф не менялись).
+
+### Ревизия 57 (2026-09-19) — сверка docs / плана / правил с кодом
+
+Код не меняли. Устаревшие формулировки: гейт «17 smokes / 5 pytest / 12 live» в §1; критерий §4 помечен ревизией 55; `docs.md` «после 6.2» и «пустой RAG Builder’а на датах ввода ожидаем»; правило Excel с ключом `error` в конверте; в полевой таблице привязок не было второй RAG-ноды агента (`Retrieve knowledge`).
+
+Сделано: шапка/§2.7/§3/§4 = ревизия 57; §1 и критерий гейта — 18 smokes, 6 pytest-наборов, 13 live; Фаза 8 🟡 (остаток 8.7); B12/K14/T4 помечены по факту; T6 — Excel/Schedule `for /f`. `docs.md`: две RAG-ноды, env bat, лог `rag_empty`, очередь без «6.2». `AGENTS.md`: `--repeat` не троить 13 слотов. `.cursor/rules/excel-agent-tools.mdc` — конверт kit.
+
+Не сделано: 8.7; удаление `n8n_agent` (ревизия 58); T6; `--live` на сверке не гоняли.
+
+### Ревизия 58 (2026-09-19) — 8.7 ingest и UI знаний
+
+Сделано: skip ingest только если чанки в v2 и текст/`content_hash` совпали; тот же id/rev с другим текстом → `CONTENT_HASH_CHANGED_BUMP_REVISION`; `purge_superseded`; skipped id считаются found. Activity: `GET /v1/knowledge/{base}?q=&tag=`, `document_count`, `GET …/revisions` (`list_knowledge_revisions` в прокси), ingest одной карточки, RU-подписи вкладок, schema/examples. UI: серверный поиск, клик по тегу, локальный `marked` + IBM Plex в `static/vendor/` (без Google Fonts/jsDelivr). `--live` knowledge probe. Кластерный слот: промпт «только function calling» (`CASE-6aae41e4-a48ba9` писала `inspect_model("…")` в content); харнесс сбрасывает leftover `SEVER_*.data` (`version_not_created`).
+
+Офлайн: regen sync, 18 smokes, pytest kit 51 / Activity 135 / Builder 65 / Excel 89 / tNav 26 / demo 7, combat. Live 13/13 GREEN (518 с, `--hot`): commissioning `mismatch_count: 0`, `excel_apply_dataset` `kb_calls: 1` `tool_calls: 3`, cluster `waiting_agent` → `done` `tool_calls: 3`.
+
+Не сделано: удаление `n8n_agent` (ревизия 59); T6 Excel/Schedule `for /f`; хвост 10.3 (четырёхагентная цепь, cancel, `cluster_ops`, LongJob). Qwen на apply иногда зовёт `list_records` сверх 4 tools (`CASE-6aae44b3-936188`) — повтор слота GREEN, в очередь не ставим.
 
 ### Ближайшие шаги (в этом порядке)
 
 Каждый пункт — отдельный бриф (`/mas-brief` → файл в `briefs/`). Перед стартом и в конце — `python3 scripts/mas_gate.py [--live]`. Смысл и порядок — §2.8; критерии — §4; коды — §2.
 
-1. **8.7** — ingest по `content_hash`, `purge_superseded`, UI знаний (`?q=&tag=`, счётчики, ревизии, локальный `marked`).
-2. **Ревизия 55** — удалить откат `llm_transport=n8n_agent` (двойной граф).
-3. **9.1 – 9.4** — pydantic-контракты, двойники из модели, чеклист-тест, discovery спек и производные (манифест/Health/гейт/zip).
-4. **9.5 – 9.8** — `LongJob`, потоковые бинари, агенты на общей форме (Builder `packet()`, Excel без снятых инструментов, один кастер дат, `repeat_guard`), рецепт нового агента.
-5. **10** — кластерный агент по спеке заказчика (заглушка CLI в lab), live-слот, четырёхагентная цепь.
-6. **11** — Activity production (B1–B4, B7, B10; U1–U6, U8).
-7. **12** — стена `--live` ≤ 1200 с как критерий, страница «Метрики», golden второго поколения (F2), таймауты вниз.
+1. **Ревизия 59** — удалить откат `llm_transport=n8n_agent` (двойной граф).
+2. **9.1 – 9.4** — pydantic-контракты, двойники из модели, чеклист-тест, discovery спек и производные (манифест/Health/гейт/zip).
+3. **9.5 – 9.8** — `LongJob`, потоковые бинари, агенты на общей форме (Builder `packet()`, Excel без снятых инструментов, один кастер дат, `repeat_guard`), рецепт нового агента; перенос кластерного фона на `LongJob`.
+4. **10.3 хвост** — четырёхагентная цепь Excel → Builder → Cluster; отмена `waiting_agent`; пространство `cluster_ops`.
+5. **11** — Activity production (B1–B4, B7, B10; U1–U6, U8).
+6. **12** — стена `--live` ≤ 1200 с как критерий, страница «Метрики», golden второго поколения (F2), таймауты вниз.
 
 Не очередь: B8 (безопасность) — решение заказчика; S12 — по запросу инженера; судью «красиво ли написано» не добавлять.
 

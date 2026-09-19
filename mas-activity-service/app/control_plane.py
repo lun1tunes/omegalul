@@ -575,6 +575,25 @@ def list_agents() -> list[dict[str, Any]]:
         return [dict(row) for row in _REGISTRY]
 
 
+def list_knowledge_revisions(target_base: str, knowledge_id: str) -> list[dict[str, Any]]:
+    """Parent-table revision history. Empty if ingest never created the table."""
+    if not _configured():
+        return []
+    try:
+        rows = proxy_call(
+            "list_knowledge_revisions",
+            target_base=target_base,
+            knowledge_id=knowledge_id,
+        )
+    except RuntimeError:
+        return []
+    if isinstance(rows, list):
+        return [dict(row) for row in rows if isinstance(row, dict)]
+    if isinstance(rows, dict) and rows:
+        return [dict(rows)]
+    return []
+
+
 def upsert_agent(row: dict[str, Any]) -> None:
     if _configured():
         proxy_call("upsert_agent", row=row)

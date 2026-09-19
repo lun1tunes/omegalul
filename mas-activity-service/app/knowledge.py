@@ -12,15 +12,16 @@ from typing import Any
 
 import httpx
 
+from app import control_plane
 from app.settings import UNCONFIGURED_INGEST, get_settings
 
 logger = logging.getLogger(__name__)
 INGEST_TIMEOUT_S = 600.0
 
 NAMESPACE_LABELS = {
-    "schedule_mvp": "Schedule Builder",
-    "excel_protocol": "Excel Extractor",
-    "orchestrator_routing": "Orchestrator",
+    "schedule_mvp": "Сборщик расписания",
+    "excel_protocol": "Извлечение из Excel",
+    "orchestrator_routing": "Маршрутизация",
     "specialist_template": "Шаблон специалиста",
 }
 
@@ -90,6 +91,13 @@ def save_corpus(data: dict[str, Any]) -> None:
 def list_namespaces() -> list[dict[str, Any]]:
     data = load_corpus()
     raw = data.get("namespaces") or {}
+    counts: dict[str, int] = {}
+    for doc in data.get("documents") or []:
+        if not isinstance(doc, dict) or not _is_ingestible(doc):
+            continue
+        base = str(doc.get("target_base") or "")
+        if base:
+            counts[base] = counts.get(base, 0) + 1
     out: list[dict[str, Any]] = []
     for base, types in raw.items():
         out.append(
@@ -97,11 +105,93 @@ def list_namespaces() -> list[dict[str, Any]]:
                 "id": base,
                 "label": NAMESPACE_LABELS.get(base, base),
                 "knowledge_types": list(types) if isinstance(types, list) else [],
+                "document_count": counts.get(base, 0),
             }
         )
-    # stable order matching known agents first
     order = list(NAMESPACE_LABELS.keys())
     out.sort(key=lambda item: (order.index(item["id"]) if item["id"] in order else 99, item["id"]))
+    return out
+
+
+def _haystack(doc: dict[str, Any]) -> str:
+    parts = [
+        str(doc.get("title") or ""),
+        str(doc.get("knowledge_id") or ""),
+        str(doc.get("knowledge_type") or ""),
+        str(doc.get("text") or ""),
+        str(doc.get("heading") or ""),
+        str(doc.get("page") or ""),
+        " ".join(str(item) for item in (doc.get("keywords") or [])),
+        " ".join(str(item) for item in (doc.get("topics") or [])),
+        " ".join(str(item) for item in (doc.get("task_patterns") or [])),
+    ]
+    return " ".join(parts).casefold()
+
+
+def _tag_values(doc: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for key in ("keywords", "topics", "task_patterns"):
+        raw = doc.get(key) or []
+        if isinstance(raw, list):
+            values.extend(str(item) for item in raw if item)
+    return values
+
+
+def _matches_query(doc: dict[str, Any], *, q: str = "", tag: str = "") -> bool:
+    needle = q.strip().casefold()
+    tag_needle = tag.strip().casefold()
+    if tag_needle:
+        tags = [item.casefold() for item in _tag_values(doc)]
+        if not any(tag_needle == item or tag_needle in item for item in tags):
+            return False
+    if needle and needle not in _haystack(doc):
+        return False
+    return True
+
+
+def _schema_preview(catalogue: Any) -> dict[str, Any] | None:
+    if not isinstance(catalogue, dict):
+        return None
+    schemas: list[dict[str, Any]] = []
+    for entry in catalogue.get("schemas") or []:
+        if not isinstance(entry, dict):
+            continue
+        fields = entry.get("fields") if isinstance(entry.get("fields"), list) else []
+        names = [
+            str(field.get("name") or "").strip()
+            for field in fields
+            if isinstance(field, dict) and str(field.get("name") or "").strip()
+        ]
+        schemas.append(
+            {
+                "keyword": entry.get("keyword"),
+                "schema_id": entry.get("schema_id"),
+                "schema_revision": entry.get("schema_revision"),
+                "field_names": names,
+            }
+        )
+    return {
+        "catalogue_hash": catalogue.get("catalogue_hash"),
+        "catalogue_ref": catalogue.get("catalogue_ref"),
+        "schemas": schemas,
+    }
+
+
+def _example_preview(examples: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not isinstance(examples, list):
+        return out
+    for item in examples:
+        if not isinstance(item, dict):
+            continue
+        out.append(
+            {
+                "title": item.get("title"),
+                "task": item.get("task"),
+                "explanation": item.get("explanation"),
+                "schedule_text": item.get("schedule_text"),
+            }
+        )
     return out
 
 
@@ -127,7 +217,12 @@ def _summary(doc: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def list_documents(target_base: str) -> list[dict[str, Any]]:
+def list_documents(
+    target_base: str,
+    *,
+    q: str = "",
+    tag: str = "",
+) -> list[dict[str, Any]]:
     data = load_corpus()
     namespaces = set((data.get("namespaces") or {}).keys())
     if target_base not in namespaces:
@@ -135,7 +230,9 @@ def list_documents(target_base: str) -> list[dict[str, Any]]:
     docs = [
         _summary(doc)
         for doc in data["documents"]
-        if _is_ingestible(doc) and doc.get("target_base") == target_base
+        if _is_ingestible(doc)
+        and doc.get("target_base") == target_base
+        and _matches_query(doc, q=q, tag=tag)
     ]
     docs.sort(key=lambda item: (str(item.get("title") or "").lower(), str(item.get("knowledge_id"))))
     return docs
@@ -163,10 +260,55 @@ def get_document(target_base: str, knowledge_id: str) -> dict[str, Any]:
                 "page": doc.get("page"),
                 "heading": doc.get("heading"),
                 "source_hash": doc.get("source_hash"),
-                "examples": doc.get("examples") if isinstance(doc.get("examples"), list) else [],
+                "examples": _example_preview(doc.get("examples")),
                 "has_schema_catalogue": isinstance(doc.get("schema_catalogue"), dict),
+                "schema_catalogue": _schema_preview(doc.get("schema_catalogue")),
             }
     raise KeyError(f"Document not found: {target_base}/{knowledge_id}")
+
+
+def list_revisions(target_base: str, knowledge_id: str) -> list[dict[str, Any]]:
+    current = get_document(target_base, knowledge_id)
+    rows = control_plane.list_knowledge_revisions(target_base, knowledge_id)
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        rev = str(row.get("revision") or "").strip()
+        if not rev or rev in seen:
+            continue
+        seen.add(rev)
+        out.append(
+            {
+                "target_base": row.get("target_base") or target_base,
+                "knowledge_id": row.get("knowledge_id") or knowledge_id,
+                "revision": rev,
+                "knowledge_type": row.get("knowledge_type"),
+                "status": row.get("status") or "active",
+                "title": row.get("title"),
+                "content_hash": row.get("content_hash"),
+                "author": row.get("author"),
+                "stored_at": row.get("stored_at"),
+                "source": "postgres",
+            }
+        )
+    current_rev = str(current.get("revision") or "1")
+    if current_rev not in seen:
+        out.insert(
+            0,
+            {
+                "target_base": target_base,
+                "knowledge_id": knowledge_id,
+                "revision": current_rev,
+                "knowledge_type": current.get("knowledge_type"),
+                "status": current.get("status") or "active",
+                "title": current.get("title"),
+                "content_hash": current.get("source_hash"),
+                "author": current.get("author"),
+                "stored_at": None,
+                "source": "corpus",
+            },
+        )
+    return out
 
 
 def _bump_revision(current: str | int | None) -> str:
@@ -233,6 +375,9 @@ def _apply_document_fields(
     keywords: list[str] | None = None,
     topics: list[str] | None = None,
     task_patterns: list[str] | None = None,
+    knowledge_type: str | None = None,
+    status: str | None = None,
+    allowed_types: list[str] | None = None,
 ) -> dict[str, Any]:
     if text is not None:
         if not isinstance(text, str):
@@ -251,6 +396,20 @@ def _apply_document_fields(
         doc["topics"] = _normalize_tags(topics, field="topics")
     if task_patterns is not None:
         doc["task_patterns"] = _normalize_tags(task_patterns, field="task_patterns")
+    if knowledge_type is not None:
+        ktype = knowledge_type.strip()
+        if not ktype:
+            raise ValueError("knowledge_type must be non-empty")
+        if allowed_types and ktype not in allowed_types:
+            raise ValueError(
+                f"knowledge_type '{ktype}' not allowed; expected one of: {', '.join(allowed_types)}"
+            )
+        doc["knowledge_type"] = ktype
+    if status is not None:
+        st = status.strip().lower()
+        if st not in {"active", "superseded", "draft"}:
+            raise ValueError("status must be active, superseded or draft")
+        doc["status"] = st
 
     body = str(doc.get("text") or "")
     new_rev = _bump_revision(doc.get("revision"))
@@ -288,8 +447,13 @@ def patch_document(
     keywords: list[str] | None = None,
     topics: list[str] | None = None,
     task_patterns: list[str] | None = None,
+    knowledge_type: str | None = None,
+    status: str | None = None,
 ) -> dict[str, Any]:
-    if all(v is None for v in (text, title, keywords, topics, task_patterns)):
+    if all(
+        v is None
+        for v in (text, title, keywords, topics, task_patterns, knowledge_type, status)
+    ):
         raise ValueError("Nothing to patch")
 
     with _lock:
@@ -315,6 +479,9 @@ def patch_document(
             keywords=keywords,
             topics=topics,
             task_patterns=task_patterns,
+            knowledge_type=knowledge_type,
+            status=status,
+            allowed_types=list((data.get("namespaces") or {}).get(target_base) or []),
         )
         save_corpus(data)
         return get_document(target_base, knowledge_id)
@@ -428,9 +595,24 @@ class KnowledgeIngestUnavailable(Exception):
         super().__init__(detail)
 
 
-def ingestible_documents() -> list[dict[str, Any]]:
+def ingestible_documents(
+    *,
+    target_base: str | None = None,
+    knowledge_id: str | None = None,
+) -> list[dict[str, Any]]:
     data = load_corpus()
-    return [doc for doc in data["documents"] if isinstance(doc, dict) and _is_ingestible(doc)]
+    base = (target_base or "").strip()
+    kid = (knowledge_id or "").strip()
+    out: list[dict[str, Any]] = []
+    for doc in data["documents"]:
+        if not isinstance(doc, dict) or not _is_ingestible(doc):
+            continue
+        if base and doc.get("target_base") != base:
+            continue
+        if kid and doc.get("knowledge_id") != kid:
+            continue
+        out.append(doc)
+    return out
 
 
 def _nonneg(value: object) -> int:
@@ -484,24 +666,42 @@ def normalize_ingest_response(raw: object, *, sent_count: int) -> dict[str, Any]
     }
 
 
-async def push_corpus_to_n8n() -> dict[str, Any]:
+async def push_corpus_to_n8n(
+    *,
+    target_base: str | None = None,
+    knowledge_id: str | None = None,
+    purge_superseded: bool = False,
+) -> dict[str, Any]:
     settings = get_settings()
     url = settings.resolved_knowledge_ingest_url
     if not url:
         raise KnowledgeIngestUnavailable(503, UNCONFIGURED_INGEST)
-    documents = ingestible_documents()
+    documents = ingestible_documents(target_base=target_base, knowledge_id=knowledge_id)
     if not documents:
         raise KnowledgeIngestUnavailable(
             400,
             "В корпусе нет карточек для ingest (все пропущены как injection_template).",
         )
+    payload: dict[str, Any] = {
+        "documents": documents,
+        "purge_superseded": bool(purge_superseded),
+    }
+    if target_base:
+        payload["target_base"] = target_base
+    if knowledge_id:
+        payload["knowledge_id"] = knowledge_id
     timeout = httpx.Timeout(INGEST_TIMEOUT_S, connect=15.0)
-    logger.info("knowledge ingest POST %s (%s documents)", url, len(documents))
+    logger.info(
+        "knowledge ingest POST %s (%s documents, purge_superseded=%s)",
+        url,
+        len(documents),
+        payload["purge_superseded"],
+    )
     try:
         async with httpx.AsyncClient(timeout=timeout, verify=settings.httpx_verify) as client:
             response = await client.post(
                 url,
-                json={"documents": documents},
+                json=payload,
                 headers={"Content-Type": "application/json", "Accept": "application/json"},
             )
     except httpx.TimeoutException as exc:

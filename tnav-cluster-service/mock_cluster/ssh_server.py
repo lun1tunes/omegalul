@@ -37,8 +37,12 @@ class _SandboxSftp(paramiko.SFTPServerInterface):
     root: Path = Path("/")
 
     def _real(self, path: str) -> Path:
-        cleaned = str(path or ".").lstrip("/")
-        target = (self.root / cleaned).resolve()
+        raw = str(path or ".")
+        if raw in (".", "./", ""):
+            return self.root
+        candidate = Path(raw)
+        # SshShell.write_bytes opens the absolute cluster path over SFTP (not a chroot-relative name).
+        target = candidate.resolve() if candidate.is_absolute() else (self.root / raw.lstrip("/")).resolve()
         if target != self.root and self.root not in target.parents:
             raise PermissionError(path)
         return target
@@ -110,7 +114,8 @@ class _Server(paramiko.ServerInterface):
     def __init__(self, user: str, password: str):
         self.user = user
         self.password = password
-        self.command = ""
+        self._lock = threading.Lock()
+        self._execs: dict[int, str] = {}
         self.exec_event = threading.Event()
 
     def check_auth_password(self, username: str, password: str) -> int:
@@ -126,9 +131,18 @@ class _Server(paramiko.ServerInterface):
         return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
 
     def check_channel_exec_request(self, channel, command) -> bool:  # noqa: ANN001
-        self.command = command.decode("utf-8", errors="replace") if isinstance(command, bytes) else str(command)
+        text = command.decode("utf-8", errors="replace") if isinstance(command, bytes) else str(command)
+        with self._lock:
+            self._execs[int(channel.get_id())] = text
         self.exec_event.set()
         return True
+
+    def take_exec(self, channel) -> str | None:  # noqa: ANN001
+        with self._lock:
+            cmd = self._execs.pop(int(channel.get_id()), None)
+            if not self._execs:
+                self.exec_event.clear()
+            return cmd
 
     def check_channel_pty_request(self, *args, **kwargs) -> bool:  # noqa: ANN002, ANN003
         return True
@@ -208,15 +222,21 @@ class MockClusterSshServer:
         self._clients.append(transport)
         try:
             transport.start_server(server=server)
-            channel = transport.accept(CHANNEL_TIMEOUT_S)
-            if channel is None:
-                return
-            if server.exec_event.wait(CHANNEL_TIMEOUT_S) and server.command:
-                self._run_command(channel, server.command)
-                channel.close()
-                return
+            # One TCP session = many exec channels + SFTP (SshShell keeps the client open).
+            # CASE-6aad611c-732bd3: closing after the first exec made hostname/pwd raise EOFError.
             while transport.is_active() and not self._stop.is_set():
-                time.sleep(0.05)  # SFTP обслуживает сам paramiko
+                channel = transport.accept(1.0)
+                if channel is None:
+                    continue
+                command = self._wait_exec(server, channel, timeout=0.4)
+                if command is None:
+                    # SFTP / subsystem: SFTPServer owns this channel — do not run a later exec on it.
+                    continue
+                self._run_command(channel, command)
+                try:
+                    channel.close()
+                except Exception:  # noqa: BLE001
+                    pass
         except Exception as exc:  # noqa: BLE001 — мок не должен падать из-за клиента
             logger.debug("mock ssh client failed: %s", exc)
         finally:
@@ -226,6 +246,16 @@ class MockClusterSshServer:
                 pass
             if transport in self._clients:
                 self._clients.remove(transport)
+
+    @staticmethod
+    def _wait_exec(server: _Server, channel: paramiko.Channel, *, timeout: float) -> str | None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            command = server.take_exec(channel)
+            if command is not None:
+                return command
+            server.exec_event.wait(max(0.0, min(0.05, deadline - time.monotonic())))
+        return server.take_exec(channel)
 
     def _run_command(self, channel: paramiko.Channel, command: str) -> None:
         """Команда исполняется в песочнице, как на кластере: своя оболочка, свой рабочий каталог."""

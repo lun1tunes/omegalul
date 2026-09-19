@@ -20,3 +20,7 @@ def _use_repo_kit() -> None:
 
 
 _use_repo_kit()
+
+from mas_agent_kit.env import load_service_env
+
+load_service_env(Path(__file__).resolve().parents[1], "demo-agent.env")

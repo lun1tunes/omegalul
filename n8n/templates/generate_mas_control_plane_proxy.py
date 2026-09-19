@@ -118,13 +118,16 @@ NORMALIZE_JS = (
     r"""const incomingBase=$json.body&&typeof $json.body==='object'?$json.body:$json;const incoming=(!String(incomingBase.operation||'').trim()&&(String((typeof $execution!=='undefined'&&$execution.mode)||'')==='manual'||String($json.webhookUrl||'').includes('webhook-test'))&&($json.clear===true||$json.clear===1||$json.clear==='true'||$json.wipe_data===true))?{...incomingBase,operation:'schema'}:incomingBase;
 function buildItem(raw){
 const op=String(raw.operation||'').trim();
-const allowed=new Set(['schema','wipe','create_case','get_case','list_cases','update_case','append_event','list_events','snapshot','append_error','list_errors','record_execution','case_id_for_execution','list_agents','upsert_agent','artifact_put','artifact_get']);
+const allowed=new Set(['schema','wipe','create_case','get_case','list_cases','update_case','append_event','list_events','snapshot','append_error','list_errors','record_execution','case_id_for_execution','list_agents','upsert_agent','artifact_put','artifact_get','list_knowledge_revisions']);
 if(!allowed.has(op)||op==='batch') throw new Error('unsupported operation');
 const s=v=>String(v??'');
 const j=v=>JSON.stringify(v??{});
 const caseId=s(raw.case_id).trim();
 const artifactId=s(raw.artifact_id).trim();
+const knowledgeId=s(raw.knowledge_id).trim();
+const targetBase=s(raw.target_base).trim();
 if(['create_case','get_case','update_case','append_event','list_events','snapshot','list_errors','artifact_put','artifact_get'].includes(op)&&!caseId) throw new Error('case_id is required');
+if(op==='list_knowledge_revisions'&&(!targetBase||!knowledgeId)) throw new Error('target_base and knowledge_id are required');
 if(['artifact_put','artifact_get'].includes(op)&&!artifactId) throw new Error('artifact_id is required');
 function truthy(v){return v===true||v===1||v==='1'||v==='true'||String(v??'').toLowerCase()==='true';}
 const flagClear=truthy($json.clear)||truthy($json.wipe_data);
@@ -161,6 +164,7 @@ else if(op==='upsert_agent'){const r=raw.row||{};if(!s(r.agent_id).trim()) throw
     + r""";}
 else if(op==='artifact_put'){query="INSERT INTO mas_artifacts(case_id,artifact_id,filename,mime_type,content,updated_at) VALUES($1,$2,$3,$4,decode($5,'base64'),now()) ON CONFLICT(case_id,artifact_id) DO UPDATE SET filename=EXCLUDED.filename,mime_type=EXCLUDED.mime_type,content=EXCLUDED.content,updated_at=now() RETURNING case_id,artifact_id,filename,mime_type,octet_length(content)::bigint AS bytes";params=[caseId,artifactId,s(raw.filename||artifactId).slice(0,512),s(raw.mime_type||'application/octet-stream').slice(0,255),s(raw.content_base64)];}
 else if(op==='artifact_get'){query="SELECT case_id,artifact_id,filename,mime_type,encode(content,'base64') AS content_base64,octet_length(content)::bigint AS bytes FROM mas_artifacts WHERE case_id=$1 AND artifact_id=$2";params=[caseId,artifactId];}
+else if(op==='list_knowledge_revisions'){query="SELECT target_base,knowledge_id,revision,knowledge_type,status,title,content_hash,author,stored_at FROM tnavigator_schedule_knowledge_documents_v1 WHERE target_base=$1 AND knowledge_id=$2 ORDER BY stored_at DESC, revision DESC";params=[targetBase,knowledgeId];}
 return {json:{...common,query,params}};
 }
 const topOp=String(incoming.operation||'').trim();
@@ -203,6 +207,7 @@ function formatOne(req, rows){
   else if(op==='list_events') result=rows;
   else if(op==='list_errors') result=rows;
   else if(op==='list_agents') result=rows;
+  else if(op==='list_knowledge_revisions') result=rows;
   else if(op==='case_id_for_execution') result=rows[0]?.case_id||null;
   else if(op==='artifact_get') result=rows[0]?{found:true,...rows[0]}:{found:false,case_id:req.case_id,artifact_id:req.artifact_id};
   else if(op==='schema'||op==='wipe') result={schema_ok:true,wiped:req.wiped===true};

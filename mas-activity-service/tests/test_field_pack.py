@@ -62,7 +62,7 @@ def test_check_once_pass_and_russian_table(field_mod, monkeypatch) -> None:
 
     monkeypatch.setattr(field_mod, "fetch_json", fake_fetch)
     ok, rows, expected = field_mod.check_once()
-    assert ok and expected == ver and len(rows) == 4
+    assert ok and expected == ver and len(rows) == 5
     assert all(r["ok"] and r["health"] == "OK" for r in rows)
     assert rows[3]["ready"] == "OK"
     table = field_mod.format_table(rows, expected=expected, ok=ok)
@@ -91,6 +91,24 @@ def test_check_once_fails_on_version_mismatch_and_down(field_mod, monkeypatch) -
     assert not math["ok"] and math["health"] == "FAIL"
     table = field_mod.format_table(rows, expected=expected, ok=ok)
     assert "Итог: FAIL" in table
+
+
+def test_cluster_down_is_skipped_and_does_not_fail_the_pack(field_mod, monkeypatch) -> None:
+    ver = field_mod.read_mas_version()
+
+    def fake_fetch(url: str):
+        if "8400" in url:
+            return 0, None, "connection refused"
+        if url.endswith("/ready"):
+            return 200, {"ready": True, "status": "ready"}, ""
+        return 200, {"status": "ok", "mas_version": ver}, ""
+
+    monkeypatch.setattr(field_mod, "fetch_json", fake_fetch)
+    ok, rows, expected = field_mod.check_once()
+    cluster = next(r for r in rows if r["title"] == "tNav Cluster")
+    assert ok and expected == ver
+    assert cluster["ok"] is True and cluster["health"] == "—"
+    assert "необязателен" in cluster["note"]
 
 
 def test_missing_version_file_fails(field_mod, monkeypatch) -> None:

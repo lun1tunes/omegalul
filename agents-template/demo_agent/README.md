@@ -5,11 +5,12 @@
 
 ```
 agents-template/demo_agent/
-├── app/__init__.py        # добавляет ../../mas-agent-kit в sys.path — kit это модуль репозитория, не pip-пакет
+├── app/__init__.py        # sys.path → mas-agent-kit; load_service_env(demo-agent.env) — как Activity, не CMD for /f
 ├── app/agent.py           # DemoAgent(AgentService): open_session, result, три инструмента, фоновая «долгая» работа; agent = DemoAgent()
 ├── app/main.py            # app = create_agent_app(agent) — /health + /agent-tools/* + /sessions/*
+├── app/__main__.py        # python -m app: host/port из demo-agent.env
 ├── tests/                 # pytest: контракт агента через HTTP + фейковый Activity (без n8n)
-├── requirements.txt       # fastapi/uvicorn/filelock — классический .venv + pip, только Windows wheels
+├── requirements.txt       # fastapi/uvicorn/filelock/python-dotenv — классический .venv + pip, только Windows wheels
 ├── demo-agent.env.example # порт, адрес Activity, длительность «расчёта»
 └── setup-windows.bat / start-windows.bat / start-linux.sh
 ```

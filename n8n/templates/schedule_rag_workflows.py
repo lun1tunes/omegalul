@@ -140,6 +140,7 @@ SELECT count(*)::int AS parent_tables_ready FROM tnavigator_schedule_knowledge_d
 
 
 LOOKUP_EXISTING_SQL = """SELECT d.target_base, d.knowledge_id, d.revision, d.content_hash,
+ d.body_json->>'text' AS stored_text,
  EXISTS (
    SELECT 1 FROM tnavigator_schedule_knowledge_v2 t
    WHERE t.metadata->>'target_base'=d.target_base
@@ -296,6 +297,7 @@ PORTABLE_BLOCK_FIELDS = (
     "contract", "contract_version", "target_base", "knowledge_type", "knowledge_id",
     "revision", "title", "keywords", "topics", "task_patterns", "simulator_family",
     "status", "author", "access_scope", "text", "summary", "examples", "schema_catalogue",
+    "source_hash",
 )
 
 
@@ -346,20 +348,26 @@ const parseJson=v=>{if(obj(v)||arr(v))return v;if(typeof v!=='string'||!v.trim()
 const fromPayload=p=>{if(!p)return[];let docs;if(arr(p.documents))docs=p.documents;else if(arr(p.schedule_knowledge_blocks))docs=p.schedule_knowledge_blocks;else if(arr(p))docs=p;else if(obj(p)&&(obj(p.schedule_knowledge_block)||p.contract==='schedule_knowledge_block'||clean(p.knowledge_id)))docs=[p];else docs=[];return docs.filter(d=>!skipDoc(d)).map(asBlock).filter(b=>b&&!skipDoc(b)&&clean(b.knowledge_id)&&clean(b.text||b.document_text));};
 const canon=b=>{const target_base=clean(b.target_base||(obj(b.metadata)&&b.metadata.target_base)||'schedule_mvp');const revision=clean(b.revision||b.document_revision||(obj(b.metadata)&&b.metadata.revision)||'1');return {...b,target_base,revision};};
 const dedupe=list=>{const by=new Map();for(const b of list){const x=canon(b);by.set(`${x.target_base}|${x.knowledge_id}|${x.revision}`,x);}return [...by.values()];};
+const truthy=v=>v===true||v===1||v==='t'||v==='true'||v==='True'||v==='yes'||v==='on';
 const raw0=$json||{};
 const inner=obj(raw0.body)||arr(raw0.body)||typeof raw0.body==='string'?raw0.body:raw0;
 const raw=typeof inner==='string'?(parseJson(inner)||{}):inner;
 const corpusRaw=clean((obj(raw)?raw.corpus_json:'')||raw0.corpus_json);
 const pasted=corpusRaw?parseJson(corpusRaw):null;
 const corpusInvalid=Boolean(corpusRaw)&&pasted==null;
-if(corpusInvalid)return[{json:{ingest_error:'CORPUS_JSON_INVALID',collect_error:'CORPUS_JSON_INVALID'}}];
+const purgeSuperseded=truthy((obj(raw)?raw.purge_superseded:null)??raw0.purge_superseded??(obj(raw0.body)&&raw0.body.purge_superseded));
+const knowledgeIdFilter=clean((obj(raw)?raw.knowledge_id:'')||raw0.knowledge_id||(obj(raw0.body)&&raw0.body.knowledge_id)||'');
+const targetBaseFilter=clean((obj(raw)?raw.target_base:'')||raw0.target_base||(obj(raw0.body)&&raw0.body.target_base)||'');
+if(corpusInvalid)return[{json:{ingest_error:'CORPUS_JSON_INVALID',collect_error:'CORPUS_JSON_INVALID',purge_superseded:purgeSuperseded}}];
 const explicit=pasted!=null||arr(raw.documents)||arr(raw.schedule_knowledge_blocks)||arr(raw0.documents)||arr(raw0.schedule_knowledge_blocks)||arr(raw);
 let blocks=fromPayload(pasted||raw);
 if(!blocks.length)blocks=fromPayload(raw0);
 if(!blocks.length&&!explicit){const one=asBlock(raw);if(one&&!skipDoc(one)&&clean(one.knowledge_id)&&clean(one.text||one.document_text))blocks=[one];}
+if(targetBaseFilter)blocks=blocks.filter(b=>clean(b.target_base||(obj(b.metadata)&&b.metadata.target_base)||'schedule_mvp')===targetBaseFilter);
+if(knowledgeIdFilter)blocks=blocks.filter(b=>clean(b.knowledge_id)===knowledgeIdFilter);
 blocks=dedupe(blocks);
-if(!blocks.length)return[{json:{collect_empty:true,collect_error:'CORPUS_EMPTY',ingest_error:'CORPUS_EMPTY'}}];
-return blocks.map(b=>({json:canon(b)}));
+if(!blocks.length)return[{json:{collect_empty:true,collect_error:'CORPUS_EMPTY',ingest_error:'CORPUS_EMPTY',purge_superseded:purgeSuperseded}}];
+return blocks.map(b=>({json:{...canon(b),purge_superseded:purgeSuperseded}}));
 """.strip()
 
 
@@ -398,42 +406,71 @@ return[{json:{ok,added,skipped,total_sent:totalSent,total_in_rag:totalInRag,stat
 SELECT_NEW_KNOWLEDGE_JS = r"""
 const clean=v=>typeof v==='string'?v.trim():'';
 const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
+const truthy=v=>v===true||v===1||v==='t'||v==='true'||v==='True'||v==='yes'||v==='on';
 const keyOf=row=>{
   const target=clean(row.target_base||(obj(row.metadata)&&row.metadata.target_base)||'schedule_mvp');
   const id=clean(row.knowledge_id);
   const rev=clean(row.revision||row.document_revision||'1');
   return `${target}|${id}|${rev}`;
 };
+const incomingHash=row=>clean(row.content_hash||row.source_hash||(obj(row.metadata)&&row.metadata.source_hash)||'').toLowerCase();
+const contentStatus=(ex,block)=>{
+  if(!ex)return 'new';
+  const incomingText=clean(block.text||block.document_text);
+  const storedText=clean(ex.stored_text);
+  if(storedText&&incomingText)return storedText===incomingText?'same':'changed';
+  const sh=clean(ex.content_hash).toLowerCase();
+  const ih=incomingHash(block);
+  if(sh&&ih)return sh===ih?'same':'changed';
+  return 'unknown';
+};
 const isErr=row=>Boolean(row.error)||row.success===false||(clean(row.level)==='error'&&clean(row.message));
 const lookupRows=$input.all().map(i=>i.json||{});
 const collected=$('Collect MAS knowledge blocks').all().map(i=>i.json||{});
+const purgeSuperseded=collected.some(j=>truthy(j&&j.purge_superseded));
 const collectError=collected.find(j=>j.ingest_error||j.collect_error);
 if(collectError){
-  return [{json:{ingest_action:'collect_failed',status:'needs_input',inserted:0,skipped:0,skipped_ids:[],findings:[{code:collectError.ingest_error||collectError.collect_error,severity:'error'}]}}];
+  return [{json:{ingest_action:'collect_failed',status:'needs_input',inserted:0,skipped:0,skipped_ids:[],purge_superseded:purgeSuperseded,findings:[{code:collectError.ingest_error||collectError.collect_error,severity:'error'}]}}];
 }
 if(lookupRows.some(isErr)){
-  return [{json:{ingest_action:'lookup_failed',status:'needs_input',inserted:0,skipped:0,skipped_ids:[],findings:[{code:'EXISTING_KNOWLEDGE_LOOKUP_FAILED',severity:'error'}]}}];
+  return [{json:{ingest_action:'lookup_failed',status:'needs_input',inserted:0,skipped:0,skipped_ids:[],purge_superseded:purgeSuperseded,findings:[{code:'EXISTING_KNOWLEDGE_LOOKUP_FAILED',severity:'error'}]}}];
 }
-const inVector=new Set();
-const truthy=v=>v===true||v===1||v==='t'||v==='true'||v==='True';
+const existing=new Map();
 for(const row of lookupRows){
-  if(clean(row.knowledge_id)&&truthy(row.in_vector))inVector.add(keyOf(row));
+  if(!clean(row.knowledge_id))continue;
+  const rec={content_hash:clean(row.content_hash),stored_text:clean(row.stored_text),in_vector:truthy(row.in_vector)};
+  const k=keyOf(row);
+  const prev=existing.get(k);
+  if(!prev||(rec.in_vector&&!prev.in_vector))existing.set(k,rec);
 }
 const candidates=collected.filter(j=>j&&clean(j.knowledge_id));
-const fresh=[],skipped=[],seen=new Set();
+const fresh=[],skipped=[],conflicts=[],seen=new Set();
 for(const block of candidates){
   const k=keyOf(block);
-  if(seen.has(k)||inVector.has(k)){
+  if(seen.has(k)){
     skipped.push({target_base:block.target_base||'schedule_mvp',knowledge_id:block.knowledge_id,revision:block.revision||'1'});
+    continue;
+  }
+  const ex=existing.get(k);
+  const st=contentStatus(ex,block);
+  if(ex&&ex.in_vector&&(st==='same'||st==='unknown')){
+    skipped.push({target_base:block.target_base||'schedule_mvp',knowledge_id:block.knowledge_id,revision:block.revision||'1'});
+    continue;
+  }
+  if(ex&&ex.in_vector&&st==='changed'){
+    conflicts.push({code:'CONTENT_HASH_CHANGED_BUMP_REVISION',severity:'error',target_base:block.target_base||'schedule_mvp',knowledge_id:block.knowledge_id,revision:block.revision||'1',stored_content_hash:ex.content_hash||null,incoming_content_hash:incomingHash(block)||null});
     continue;
   }
   seen.add(k);
   fresh.push(block);
 }
-if(!fresh.length){
-  return [{json:{ingest_action:'skip_all',status:'already_present',inserted:0,skipped:skipped.length,skipped_ids:skipped}}];
+if(conflicts.length){
+  return [{json:{ingest_action:'needs_input',status:'needs_input',inserted:0,skipped:skipped.length,skipped_ids:skipped,purge_superseded:purgeSuperseded,findings:conflicts}}];
 }
-return fresh.map(block=>({json:{ingest_action:'insert',schedule_knowledge_block:block,inserted:fresh.length,skipped:skipped.length,skipped_ids:skipped}}));
+if(!fresh.length){
+  return [{json:{ingest_action:'skip_all',status:'already_present',inserted:0,skipped:skipped.length,skipped_ids:skipped,purge_superseded:purgeSuperseded,findings:[]}}];
+}
+return fresh.map(block=>({json:{ingest_action:'insert',schedule_knowledge_block:block,inserted:fresh.length,skipped:skipped.length,skipped_ids:skipped,purge_superseded:purgeSuperseded,findings:[]}}));
 """
 
 
@@ -513,12 +550,16 @@ if (diff.ingest_action === 'lookup_failed' || diff.ingest_action === 'collect_fa
 const found = [...new Set(
   rows.map((row) => String(row.document_id || '')).filter((id) => id && id !== '(none)' && id !== '(missing document_id)')
 )];
-const missing = expected.filter((id) => !found.includes(id));
+const skippedIds = [...new Set(skipped.map((item) => {
+  if (item && typeof item === 'object') return String(item.knowledge_id || '').trim();
+  return String(item || '').trim();
+}).filter(Boolean))];
+const missing = expected.filter((id) => !found.includes(id) && !skippedIds.includes(id));
 const totalRows = Number(rows[0]?.total_rows ?? 0);
 const distinctDocuments = Number(rows[0]?.distinct_documents ?? found.length);
 const embeddingType = typeof rows[0]?.embedding_type === 'string' ? rows[0].embedding_type : null;
 const ok = expected.length
-  ? (missing.length === 0 && distinctDocuments >= expected.length && totalRows > 0)
+  ? (missing.length === 0 && totalRows > 0)
   : totalRows > 0;
 const duplicateIngestSuspected = ok && totalRows >= expected.length * 4;
 const warnings = [];
@@ -539,7 +580,7 @@ return [{ json: {
   embedding_type: embeddingType,
   duplicate_ingest_suspected: duplicateIngestSuspected,
   warnings,
-  note: 'expected_document_ids are this-run Collect knowledge_id values, not the import-time packaged snapshot. Packaged rows already in the parent table are skipped. Compare distinct_documents/found_document_ids, not only total_rows.',
+  note: 'expected_document_ids are this-run Collect knowledge_id values, not the import-time packaged snapshot. Keys skipped as already present (same text/hash) count as found. Compare distinct_documents/found_document_ids, not only total_rows.',
   documents: rows
     .filter((row) => row.document_id && row.document_id !== '(none)')
     .map((row) => ({
@@ -552,6 +593,23 @@ return [{ json: {
 """
 
 
+PREPARE_PURGE_JS = r"""
+const truthy=v=>v===true||v===1||v==='t'||v==='true'||v==='True'||v==='yes'||v==='on';
+let purge=false;
+try{purge=truthy(($('Select new MAS knowledge').first().json||{}).purge_superseded);}catch(_){}
+if(!purge){
+  try{purge=$('Collect MAS knowledge blocks').all().some(i=>truthy((i.json||{}).purge_superseded));}catch(_){}
+}
+if(!purge){
+  return [{json:{query:'SELECT 0::int AS chunks_purged',sql_parameters:[]}}];
+}
+return [{json:{
+  query: "WITH deleted AS (DELETE FROM tnavigator_schedule_knowledge_v2 t WHERE coalesce(t.metadata->>'knowledge_status','')='superseded' RETURNING t.id) SELECT count(*)::int AS chunks_purged FROM deleted",
+  sql_parameters: [],
+}}];
+""".strip()
+
+
 def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow, set_fields):
     packaged = packaged_knowledge_blocks()
     pg = _credential("REPLACE: SCHEDULE PostgreSQL / PGVector credential")
@@ -560,9 +618,10 @@ def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow, set
         {
             "authentication": "n8nUserAuth",
             "formTitle": "MAS knowledge ingestion",
-            "formDescription": "Field path: Activity Knowledge → Загрузить в RAG. Or paste the whole excel-agent-operating-guide.documents.json sheet. Existing target_base+knowledge_id+revision rows are skipped; injection_template is ignored. One-card fields below are optional.",
+            "formDescription": "Field path: Activity Knowledge → Загрузить в RAG. Or paste the whole excel-agent-operating-guide.documents.json sheet. Skip only when the same target_base+knowledge_id+revision is already in the vector table AND text/content_hash match. Same id/rev with different text → bump revision (needs_input). injection_template is ignored. One-card fields and purge_superseded are optional.",
             "formFields": {"values": [
                 {"fieldName": "corpus_json", "fieldLabel": "Paste the full knowledge sheet (excel-agent-operating-guide.documents.json)", "fieldType": "textarea", "requiredField": False},
+                {"fieldName": "purge_superseded", "fieldLabel": "purge_superseded: delete vector chunks marked superseded", "fieldType": "dropdown", "fieldOptions": {"values": [{"option": "false"}, {"option": "true"}]}, "requiredField": False},
                 {"fieldName": "target_base", "fieldLabel": "Optional one-card: target_base (schedule_mvp | excel_protocol | orchestrator_routing | specialist_template)", "fieldType": "text", "requiredField": False},
                 {"fieldName": "knowledge_type", "fieldLabel": "Optional one-card: keyword_instruction, worked_example, protocol_instruction, routing_card, capability_instruction", "fieldType": "text", "requiredField": False},
                 {"fieldName": "knowledge_id", "fieldLabel": "Optional one-card: stable knowledge ID", "fieldType": "text", "requiredField": False},
@@ -582,7 +641,7 @@ def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow, set
     )
     example = {"schema_version": "1.1.0", "title": "MAS knowledge corpus", "documents": [{"contract": "schedule_knowledge_block", "contract_version": "1.0", "target_base": "schedule_mvp", "knowledge_type": "keyword_instruction", "knowledge_id": "wconprod-forecast-v1", "revision": "1", "title": "WCONPROD forecast control", "keywords": ["WCONPROD"], "topics": ["Контроль по скважинам", "Прогноз"], "task_patterns": ["задать лимит по воде"], "status": "active", "author": "department-hydrodynamic-expert", "access_scope": "petroleum-engineering", "text": "Полная самодостаточная инструкция."}]}
     ns = [
-        note("MAS ingestion README", (-1240, -700), "## MAS Knowledge Ingestion — n8n 2.30.8\n\nOne ingest for Excel, Orchestrator, and Schedule (`target_base`). Field path: Activity Knowledge → **Загрузить в RAG** (`POST /webhook/mas-knowledge-ingest`). That posts the live `excel-agent-operating-guide.documents.json` sheet. Form paste and Execute Sub-workflow still work. Manual trigger uses the **Packaged MAS corpus** Set snapshot from import time (not the live file).\n\nSkip only when current chunks already exist in `tnavigator_schedule_knowledge_v2` (same `target_base` + `knowledge_id` + `revision`). Parent-only rows are re-embedded. Ignores `injection_template`. To update text, bump `revision`. Embeddings: `baai/bge-m3`, Dimensions empty (provider default 1024). Same model on Ingestion and Retrieval. Do not mix with `tnavigator_schedule_knowledge_v1`. Activate this workflow so the Activity webhook is registered.", 620, 620),
+        note("MAS ingestion README", (-1240, -700), "## MAS Knowledge Ingestion — n8n 2.30.8\n\nOne ingest for Excel, Orchestrator, and Schedule (`target_base`). Field path: Activity Knowledge → **Загрузить в RAG** (`POST /webhook/mas-knowledge-ingest`). That posts the live `excel-agent-operating-guide.documents.json` sheet. Optional body: `knowledge_id`/`target_base` (one card), `purge_superseded` (delete superseded chunks). Form paste and Execute Sub-workflow still work. Manual trigger uses the **Packaged MAS corpus** Set snapshot from import time (not the live file).\n\nSkip only when current chunks exist for the same `target_base` + `knowledge_id` + `revision` **and** stored text/`content_hash` match. Same id/rev with different text → `CONTENT_HASH_CHANGED_BUMP_REVISION` (`needs_input`). Parent-only rows are re-embedded. Ignores `injection_template`. Embeddings: `baai/bge-m3`, Dimensions empty (provider default 1024). Same model on Ingestion and Retrieval. Do not mix with `tnavigator_schedule_knowledge_v1`. Activate this workflow so the Activity webhook is registered.", 620, 680),
         node(
             "Activity knowledge ingest webhook",
             "n8n-nodes-base.webhook",
@@ -618,6 +677,8 @@ def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow, set
         node("PostgreSQL — upsert full parent knowledge", "n8n-nodes-base.postgres", 2.6, (1460, -180), {"operation": "executeQuery", "query": PARENT_UPSERT_SQL, "options": {"queryReplacement": "={{ $json.sql_parameters }}", "queryBatching": "single", "largeNumbersOutput": "text", "replaceEmptyStrings": False}}, credentials=pg),
         code("Prepare approved schema catalogue persistence", (1700, -180), PREPARE_CATALOGUE_PERSIST, executeOnce=True),
         node("PostgreSQL — upsert approved schema catalogue", "n8n-nodes-base.postgres", 2.6, (1940, -180), {"operation": "executeQuery", "query": CATALOGUE_UPSERT_SQL, "options": {"queryReplacement": "={{ $json.sql_parameters }}", "queryBatching": "single", "largeNumbersOutput": "text", "replaceEmptyStrings": False}}, credentials=pg, alwaysOutputData=True),
+        code("Prepare superseded chunk purge", (2180, -40), PREPARE_PURGE_JS, executeOnce=True),
+        node("Postgres — purge superseded chunks", "n8n-nodes-base.postgres", 2.6, (2420, -40), {"operation": "executeQuery", "query": "={{ $json.query }}", "options": {"queryReplacement": "={{ $json.sql_parameters }}", "queryBatching": "single", "largeNumbersOutput": "text", "replaceEmptyStrings": False}}, credentials=pg, executeOnce=True, alwaysOutputData=True),
         code("Prepare RAG inventory query", (1220, 80), INVENTORY_PREPARE_JS, executeOnce=True),
         node("Postgres — inspect RAG table contents", "n8n-nodes-base.postgres", 2.6, (1460, 80), {"operation": "executeQuery", "query": "={{ $json.query }}", "options": {"queryBatching": "single", "largeNumbersOutput": "text", "replaceEmptyStrings": False}}, credentials=pg, executeOnce=True, alwaysOutputData=True),
         code("Summarize RAG inventory", (1700, 80), INVENTORY_SUMMARIZE_JS, executeOnce=True, notesInFlow=True, notes="status=rag_inventory_ok means every knowledge_id from this run's Collect is present. skipped_existing lists keys that already have current chunks in the vector table."),
@@ -635,7 +696,7 @@ def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow, set
     connect(c, "Lookup existing knowledge keys", "Select new MAS knowledge")
     connect(c, "Select new MAS knowledge", "New knowledge to insert?")
     connect(c, "New knowledge to insert?", "Normalize approved SCHEDULE knowledge", idx=0)
-    connect(c, "New knowledge to insert?", "Prepare RAG inventory query", idx=1)
+    connect(c, "New knowledge to insert?", "Prepare superseded chunk purge", idx=1)
     connect(c, "Normalize approved SCHEDULE knowledge", "Knowledge approved for ingestion?")
     connect(c, "Knowledge approved for ingestion?", "PGVector — insert approved SCHEDULE knowledge", idx=0)
     connect(c, "Knowledge approved for ingestion?", "Return SCHEDULE ingestion gate", idx=1)
@@ -647,12 +708,14 @@ def build_ingestion(*, node, note, code, trigger, ifnode, connect, workflow, set
     connect(c, "Prepare full parent knowledge persistence", "PostgreSQL — upsert full parent knowledge")
     connect(c, "PostgreSQL — upsert full parent knowledge", "Prepare approved schema catalogue persistence")
     connect(c, "Prepare approved schema catalogue persistence", "PostgreSQL — upsert approved schema catalogue")
-    connect(c, "PostgreSQL — upsert approved schema catalogue", "Prepare RAG inventory query")
+    connect(c, "PostgreSQL — upsert approved schema catalogue", "Prepare superseded chunk purge")
+    connect(c, "Prepare superseded chunk purge", "Postgres — purge superseded chunks")
+    connect(c, "Postgres — purge superseded chunks", "Prepare RAG inventory query")
     connect(c, "Prepare RAG inventory query", "Postgres — inspect RAG table contents")
     connect(c, "Postgres — inspect RAG table contents", "Summarize RAG inventory")
     connect(c, "Summarize RAG inventory", "Shape MAS ingest response")
     connect(c, "Return SCHEDULE ingestion gate", "Shape MAS ingest response")
-    return workflow("MAS — Knowledge Ingestion", "Single MAS ingest: Activity Knowledge webhook, form paste, or packaged Set snapshot. Skips a card only when current chunks exist in the vector table; ignores injection_template.", ns, c, "schedule_knowledge_ingest/v1")
+    return workflow("MAS — Knowledge Ingestion", "Single MAS ingest: Activity Knowledge webhook, form paste, or packaged Set snapshot. Skips a card only when current chunks exist and text/content_hash match; optional purge_superseded; ignores injection_template.", ns, c, "schedule_knowledge_ingest/v1")
 
 
 def _postgres(name, pos, query, params):

@@ -6,6 +6,7 @@
   const flashEl = document.getElementById("flash");
   const addBtn = document.getElementById("addBtn");
   const ingestBtn = document.getElementById("ingestBtn");
+  const purgeSuperseded = document.getElementById("purgeSuperseded");
   const createPanel = document.getElementById("createPanel");
   const createId = document.getElementById("createId");
   const createType = document.getElementById("createType");
@@ -67,6 +68,8 @@
   let draft = null;
   let detailCache = new Map();
   let createDraft = { keywords: [], topics: [], task_patterns: [] };
+  let activeTag = "";
+  let searchTimer = null;
 
   function showFlash(message, { ok = false, ms } = {}) {
     if (flashTimer) {
@@ -165,6 +168,7 @@
       btn.append(label, count);
       btn.addEventListener("click", () => {
         if (agentSelect) agentSelect.value = ns.id;
+        if (ns.id !== currentBase) activeTag = "";
         loadDocuments(ns.id);
       });
       agentTabs.append(btn);
@@ -180,16 +184,27 @@
     }
   }
 
+  function documentsUrl(base, { q = "", tag = "" } = {}) {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (tag) params.set("tag", tag);
+    const qs = params.toString();
+    return `/v1/knowledge/${encodeURIComponent(base)}${qs ? `?${qs}` : ""}`;
+  }
+
+  function setTagFilter(tag) {
+    const next = String(tag || "").trim();
+    activeTag = activeTag && activeTag.toLowerCase() === next.toLowerCase() ? "" : next;
+    loadDocuments(currentBase);
+  }
+
   function applySearch() {
     if (!kbSearch) return;
-    const q = kbSearch.value.trim().toLowerCase();
-    let shown = 0;
-    for (const card of cardList.querySelectorAll(".kb-card")) {
-      const hit = !q || String(card.dataset.search || "").includes(q);
-      card.hidden = !hit;
-      if (hit) shown += 1;
-    }
-    if (kbCount) kbCount.textContent = q ? `${shown} из ${cardList.querySelectorAll(".kb-card").length}` : "";
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      searchTimer = null;
+      loadDocuments(currentBase);
+    }, 180);
   }
 
   function syncAddButton() {
@@ -304,9 +319,14 @@
         row.append(empty);
       } else {
         for (const tag of values) {
-          const el = document.createElement("span");
-          el.className = `kb-chip ${group.key === "keywords" ? "kw" : ""}`;
-          el.textContent = tag;
+        const el = document.createElement("button");
+        el.type = "button";
+        el.className = `kb-chip ${group.key === "keywords" ? "kw" : ""} is-filter` + (activeTag && activeTag.toLowerCase() === String(tag).toLowerCase() ? " is-active" : "");
+        el.textContent = tag;
+        el.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          setTagFilter(tag);
+        });
           row.append(el);
         }
       }
@@ -330,9 +350,14 @@
       const row = document.createElement("div");
       row.className = "kb-chips";
       for (const tag of values.slice(0, group.key === "keywords" ? 10 : 6)) {
-        const el = document.createElement("span");
-        el.className = `kb-chip ${group.key === "keywords" ? "kw" : ""}`;
+        const el = document.createElement("button");
+        el.type = "button";
+        el.className = `kb-chip ${group.key === "keywords" ? "kw" : ""} is-filter` + (activeTag && activeTag.toLowerCase() === String(tag).toLowerCase() ? " is-active" : "");
         el.textContent = tag;
+        el.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          setTagFilter(tag);
+        });
         row.append(el);
       }
       const more = values.length - (group.key === "keywords" ? 10 : 6);
@@ -454,6 +479,8 @@
       keywords: (draft && draft.keywords) || [],
       topics: (draft && draft.topics) || [],
       task_patterns: (draft && draft.task_patterns) || [],
+      knowledge_type: (draft && draft.knowledge_type) || "",
+      status: (draft && draft.status) || "",
     };
   }
 
@@ -467,6 +494,8 @@
       || !sameList(fields.keywords, saved.keywords)
       || !sameList(fields.topics, saved.topics)
       || !sameList(fields.task_patterns, saved.task_patterns)
+      || (fields.knowledge_type && fields.knowledge_type !== String(saved.knowledge_type || ""))
+      || (fields.status && fields.status !== String(saved.status || ""))
     );
   }
 
@@ -494,6 +523,8 @@
             keywords: fields.keywords,
             topics: fields.topics,
             task_patterns: fields.task_patterns,
+            knowledge_type: fields.knowledge_type || undefined,
+            status: fields.status || undefined,
           }),
         },
       );
@@ -598,6 +629,36 @@
       titleInput.maxLength = 300;
       titleField.append(titleInput);
 
+      const typeField = document.createElement("label");
+      typeField.className = "who-field";
+      typeField.innerHTML = "<span>Тип карточки</span>";
+      const typeSelect = document.createElement("select");
+      const ns = currentNamespace();
+      const types = (ns && ns.knowledge_types) || [draft.knowledge_type || "keyword_instruction"];
+      for (const t of types) {
+        const opt = document.createElement("option");
+        opt.value = t;
+        opt.textContent = typeLabel(t);
+        if (t === draft.knowledge_type) opt.selected = true;
+        typeSelect.append(opt);
+      }
+      typeSelect.addEventListener("change", () => { draft.knowledge_type = typeSelect.value; });
+      typeField.append(typeSelect);
+
+      const statusField = document.createElement("label");
+      statusField.className = "who-field";
+      statusField.innerHTML = "<span>Статус</span>";
+      const statusSelect = document.createElement("select");
+      for (const st of ["active", "draft", "superseded"]) {
+        const opt = document.createElement("option");
+        opt.value = st;
+        opt.textContent = statusLabel(st);
+        if (st === (draft.status || "active")) opt.selected = true;
+        statusSelect.append(opt);
+      }
+      statusSelect.addEventListener("change", () => { draft.status = statusSelect.value; });
+      statusField.append(statusSelect);
+
       const tagWrap = document.createElement("div");
       tagWrap.className = "kb-tag-fields";
       for (const group of TAG_GROUPS) {
@@ -621,7 +682,7 @@
       hint.className = "kb-ingest";
       hint.textContent = "Сохранение обновляет карточку. Чтобы агент начал её учитывать в поиске, нажмите «Загрузить в RAG».";
 
-      body.append(actions, titleField, tagWrap, textLabel, hint);
+      body.append(actions, titleField, typeField, statusField, tagWrap, textLabel, hint);
 
       cancelBtn.addEventListener("click", () => {
         editingId = null;
@@ -648,7 +709,11 @@
     editBtn.type = "button";
     editBtn.className = "btn";
     editBtn.textContent = "Редактировать";
-    actions.append(editBtn);
+    const ingestOne = document.createElement("button");
+    ingestOne.type = "button";
+    ingestOne.className = "btn btn-quiet";
+    ingestOne.textContent = "Загрузить эту карточку";
+    actions.append(editBtn, ingestOne);
 
     const tags = makeTagView(doc);
 
@@ -668,6 +733,80 @@
     body.append(actions, tags, md);
     if (meta.textContent) body.append(meta);
 
+    const schema = doc.schema_catalogue;
+    if (schema && Array.isArray(schema.schemas) && schema.schemas.length) {
+      const titleEl = document.createElement("div");
+      titleEl.className = "kb-section-title";
+      titleEl.textContent = "Схема записей SCHEDULE";
+      const list = document.createElement("ul");
+      list.className = "kb-schema";
+      for (const entry of schema.schemas) {
+        const li = document.createElement("li");
+        const fields = Array.isArray(entry.field_names) && entry.field_names.length
+          ? ` · ${entry.field_names.join(", ")}`
+          : "";
+        li.innerHTML = `<span>${escapeHtml(entry.keyword || entry.schema_id || "")}</span><span class="kb-schema-fields">${escapeHtml(fields)}</span>`;
+        list.append(li);
+      }
+      body.append(titleEl, list);
+    }
+
+    const examples = Array.isArray(doc.examples) ? doc.examples.filter((item) => item && (item.title || item.task)) : [];
+    if (examples.length) {
+      const titleEl = document.createElement("div");
+      titleEl.className = "kb-section-title";
+      titleEl.textContent = "Примеры";
+      const list = document.createElement("ul");
+      list.className = "kb-examples";
+      for (const ex of examples) {
+        const li = document.createElement("li");
+        li.textContent = [ex.title, ex.task].filter(Boolean).join(" — ");
+        list.append(li);
+      }
+      body.append(titleEl, list);
+    }
+
+    const revTitle = document.createElement("div");
+    revTitle.className = "kb-section-title";
+    revTitle.textContent = "Ревизии";
+    const revList = document.createElement("ul");
+    revList.className = "kb-rev-list";
+    revList.textContent = "Загрузка…";
+    body.append(revTitle, revList);
+    fetch(`/v1/knowledge/${encodeURIComponent(doc.target_base)}/${encodeURIComponent(doc.knowledge_id)}/revisions`)
+      .then((res) => res.json().then((payload) => ({ ok: res.ok, payload })))
+      .then(({ ok, payload }) => {
+        revList.textContent = "";
+        const rows = ok && Array.isArray(payload.revisions) ? payload.revisions : [];
+        if (!rows.length) {
+          const li = document.createElement("li");
+          li.textContent = `версия ${doc.revision || "1"} · ${statusLabel(doc.status)}`;
+          revList.append(li);
+          return;
+        }
+        for (const row of rows) {
+          const li = document.createElement("li");
+          li.textContent = [
+            `версия ${row.revision}`,
+            statusLabel(row.status),
+            row.stored_at ? String(row.stored_at).replace("T", " ").slice(0, 16) : null,
+            row.source === "corpus" ? "в файле" : null,
+          ].filter(Boolean).join(" · ");
+          revList.append(li);
+        }
+      })
+      .catch(() => {
+        revList.textContent = "";
+        const li = document.createElement("li");
+        li.textContent = `версия ${doc.revision || "1"}`;
+        revList.append(li);
+      });
+
+    ingestOne.addEventListener("click", () => ingestCorpus({
+      target_base: doc.target_base,
+      knowledge_id: doc.knowledge_id,
+    }));
+
     editBtn.addEventListener("click", () => {
       editingId = doc.knowledge_id;
       draft = {
@@ -676,6 +815,8 @@
         keywords: [...(doc.keywords || [])],
         topics: [...(doc.topics || [])],
         task_patterns: [...(doc.task_patterns || [])],
+        knowledge_type: doc.knowledge_type || "",
+        status: doc.status || "active",
       };
       renderBody(cardEl, doc, { editing: true });
     });
@@ -770,7 +911,8 @@
       return;
     }
 
-    const res = await fetch(`/v1/knowledge/documents?target_base=${encodeURIComponent(base)}`);
+    const q = kbSearch ? kbSearch.value.trim() : "";
+    const res = await fetch(documentsUrl(base, { q, tag: activeTag }));
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       showFlash(typeof data.detail === "string" ? data.detail : "Не удалось загрузить список.");
@@ -779,11 +921,12 @@
     const docs = Array.isArray(data.documents) ? data.documents : [];
     const ns = namespaces.find((item) => item.id === base);
     syncAgentTabs();
+    const total = ns && ns.document_count != null ? ns.document_count : docs.length;
+    const filterBits = [q ? `поиск «${q}»` : "", activeTag ? `тег «${activeTag}»` : ""].filter(Boolean);
     agentHint.textContent = ns
-      ? `${ns.label} · ${pluralCards(docs.length)} · ${[...new Set((ns.knowledge_types || []).map(typeLabel))].join(", ") || "—"}`
+      ? `${ns.label} · ${pluralCards(q || activeTag ? docs.length : total)} · ${[...new Set((ns.knowledge_types || []).map(typeLabel))].join(", ") || "—"}`
       : pluralCards(docs.length);
-    if (kbSearch) kbSearch.value = "";
-    if (kbCount) kbCount.textContent = "";
+    if (kbCount) kbCount.textContent = filterBits.length ? `${docs.length}` : "";
 
     if (!docs.length) {
       listEmpty.hidden = false;
@@ -813,19 +956,28 @@
 
   agentSelect.addEventListener("change", () => {
     const base = agentSelect.value.trim();
+    activeTag = "";
     loadDocuments(base);
   });
   if (kbSearch) kbSearch.addEventListener("input", applySearch);
 
   addBtn.addEventListener("click", () => openCreatePanel());
 
-  ingestBtn.addEventListener("click", async () => {
+  async function ingestCorpus(extra = {}) {
     ingestBtn.disabled = true;
     try {
       const ready = await persistPendingBeforeIngest();
       if (!ready) return;
       showFlash("Загрузка в RAG… это может занять несколько минут.", { ok: true, ms: 0 });
-      const res = await fetch("/v1/knowledge/ingest", { method: "POST" });
+      const body = {
+        purge_superseded: Boolean(purgeSuperseded && purgeSuperseded.checked),
+        ...extra,
+      };
+      const res = await fetch("/v1/knowledge/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         showFlash(detailMessage(data, `Загрузка в RAG не удалась (${res.status})`));
@@ -834,13 +986,24 @@
       const message = String(data.message || "").trim()
         || `Добавлено ${data.added ?? 0}, пропущено ${data.skipped ?? 0}, всего в RAG ${data.total_in_rag ?? "—"}.`;
       showFlash(message, { ok: Boolean(data.ok), ms: 12000 });
-      if (currentBase) await loadDocuments(currentBase);
+      await refreshNamespaceCounts();
+      if (currentBase) await loadDocuments(currentBase, extra.knowledge_id ? { keepOpen: extra.knowledge_id } : {});
     } catch (_) {
       showFlash("Сеть недоступна при загрузке в RAG.");
     } finally {
       ingestBtn.disabled = false;
     }
-  });
+  }
+
+  async function refreshNamespaceCounts() {
+    const res = await fetch("/v1/knowledge/namespaces");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !Array.isArray(data.namespaces)) return;
+    namespaces = data.namespaces;
+    renderAgentTabs();
+  }
+
+  ingestBtn.addEventListener("click", () => ingestCorpus());
   createCancel.addEventListener("click", () => closeCreatePanel());
   createSave.addEventListener("click", async () => {
     createSave.disabled = true;

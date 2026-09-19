@@ -7,19 +7,20 @@ Runs, in order, and prints a summary table (stops at the first failing stage unl
   smokes     node n8n/tests/*-smoke.js  (workflow structure + Code-node logic)
   pytest     Agent Kit, Activity, Schedule Builder, Excel Tools, Demo Agent (template) test suites
   combat     PUBLISH_ACTIVITY=0 combat-dates-revise/run_integration_cases.py (offline engine check)
-  live       (only with --live) lab_soft_redeploy (--hot if lab healthy / no JSON drift) + 12 cases.
+  live       (only with --live) lab_soft_redeploy (--hot if lab healthy / no JSON drift) + 13 cases.
              Six commissioning in one pool (LIVE_FIVE_WORKERS=6, 9 when --repeat>1);
              then demo long-job ∥ three_agent_chain ∥ excel_datasets (extract + apply + gap);
-             then recovery (agent_down, then rework ∥ step_limit). Wall ~20 min including --repeat 3.
+             then tnav_cluster (serial: it enables its registry row); then recovery.
+             Wall ~25 min including --repeat 3.
              --repeat N redeploys once, runs each of the six commissioning specs N times in that pool
-             (same α2 INC / thresholds), demo/chain/datasets/recovery once, prints a repeatability summary.
+             (same α2 INC / thresholds), demo/chain/datasets/cluster/recovery once, prints a repeatability summary.
   bundle     (only with --bundle) zip for field import: core workflows in runtime_import_order,
              VERSION, docs.md (field runbook), field_check, Windows bats, stamped .env.example.
 
 Usage:
   python3 scripts/mas_gate.py                 # offline gate (≈1 min)
   python3 scripts/mas_gate.py --live          # offline gate + lab redeploy + 13 live cases (≤25 min)
-  python3 scripts/mas_gate.py --live --repeat 3   # α2: 6×N commissioning + one 12-set, ≤20 min
+  python3 scripts/mas_gate.py --live --repeat 3   # α2: 6×N commissioning + one 13-set, ≤25 min
   python3 scripts/mas_gate.py --bundle             # write dist/mas-<VERSION>.zip (field import pack)
   python3 scripts/mas_gate.py --only smokes,pytest
   python3 scripts/mas_gate.py --only live          # skip offline after a GREEN mas_gate.py; implies --live
@@ -344,9 +345,6 @@ def _live_pass(cases: list[str], *, five_repeat: int = 1) -> tuple[bool, str, li
         second.append(("simulation-model-example/run_live_demo_agent.py", demo_sel, 3600, None))
     if want_datasets:
         second.append(("simulation-model-example/run_live_excel_datasets.py", [], 2400, None))
-    if cluster_sel:
-        # Кластерный агент включает свою строку реестра — идёт во второй волне, не с шестью commissioning.
-        second.append(("simulation-model-example/run_live_tnav_cluster.py", cluster_sel, 2400, None))
     if len(second) == 1:
         script, args, timeout, extra_env = second[0]
         part_ok, part_note, part_rows = _run_live_script(script, args, timeout=timeout, extra_env=extra_env)
@@ -364,12 +362,79 @@ def _live_pass(cases: list[str], *, five_repeat: int = 1) -> tuple[bool, str, li
                 ok = ok and part_ok
                 notes.append(part_note)
                 reports.extend(part_rows)
+    if cluster_sel:
+        # PUT /agents/tnav_cluster enabled=true is process-wide. Running in parallel with
+        # demo/datasets leaked route-cluster-calculation into their step-0 RAG (CASE-6aad611d-4df69e).
+        cl_ok, cl_note, cl_rows = _run_live_script(
+            "simulation-model-example/run_live_tnav_cluster.py", cluster_sel, timeout=2400
+        )
+        ok = ok and cl_ok
+        notes.append(cl_note)
+        reports.extend(cl_rows)
     if rec_sel:
         rec_ok, rec_note, rec_rows = _run_live_script("simulation-model-example/run_live_demo_agent.py", rec_sel, timeout=3600)
         ok = ok and rec_ok
         notes.append(rec_note)
         reports.extend(rec_rows)
     return ok, "\n".join(n for n in notes if n), reports
+
+
+def _activity_base() -> str:
+    port = os.environ.get("MAS_ACTIVITY_HOST_PORT", "").strip()
+    if not port:
+        env_path = ROOT / ".env"
+        if env_path.is_file():
+            for line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                raw = line.strip()
+                if raw.startswith("MAS_ACTIVITY_HOST_PORT="):
+                    port = raw.split("=", 1)[1].strip().strip('"').strip("'")
+                    break
+    return f"http://127.0.0.1:{port or '8200'}"
+
+
+def _live_knowledge_probe() -> tuple[bool, str]:
+    """8.7: Activity knowledge search/counts/local marked against the running lab."""
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    base = _activity_base()
+    last_exc: Exception | None = None
+    html = ""
+    namespaces: dict = {}
+    listed: dict = {}
+    for _attempt in range(8):
+        try:
+            with urllib.request.urlopen(base + "/knowledge", timeout=20) as resp:
+                html = resp.read().decode("utf-8", "replace")
+            with urllib.request.urlopen(base + "/v1/knowledge/namespaces", timeout=20) as resp:
+                namespaces = json.loads(resp.read().decode("utf-8"))
+            q = urllib.parse.urlencode({"q": "DATES"})
+            with urllib.request.urlopen(base + f"/v1/knowledge/schedule_mvp?{q}", timeout=20) as resp:
+                listed = json.loads(resp.read().decode("utf-8"))
+            last_exc = None
+            break
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+            last_exc = exc
+            time.sleep(2)
+    if last_exc is not None:
+        return False, f"knowledge probe failed: {last_exc}"
+    banned = [name for name in ("fonts.googleapis.com", "fonts.gstatic.com", "cdn.jsdelivr.net") if name in html]
+    if banned:
+        return False, f"knowledge HTML still loads {banned}"
+    if "/static/vendor/marked.min.js" not in html:
+        return False, "knowledge HTML missing local marked"
+    by_id = {item.get("id"): item for item in namespaces.get("namespaces") or [] if isinstance(item, dict)}
+    schedule = by_id.get("schedule_mvp") or {}
+    if schedule.get("label") != "Сборщик расписания":
+        return False, f"schedule_mvp label={schedule.get('label')!r}"
+    count = schedule.get("document_count")
+    if not isinstance(count, int) or count < 1:
+        return False, f"schedule_mvp document_count={count!r}"
+    dates = int(listed.get("count") or 0)
+    if dates < 1:
+        return False, f"GET /v1/knowledge/schedule_mvp?q=DATES count={listed.get('count')}"
+    return True, f"knowledge probe ok namespaces={len(by_id)} schedule_mvp={count} dates={dates}"
 
 
 def stage_live(cases: list[str], *, repeat: int = 1) -> tuple[bool, str]:
@@ -380,11 +445,15 @@ def stage_live(cases: list[str], *, repeat: int = 1) -> tuple[bool, str]:
     code, out = run(cmd, timeout=1200, stream=True)
     if code != 0:
         return False, "lab_soft_redeploy failed:\n" + tail(out, 20)
+    print("-- knowledge API/UI probe", flush=True)
+    probe_ok, probe_note = _live_knowledge_probe()
+    if not probe_ok:
+        return False, probe_note
     n = max(1, int(repeat or 1))
     if n > 1:
         print(f"-- live commissioning ×{n} in one pool; demo/chain/datasets/recovery once", flush=True)
     part_ok, part_note, reports = _live_pass(cases, five_repeat=n)
-    notes = [part_note]
+    notes = [probe_note, part_note]
     ok = part_ok
     if n > 1:
         summary_ok, summary = _repeat_summary(reports, n)
@@ -415,6 +484,10 @@ BUNDLE_EXTRAS = (
     "mas-activity-service/start-windows.bat",
     "mas-activity-service/check-windows.bat",
     "mas-activity-service/mas-activity.env.example",
+    "tnav-cluster-service/setup-windows.bat",
+    "tnav-cluster-service/start-windows.bat",
+    "tnav-cluster-service/check-windows.bat",
+    "tnav-cluster-service/tnav-cluster.env.example",
     "n8n/import-manifest.json",
 )
 
@@ -453,8 +526,8 @@ def build_bundle(dest_dir: Path | None = None) -> Path:
         "Код FastAPI — из распаковки проекта (project_pack / checkout), не из этого zip.\n\n"
         "1. Импорт n8n: workflows/ в порядке IMPORT_ORDER.txt (ничего не активировать).\n"
         "2. Чек-лист: docs.md, раздел «Развёртывание».\n"
-        "3. Windows: setup-windows.bat → start-windows.bat в четырёх каталогах сервисов.\n"
-        "4. check-all-windows.bat (или python scripts/field_check.py) — все строки OK, версия = VERSION.\n"
+        "3. Windows: setup-windows.bat → start-windows.bat в каталогах сервисов (кластерный — по желанию, docs.md §8).\n"
+        "4. check-all-windows.bat (или python scripts/field_check.py) — обязательные строки OK, версия = VERSION; tNav Cluster может быть пропущен.\n"
         "5. Health Check форма n8n → PASS; mas_version в Runtime Config = VERSION.\n"
     )
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:

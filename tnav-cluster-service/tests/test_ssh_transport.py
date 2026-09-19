@@ -63,6 +63,14 @@ def test_commands_and_uploads_go_over_ssh(settings, cluster) -> None:
         assert shell.read_text("MODELS/SEVER/INCLUDE/SCHEDULE/FROM_SFTP.INC", limit=4000) == NEW_SCHEDULE
 
 
+def test_one_ssh_session_runs_several_commands(settings) -> None:
+    """CASE-6aad611c-732bd3: mock used to close the transport after the first exec (EOFError on hostname)."""
+    with SshShell(settings) as shell:
+        assert shell.is_dir(".")
+        shell.run(["hostname"])
+        assert "cluster" in shell.pwd()
+
+
 def test_bad_password_is_a_cluster_error(settings) -> None:
     broken = settings.model_copy(update={"ssh": settings.ssh.model_copy(update={"password": None, "key_path": "", "user": "re"})})
     assert broken.ready is False, "без пароля и ключа сервис сам сообщает, чего не хватает"

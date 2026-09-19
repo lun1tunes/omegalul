@@ -90,8 +90,13 @@ const catalogue=()=>({contract:'schedule_schema_catalogue',contract_version:'1.0
  const fromSheet=await collect({documents:[{contract:'schedule_knowledge_block',knowledge_id:'x',text:'hello',target_base:'schedule_mvp'}]});
  assert.equal(fromSheet.length, 1);
  assert.equal(fromSheet[0].json.knowledge_id, 'x');
- const fromWebhook=await collect({body:{documents:[{contract:'schedule_knowledge_block',knowledge_id:'y',text:'hello',target_base:'excel_protocol'}]}});
+ assert.equal(fromSheet[0].json.purge_superseded, false);
+ const fromWebhook=await collect({body:{documents:[{contract:'schedule_knowledge_block',knowledge_id:'y',text:'hello',target_base:'excel_protocol'}],purge_superseded:true}});
  assert.equal(fromWebhook[0].json.knowledge_id, 'y');
+ assert.equal(fromWebhook[0].json.purge_superseded, true);
+ const oneCard=await collect({body:{documents:[{contract:'schedule_knowledge_block',knowledge_id:'keep',text:'a',target_base:'schedule_mvp'},{contract:'schedule_knowledge_block',knowledge_id:'drop',text:'b',target_base:'schedule_mvp'}],knowledge_id:'keep'}});
+ assert.equal(oneCard.length, 1);
+ assert.equal(oneCard[0].json.knowledge_id, 'keep');
  const skipTmpl=await collect({documents:[{role:'injection_template',do_not_ingest:true,knowledge_id:'tmpl',text:'x',target_base:'schedule_mvp'}]});
  assert.equal(skipTmpl[0].json.collect_error, 'CORPUS_EMPTY');
  const prepSrc=src(ingestion,'Prepare RAG inventory query');
@@ -156,7 +161,18 @@ const catalogue=()=>({contract:'schedule_schema_catalogue',contract_version:'1.0
  assert.equal(retrievalPg.parameters.tableName,'tnavigator_schedule_knowledge_v2');
  const lookupSql=ingestion.nodes.find(n=>n.name==='Lookup existing knowledge keys').parameters.query;
  assert.ok(lookupSql.includes('in_vector'));
+ assert.ok(lookupSql.includes('stored_text'));
  assert.ok(lookupSql.includes('tnavigator_schedule_knowledge_v2'));
+ assert.ok(ingestion.nodes.find(n=>n.name==='Prepare superseded chunk purge'));
+ assert.ok(ingestion.nodes.find(n=>n.name==='Postgres — purge superseded chunks'));
+ const form=ingestion.nodes.find(n=>n.name==='SCHEDULE manual ingestion form');
+ assert.ok(JSON.stringify(form.parameters.formFields).includes('purge_superseded'));
+ const skipTargets=(ingestion.connections['New knowledge to insert?'].main[1]||[]).map(c=>c.node);
+ assert.deepEqual(skipTargets, ['Prepare superseded chunk purge']);
+ const catalogueTargets=(ingestion.connections['PostgreSQL — upsert approved schema catalogue'].main[0]||[]).map(c=>c.node);
+ assert.deepEqual(catalogueTargets, ['Prepare superseded chunk purge']);
+ const purgeTargets=(ingestion.connections['Postgres — purge superseded chunks'].main[0]||[]).map(c=>c.node);
+ assert.deepEqual(purgeTargets, ['Prepare RAG inventory query']);
  async function selectNew(lookupRows, collected){
   const fn=new AsyncFunction('$input','$', src(ingestion,'Select new MAS knowledge'));
   return fn({all:()=>lookupRows.map(json=>({json}))}, (name)=>{
@@ -165,11 +181,26 @@ const catalogue=()=>({contract:'schedule_schema_catalogue',contract_version:'1.0
   });
  }
  const card={knowledge_id:'wconprod-v1',revision:'1',target_base:'schedule_mvp',text:'x'};
- const parentOnly=await selectNew([{target_base:'schedule_mvp',knowledge_id:'wconprod-v1',revision:'1',in_vector:false}], [card]);
+ const parentOnly=await selectNew([{target_base:'schedule_mvp',knowledge_id:'wconprod-v1',revision:'1',in_vector:false,stored_text:'old'}], [card]);
  assert.equal(parentOnly[0].json.ingest_action,'insert');
- const already=await selectNew([{target_base:'schedule_mvp',knowledge_id:'wconprod-v1',revision:'1',in_vector:true}], [card]);
+ const already=await selectNew([{target_base:'schedule_mvp',knowledge_id:'wconprod-v1',revision:'1',in_vector:true,stored_text:'x',content_hash:'sha256:aaa'}], [card]);
  assert.equal(already[0].json.ingest_action,'skip_all');
- const pgTrue=await selectNew([{target_base:'schedule_mvp',knowledge_id:'wconprod-v1',revision:'1',in_vector:'t'}], [card]);
+ const pgTrue=await selectNew([{target_base:'schedule_mvp',knowledge_id:'wconprod-v1',revision:'1',in_vector:'t',stored_text:'x'}], [card]);
  assert.equal(pgTrue[0].json.ingest_action,'skip_all');
+ const changed=await selectNew(
+  [{target_base:'schedule_mvp',knowledge_id:'wconprod-v1',revision:'1',in_vector:true,stored_text:'old text',content_hash:'sha256:old'}],
+  [{...card,text:'new text',content_hash:'sha256:new',purge_superseded:true}]
+ );
+ assert.equal(changed[0].json.ingest_action,'needs_input');
+ assert.equal(changed[0].json.status,'needs_input');
+ assert.equal(changed[0].json.findings[0].code,'CONTENT_HASH_CHANGED_BUMP_REVISION');
+ assert.equal(changed[0].json.purge_superseded, true);
+ const invSkip=await summarize(
+  {expected_document_ids:['live-a','live-b'],rag_table_name:'tnavigator_schedule_knowledge_v2'},
+  [{document_id:'live-a',total_rows:10,distinct_documents:10,embedding_type:'vector'}],
+  {ingest_action:'insert',inserted:1,skipped:1,skipped_ids:[{knowledge_id:'live-b'}]}
+ );
+ assert.equal(invSkip.status,'rag_inventory_ok');
+ assert.deepEqual(invSkip.missing_document_ids,[]);
  console.log('SCHEDULE RAG runtime smoke: 31 scenarios passed');
 })().catch(e=>{console.error(e.stack||e);process.exit(1)});

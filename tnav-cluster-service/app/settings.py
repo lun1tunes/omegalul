@@ -16,10 +16,19 @@ from __future__ import annotations
 
 import os
 import shlex
+from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+
+from mas_agent_kit.env import load_service_env
+
+
+SERVICE_ROOT = Path(__file__).resolve().parents[1]
+
+# ``app/__init__`` already loaded the same files; a second call is idempotent (override=False).
+LOADED_ENV_FILES = load_service_env(SERVICE_ROOT, "tnav-cluster.env")
 
 #: Команда расчёта по умолчанию: путь к исполняемому файлу, опции, затем модель.
 #: Опции — из мануала tNavigator, раздел 8.1 («Опции командной строки»):
@@ -84,6 +93,9 @@ class ClusterSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    #: Слушатель FastAPI. Поле: ``TNAV_CLUSTER_HOST=0.0.0.0``, чтобы корпоративный n8n достучался.
+    listen_host: str = "127.0.0.1"
+    listen_port: int = Field(default=8400, ge=1, le=65535)
     #: ``ssh`` — поле (paramiko); ``local`` — лаборатория и тесты (та же оболочка в песочнице).
     transport: Literal["ssh", "local"] = "ssh"
     #: Единственный базовый каталог, внутри которого агент вообще умеет работать.
@@ -194,6 +206,8 @@ class ClusterSettings(BaseModel):
             keepalive_s=_env_int(src, "TNAV_SSH_KEEPALIVE_S", 30),
         )
         return cls(
+            listen_host=_env(src, "TNAV_CLUSTER_HOST", "127.0.0.1") or "127.0.0.1",
+            listen_port=_env_int(src, "TNAV_CLUSTER_PORT", 8400),
             transport="local" if _env(src, "TNAV_TRANSPORT", "ssh").lower() == "local" else "ssh",
             root=_env(src, "TNAV_CLUSTER_ROOT", "/data/models"),
             ssh=ssh,

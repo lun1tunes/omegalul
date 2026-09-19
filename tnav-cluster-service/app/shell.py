@@ -256,7 +256,9 @@ class ClusterShell(ABC):
     def process_alive(self, pid: int) -> bool:
         if int(pid or 0) <= 0:
             return False
-        return self.run(["ps", "-p", str(int(pid))]).ok
+        # python:3.11-slim (lab) has no `ps`. Linux cluster has /proc/<pid> while the process lives.
+        # CASE-6aad780d-952112: `ps` missing → alive=false → nohup console treated as .err → failed.
+        return self.run(["test", "-d", f"/proc/{int(pid)}"]).ok or self.run(["ps", "-p", str(int(pid))]).ok
 
 
 class LocalShell(ClusterShell):

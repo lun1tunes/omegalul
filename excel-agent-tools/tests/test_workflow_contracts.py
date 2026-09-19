@@ -113,6 +113,9 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
         "Call Knowledge Retrieval",
         "Call Knowledge Retrieval",
         "Call Knowledge Retrieval",
+        "Retrieve knowledge",
+        "Retrieve knowledge",
+        "Retrieve knowledge",
     ]
     assert [binding["owner"] for binding in bindings] == [
         "Orchestrator — MAS",
@@ -120,6 +123,9 @@ def test_ui_import_manifest_is_complete_and_matches_static_bindings() -> None:
         "Agent — Schedule Builder",
         "Agent — tNav Cluster Agent",
         "Orchestrator — MAS",
+        "Agent — Excel Extractor",
+        "Agent — Schedule Builder",
+        "Agent — tNav Cluster Agent",
         "Agent — Excel Extractor",
         "Agent — Schedule Builder",
         "Agent — tNav Cluster Agent",
@@ -482,12 +488,14 @@ def test_orchestrator_routing_cards_plan_follows_the_goal_not_output_provides() 
     excel = cards["route-excel-extractor"]
     thin = cards["route-mas-thin-orchestrator"]
     builder = cards["route-schedule-builder"]
+    cluster = cards["route-cluster-calculation"]
     assert excel["revision"] == "9"
     assert thin["revision"] == "7"
-    assert builder["revision"] == "11"
-    for card in (excel, thin, builder):
+    assert builder["revision"] == "12"
+    assert cluster["revision"] == "6"
+    for card in (excel, thin, builder, cluster):
         assert "baseline" not in card["text"]
-        for agent_id in ("excel_extractor", "schedule_builder", "calculation_agent"):
+        for agent_id in ("excel_extractor", "schedule_builder", "calculation_agent", "tnav_cluster"):
             assert agent_id not in card["text"]
     assert "не заказывай параметры новых скважин «на всякий случай»" in excel["text"]
     assert "не копируй все ключи output_provides" in excel["text"]
@@ -495,6 +503,10 @@ def test_orchestrator_routing_cards_plan_follows_the_goal_not_output_provides() 
     assert "не ожидая ключей output_provides, которых цель не требовала" in thin["text"]
     assert "для сдвига дат — факты ввода" in builder["text"]
     assert "именованный набор" in builder["text"]
+    assert "гидродинамическом кластере" in builder["text"]
+    assert cluster["topics"] == ["model_version", "run_status", "run_results"]
+    assert "absent_agent" not in (cluster.get("topics") or [])
+    assert "приложенный готовый файл расписания" in cluster["text"].lower()
 
 def test_legacy_excel_mas_workflow_is_removed() -> None:
     gone = (
@@ -737,6 +749,7 @@ def test_rag_ingestion_has_ui_only_postgres_inventory_check() -> None:
     assert by_name["Finalize indexes and deduplicate chunks"].get("executeOnce") is True
     lookup_sql = by_name["Lookup existing knowledge keys"]["parameters"]["query"]
     assert "in_vector" in lookup_sql
+    assert "stored_text" in lookup_sql
     assert "tnavigator_schedule_knowledge_v2" in lookup_sql
     ensure_sql = by_name["Ensure parent knowledge tables"]["parameters"]["query"]
     assert "CREATE TABLE IF NOT EXISTS tnavigator_schedule_knowledge_v2" in ensure_sql
@@ -745,13 +758,16 @@ def test_rag_ingestion_has_ui_only_postgres_inventory_check() -> None:
     assert connections["Finalize indexes and deduplicate chunks"]["main"][0][0]["node"] == "Prepare full parent knowledge persistence"
     assert connections["Prepare full parent knowledge persistence"]["main"][0][0]["node"] == "PostgreSQL — upsert full parent knowledge"
     assert connections["PostgreSQL — upsert full parent knowledge"]["main"][0][0]["node"] == "Prepare approved schema catalogue persistence"
-    assert connections["New knowledge to insert?"]["main"][1][0]["node"] == "Prepare RAG inventory query"
+    assert connections["New knowledge to insert?"]["main"][1][0]["node"] == "Prepare superseded chunk purge"
+    assert connections["PostgreSQL — upsert approved schema catalogue"]["main"][0][0]["node"] == "Prepare superseded chunk purge"
+    assert connections["Prepare superseded chunk purge"]["main"][0][0]["node"] == "Postgres — purge superseded chunks"
+    assert connections["Postgres — purge superseded chunks"]["main"][0][0]["node"] == "Prepare RAG inventory query"
     assert connections["Prepare RAG inventory query"]["main"][0][0]["node"] == "Postgres — inspect RAG table contents"
     assert connections["Postgres — inspect RAG table contents"]["main"][0][0]["node"] == "Summarize RAG inventory"
 
 
 def test_rag_embeddings_use_bge_m3_and_v2_table() -> None:
-    """Field contour baai/bge-m3 (1024-d) on tnavigator_schedule_knowledge_v2; skip only in_vector."""
+    """Field contour baai/bge-m3 (1024-d) on tnavigator_schedule_knowledge_v2; skip only matching text/hash in_vector."""
     ingestion = load_json(workflow_path("tnavigator-schedule-knowledge-ingestion.workflow.json"))
     retrieval = load_json(workflow_path("tnavigator-schedule-hybrid-retrieval.workflow.json"))
 
@@ -779,8 +795,9 @@ def test_rag_embeddings_use_bge_m3_and_v2_table() -> None:
         for node in ingestion["nodes"]
         if node["name"] == "Select new MAS knowledge"
     )
-    assert "inVector.has(k)" in select_js
-    assert "existing.has(k)" not in select_js
+    assert "CONTENT_HASH_CHANGED_BUMP_REVISION" in select_js
+    assert "stored_text" in select_js
+    assert "inVector.has(k)" not in select_js
     inventory = next(
         node["parameters"]["jsCode"]
         for node in ingestion["nodes"]
@@ -992,8 +1009,9 @@ def test_mas_corpus_8_5_worked_examples_stubs_and_no_retired_tokens() -> None:
     comments = by_id["schedule-model-file-comments-v1"]
     assert comments["keywords"] == []
     assert str(comments["revision"]) == "4"
+    assert by_id["route-cluster-calculation"]["topics"] == ["model_version", "run_status", "run_results"]
+    assert "absent_agent" not in (by_id["route-cluster-calculation"].get("topics") or [])
     for kid in (
-        "route-cluster-calculation",
         "route-binary-results",
         "route-presentation",
         "route-calculation",

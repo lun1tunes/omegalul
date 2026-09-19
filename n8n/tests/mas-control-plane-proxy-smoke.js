@@ -148,4 +148,24 @@ assert.deepEqual(
   ['CASE-a', 'CASE-b', 'CASE-c'],
 );
 
+const revReq = normalize({
+  body: { operation: 'list_knowledge_revisions', target_base: 'schedule_mvp', knowledge_id: 'dates-v1' },
+}, 'webhook');
+assert.equal(revReq[0].json.operation, 'list_knowledge_revisions');
+assert.ok(revReq[0].json.query.includes('tnavigator_schedule_knowledge_documents_v1'));
+assert.deepEqual(revReq[0].json.params, ['schedule_mvp', 'dates-v1']);
+assert.throws(
+  () => normalize({ body: { operation: 'list_knowledge_revisions', target_base: 'schedule_mvp' } }, 'webhook'),
+  /knowledge_id/,
+);
+const revFormatted = format({
+  prepared: [{ operation: 'list_knowledge_revisions', query: 'SELECT 1', params: ['schedule_mvp', 'dates-v1'] }],
+  incoming: [
+    { json: { revision: '2', status: 'active' }, pairedItem: 0 },
+    { json: { revision: '1', status: 'superseded' }, pairedItem: 1 },
+  ],
+});
+assert.equal(revFormatted[0].json.ok, true);
+assert.equal(revFormatted[0].json.result.length, 2);
+
 console.log('mas-control-plane-proxy-smoke: ok');

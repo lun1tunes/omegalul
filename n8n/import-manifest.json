@@ -82,6 +82,24 @@
       "node": "Call Knowledge Retrieval",
       "target": "MAS — Knowledge Retrieval",
       "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    },
+    {
+      "owner": "Agent — Excel Extractor",
+      "node": "Retrieve knowledge",
+      "target": "MAS — Knowledge Retrieval",
+      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    },
+    {
+      "owner": "Agent — Schedule Builder",
+      "node": "Retrieve knowledge",
+      "target": "MAS — Knowledge Retrieval",
+      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
+    },
+    {
+      "owner": "Agent — tNav Cluster Agent",
+      "node": "Retrieve knowledge",
+      "target": "MAS — Knowledge Retrieval",
+      "placeholder": "REPLACE_SCHEDULE_RAG_RETRIEVAL_IN_UI"
     }
   ],
   "health_check": {
@@ -139,23 +157,23 @@
   ],
   "ui_configuration": [
     "Field import is runtime_import_order (10 core JSON). Lab also imports support/demo-agent.workflow.json.",
-    "Agent — tNav Cluster Agent (hydrodynamic cluster over SSH): import the workflow, set tnav_cluster_url in MAS — Runtime Config (http://<IP-Windows>:8400), bind its Runtime configuration → MAS — Runtime Config and Call Knowledge Retrieval → MAS — Knowledge Retrieval, bind the Qwen credential on tNav Cluster Agent Agent chat. The registry row is seeded enabled=false: enable it in Activity → Агенты only after tnav-cluster.env has the cluster address, user, password, base path and the tNavigator command (see docs.md «Кластерный агент»).",
+    "Agent — tNav Cluster Agent (hydrodynamic cluster over SSH): import the workflow, set tnav_cluster_url in MAS — Runtime Config (http://<IP-Windows>:8400), bind Runtime configuration → MAS — Runtime Config and BOTH Call Knowledge Retrieval and Retrieve knowledge → MAS — Knowledge Retrieval, bind the Qwen credential on tNav Cluster Agent Agent chat. The registry row is seeded enabled=false: enable it in Activity → Агенты only after tnav-cluster.env has the cluster address, user, password, base path and the tNavigator command (see docs.md «Кластерный агент»). tnav-cluster.env is read by Python load_service_env, not by start-windows.bat.",
     "Do not create n8n Data Tables for live case state.",
-    "Bind Orchestrator — MAS: Call Knowledge Retrieval → MAS — Knowledge Retrieval (selector target_base=orchestrator_routing). Bind Call Knowledge Retrieval on Excel Extractor (excel_protocol) and Schedule Builder (schedule_mvp). Agents are NOT bound as nodes: Orchestrator's universal Call agent (n8n) takes the workflow id from agent_registry.invoke (seeded by Control Plane Proxy schema). After UI import n8n assigns new ids — copy each agent workflow id (URL of the open workflow) into MAS — Runtime Config → agent_workflow_ids as {\"excel_extractor\":\"<id>\",\"schedule_builder\":\"<id>\"}. Adding an agent = import its workflow + POST {\"operation\":\"upsert_agent\",\"row\":{...}} to the Control Plane Proxy (no orchestrator regen).",
-    "Bind Runtime endpoints / Runtime configuration → MAS — Runtime Config on Orchestrator, Excel Extractor, and Schedule Builder. Edit the four URLs once in MAS — Runtime Config (lab Docker DNS in git; field = http://<IP-Windows>:8200/:8000/:8090/:8100). math_url has no /agent/run suffix.",
+    "Bind Orchestrator — MAS: Call Knowledge Retrieval → MAS — Knowledge Retrieval (selector target_base=orchestrator_routing). On each agent workflow bind BOTH Call Knowledge Retrieval (startup summaries) and Retrieve knowledge (on-demand full text) → MAS — Knowledge Retrieval: Excel excel_protocol, Schedule schedule_mvp, Cluster specialist_template. Agents are NOT bound as nodes: Orchestrator's universal Call agent (n8n) takes the workflow id from agent_registry.invoke (seeded by Control Plane Proxy schema). After UI import n8n assigns new ids — copy each agent workflow id (URL of the open workflow) into MAS — Runtime Config → agent_workflow_ids as {\"excel_extractor\":\"<id>\",\"schedule_builder\":\"<id>\",\"tnav_cluster\":\"<id>\"}. Adding an agent = import its workflow + POST {\"operation\":\"upsert_agent\",\"row\":{...}} to the Control Plane Proxy (no orchestrator regen).",
+    "Bind Runtime endpoints / Runtime configuration → MAS — Runtime Config on Orchestrator, Excel Extractor, Schedule Builder, and tNav Cluster Agent. Edit the URLs once in MAS — Runtime Config (lab Docker DNS in git; field = http://<IP-Windows>:8200/:8000/:8090/:8100 and :8400 if the cluster agent is used). math_url has no /agent/run suffix.",
     "Excel Tools: no Header Auth. Do not put a service key in MAS — Runtime Config.",
     "Windows host needs Python 3.11-3.13 venv only (no Node, no Docker). Calculation agent is agent_registry.invoke {kind:http,url:\"{math_url}/agent/run\"} — math_url from MAS — Runtime Config, no /agent/run suffix there. Do not import Agent — Calculation (Math Service).",
     "Bind Header Auth on Orchestrator webhook and Control Plane Proxy webhook. Activate Control Plane Proxy first, POST {\"operation\":\"schema\"}, then start Activity.",
-    "Settings → Error workflow = Error — MAS Node Traces on Orchestrator, Excel Extractor, Schedule Builder, Retrieval, Ingestion. Not on the error workflow itself or Control Plane Proxy.",
-    "Seed agent_registry via Control Plane Proxy schema (excel_extractor, calculation_agent, schedule_builder). Orchestrator calls Knowledge Retrieval with target_base=orchestrator_routing (routing_card only). Excel LLM path uses excel_protocol; Schedule LLM path uses schedule_mvp.",
+    "Settings → Error workflow = Error — MAS Node Traces on Orchestrator, Excel Extractor, Schedule Builder, tNav Cluster Agent (if imported), Retrieval, Ingestion. Not on the error workflow itself or Control Plane Proxy.",
+    "Seed agent_registry via Control Plane Proxy schema (excel_extractor, calculation_agent, schedule_builder, tnav_cluster enabled=false). Orchestrator calls Knowledge Retrieval with target_base=orchestrator_routing (routing_card only). Excel LLM path uses excel_protocol; Schedule LLM path uses schedule_mvp; Cluster uses specialist_template.",
     "Optional: Activity Knowledge → Загрузить в RAG (MAS — Knowledge Ingestion). Live Excel/Schedule LLM paths call the same Retrieval with excel_protocol / schedule_mvp. Bind Call Knowledge Retrieval on Orchestrator, Excel Extractor, and Schedule Builder.",
     "Run Form — MAS Deployment Health Check before activating the Orchestrator. Bind its Runtime endpoints → MAS — Runtime Config and the Header Auth credential on both webhook probes. Field target: PASS (0 FAIL, 0 TODO); PASS_WITH_TODO only means lab Docker DNS names are still in Runtime Config.",
-    "Keep every workflow inactive until placeholders and credentials are resolved. Activate Proxy, then Ingestion/Retrieval/Excel/Schedule/Error, then Orchestrator.",
+    "Keep every workflow inactive until placeholders and credentials are resolved. Activate Proxy, then Ingestion/Retrieval/Excel/Schedule/Cluster(if imported)/Error, then Orchestrator.",
     "Engineers start tasks in Activity UI POST /cases (http://<IP>:8200).",
     "Adding an agent (Phase 4): copy agents-template/demo_agent (FastAPI on mas-agent-kit) + n8n/templates/agents/<agent_id>.py (AgentSpec), run generate_<agent>.py, import the workflow, set <service_url_key> in MAS — Runtime Config, enable the row in Activity /registry (or PUT /agents/{agent_id}). Orchestrator is not regenerated. Long agents return status in_progress and finish with POST /cases/{id}/run {action:resume, source:agent, agent_result}."
   ],
   "activation_order": [
-    "Import MAS — Runtime Config, fill Runtime URLs (field: Windows IP), bind Execute Workflow on Orchestrator/Excel/Schedule (Runtime Config) and Call Knowledge Retrieval → MAS — Knowledge Retrieval on Orchestrator, Excel Extractor, and Schedule Builder.",
+    "Import MAS — Runtime Config, fill Runtime URLs (field: Windows IP), bind Execute Workflow on Orchestrator/Excel/Schedule/Cluster (Runtime Config). Bind Call Knowledge Retrieval on the Orchestrator. Bind BOTH Call Knowledge Retrieval and Retrieve knowledge on each agent → MAS — Knowledge Retrieval.",
     "Excel Extractor HTTP nodes have no service credential.",
     "Activate MAS — Control Plane Proxy and POST {\"operation\":\"schema\"}.",
     "Start Activity with CONTROL_PLANE_PROXY_URL; /health control_plane_backend = n8n_proxy.",

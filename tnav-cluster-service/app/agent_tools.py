@@ -121,6 +121,7 @@ def _run_handle(state: dict[str, Any]) -> RunHandle:
     {},
 )
 def list_models(ctx, args: dict[str, Any]) -> dict[str, Any]:
+    agent.tools.result_guard(ctx.state)
     try:
         models = agent.workspace.find_models()
     except ClusterError as exc:
@@ -138,6 +139,7 @@ def list_models(ctx, args: dict[str, Any]) -> dict[str, Any]:
     required=["model"],
 )
 def inspect_model(ctx, args: dict[str, Any]) -> dict[str, Any]:
+    agent.tools.result_guard(ctx.state)
     model = str(args.get("model") or "").strip()
     if not model:
         raise ToolError("model_not_chosen", "Назови путь к входному файлу модели.", available_models=_models(ctx.state)[:20])
@@ -163,6 +165,7 @@ def inspect_model(ctx, args: dict[str, Any]) -> dict[str, Any]:
     },
 )
 def prepare_model_version(ctx, args: dict[str, Any]) -> dict[str, Any]:
+    agent.tools.result_guard(ctx.state)
     layout = _layout(ctx.state, args.get("model"))
     if layout.main_schedule is None:
         raise ToolError(
@@ -245,6 +248,7 @@ def start_calculation(ctx, args: dict[str, Any]) -> dict[str, Any]:
     {},
 )
 def check_calculation(ctx, args: dict[str, Any]) -> dict[str, Any]:
+    agent.tools.result_guard(ctx.state)
     handle = _run_handle(ctx.state)
     try:
         status = agent.workspace.status(handle)

@@ -15,6 +15,14 @@ class KnowledgeDocumentPatch(BaseModel):
     keywords: list[str] | None = None
     topics: list[str] | None = None
     task_patterns: list[str] | None = None
+    knowledge_type: str | None = Field(default=None, min_length=1, max_length=120)
+    status: str | None = Field(default=None, min_length=1, max_length=40)
+
+
+class KnowledgeIngestRequest(BaseModel):
+    target_base: str | None = Field(default=None, max_length=120)
+    knowledge_id: str | None = Field(default=None, max_length=119)
+    purge_superseded: bool = False
 
 
 class KnowledgeDocumentCreate(BaseModel):

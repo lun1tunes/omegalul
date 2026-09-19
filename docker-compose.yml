@@ -84,11 +84,14 @@ services:
   # exec + SFTP) — тем же транспортом, что в поле. Мок поднимается первым, дерево моделей — /cluster.
   tnav-cluster:
     image: python:3.11-slim
+    # Same entry as field start-windows.bat (`python -m app`). Bind must be process env: a bind-mounted
+    # tnav-cluster.env often has 127.0.0.1, and load_service_env(override=False) will not overwrite it.
     command: >
-      sh -c "pip install -r requirements.txt &&
+      sh -c "set -e;
+             pip install -r requirements.txt;
              python3 mock_cluster/lab_cluster.py &
-             sleep 6 &&
-             python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8400"
+             sleep 6;
+             exec python3 -m app"
     working_dir: /app
     volumes:
       - ./tnav-cluster-service:/app
@@ -96,6 +99,8 @@ services:
       - ./VERSION:/app/VERSION:ro
     environment:
       - ACTIVITY_BASE_URL=${ACTIVITY_BASE_URL:-http://mas-activity:8200}
+      - TNAV_CLUSTER_HOST=0.0.0.0
+      - TNAV_CLUSTER_PORT=8400
       - TNAV_SESSIONS_DIR=/tmp/tnav-sessions
       # Лаборатория: мок кластера в этом же контейнере, доступ по паролю.
       - TNAV_TRANSPORT=ssh

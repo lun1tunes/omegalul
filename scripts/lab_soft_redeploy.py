@@ -60,6 +60,7 @@ PUBLISH = [
     "Agent — Schedule Builder",
     "Agent — Excel Extractor",
     "Agent — Demo Agent",
+    "Agent — tNav Cluster Agent",
     "Orchestrator — MAS",
     "Form — MAS Deployment Health Check",
 ]

@@ -9,10 +9,8 @@ if [[ ! -f tnav-cluster.env ]]; then
   echo "ERROR: tnav-cluster.env missing. Copy tnav-cluster.env.example → tnav-cluster.env"
   exit 1
 fi
-set -a
-# shellcheck disable=SC1091
-source tnav-cluster.env
-set +a
-echo "Starting tNav Cluster Agent at http://${TNAV_CLUSTER_HOST:-127.0.0.1}:${TNAV_CLUSTER_PORT:-8400}"
+# Do not source the env file here — passwords with spaces/"=" and a UTF-8 BOM break bash too.
+# Python load_service_env (utf-8-sig) reads tnav-cluster.env, same as mas-activity-service.
+echo "Starting tNav Cluster Agent. Env is loaded from tnav-cluster.env by Python, not by this script."
 echo "Keep this terminal open. Ctrl+C to stop."
-exec .venv/bin/python -m uvicorn app.main:app --host "${TNAV_CLUSTER_HOST:-127.0.0.1}" --port "${TNAV_CLUSTER_PORT:-8400}"
+exec .venv/bin/python -m app

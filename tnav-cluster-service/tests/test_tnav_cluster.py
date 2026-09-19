@@ -21,7 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.agent import TnavClusterAgent
-from app.cluster import ClusterWorkspace
+from app.cluster import ClusterWorkspace, _state_of
 from app.model_files import count_dates, parse_deck
 from app.settings import ClusterSettings
 from app.shell import ClusterError, CommandNotAllowed, LocalShell, PathOutsideRoot
@@ -175,7 +175,26 @@ def test_settings_read_the_field_variables() -> None:
     assert parsed.simulator_program() == "/opt/tNavigator/tNavigator-con"
     assert parsed.simulator_options() == ["--cpu-num=16"]
     assert parsed.poll_seconds == 30
+    assert parsed.listen_host == "127.0.0.1" and parsed.listen_port == 8400
     assert "secret" not in json.dumps(parsed.secret_free()), "пароль не попадает в лог разработчика"
+
+
+def test_settings_keep_password_equals_and_listen_bind() -> None:
+    """CMD ``for /f tokens=1,* delims==`` would split ``p@ss=word``; Python dotenv must not."""
+    parsed = ClusterSettings.from_env(
+        {
+            "TNAV_SSH_HOST": "cluster.local",
+            "TNAV_SSH_USER": "re",
+            "TNAV_SSH_PASSWORD": "p@ss=word",
+            "TNAV_CLUSTER_HOST": "0.0.0.0",
+            "TNAV_CLUSTER_PORT": "8400",
+            "TNAV_CLUSTER_ROOT": "/data/models",
+            "TNAV_CLI_COMMAND": "/opt/tNavigator/tNavigator-con --cpu-num=8 {model}",
+        }
+    )
+    assert parsed.ssh.password is not None
+    assert parsed.ssh.password.get_secret_value() == "p@ss=word"
+    assert parsed.listen_host == "0.0.0.0" and parsed.listen_port == 8400
 
 
 def test_service_starts_without_credentials_and_says_what_is_missing() -> None:
@@ -292,6 +311,14 @@ def test_create_version_refuses_to_overwrite(workspace, cluster) -> None:
 # -- расчёт ----------------------------------------------------------------------------------------------
 
 
+def test_console_banner_is_not_failure_while_lock_is_present() -> None:
+    """CASE-6aad780d-952112: nohup console (banner + «Команда:») is not .err while .lock exists."""
+    digest = LogDigest(finished=False, steps=1, current_date="1 FEB 2027")
+    banner = "tNavigator 24.4 (mock console build)\nКоманда: python3 tnav_con_mock.py --dump-res MODEL"
+    assert _state_of(alive=False, lock=True, digest=digest, end_report=None, error_tail=banner) == "running"
+    assert _state_of(alive=False, lock=False, digest=digest, end_report=None, error_tail=banner) == "failed"
+
+
 def test_run_finishes_and_reports_the_facts(workspace, cluster) -> None:
     layout = workspace.layout(cluster["sever"])
     handle = workspace.launch(layout.data_path, dates_total=layout.dates_total)
@@ -382,6 +409,7 @@ def test_health_lists_tools_and_the_cluster_config(client: TestClient) -> None:
     assert body["tools"] == ["list_models", "inspect_model", "prepare_model_version", "start_calculation", "check_calculation", "ask_engineer"]
     assert body["cluster_ready"] is True and body["cluster"]["root"].endswith("cluster")
     assert body["cluster_problems"] == []
+    assert "env_files" in body
 
 
 def test_full_flow_prepares_a_version_and_runs_it(client: TestClient, agent: TnavClusterAgent, activity_url: str, cluster) -> None:
@@ -407,6 +435,11 @@ def test_full_flow_prepares_a_version_and_runs_it(client: TestClient, agent: Tna
     pending = client.get(f"/sessions/{sid}/result").json()
     assert pending["status"] == "in_progress" and pending["watch"]["kind"] == "cluster_run"
     assert human_text_problems(pending["message"]) == []
+    # CASE-6aad7bd4-871c26: Qwen kept calling check_calculation; the mock finished first and
+    # finish_task raced the agent loop — never waiting_agent, two agent.result, tool_calls=7.
+    blocked = client.post("/agent-tools/check_calculation", json={"session_id": sid}).json()
+    assert blocked["ok"] is False and blocked["code"] == "result_already_stored"
+    assert "error" not in blocked
 
     wait_for_run(agent, sid)
     resume = [call for call in _FakeActivity.calls if call["path"].endswith("/run")]

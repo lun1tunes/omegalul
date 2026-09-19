@@ -279,6 +279,10 @@ async function run(name, json, nodes = {}, binary = {}) {
       { id: 'p2', status: 'done', agent_id: 'schedule_builder' },
       { id: 'p3', status: 'pending', agent_id: 'demo_agent' },
     ], registry, { inputs: [] }), ['well_count', 'wells', 'completion']);
+    const clusterOn = registry.concat([{ agent_id: 'tnav_cluster', enabled: true, input_required: [], output_provides: ['model_version', 'run_status', 'run_results'] }]);
+    assert.deepEqual(helpers.planRetrievalTopics([], clusterOn, { inputs: [{ role: 'schedule_source' }] }), ['schedule_source', 'well_count', 'wells', 'model_version', 'run_status', 'run_results', 'completion']);
+    const clusterOff = registry.concat([{ agent_id: 'tnav_cluster', enabled: false, input_required: [], output_provides: ['model_version', 'run_status', 'run_results'] }]);
+    assert.deepEqual(helpers.planRetrievalTopics([], clusterOff, { inputs: [{ role: 'excel' }, { role: 'schedule_source' }] }), ['excel', 'schedule_source', 'well_count', 'wells', 'completion']);
   }
   {
     // Two workbooks in one case: the first keeps the `excel` slot, the second survives as an attachment

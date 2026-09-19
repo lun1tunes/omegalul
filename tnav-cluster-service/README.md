@@ -11,7 +11,8 @@
 
 ```
 tnav-cluster-service/
-├── app/__init__.py       # кладёт ../mas-agent-kit в sys.path (kit — модуль репозитория, не pip-пакет)
+├── app/__init__.py       # kit на sys.path + load_service_env(tnav-cluster.env), не CMD for /f
+├── app/__main__.py       # python -m app: host/port из ClusterSettings
 ├── app/settings.py       # ClusterSettings (pydantic v2): SSH, корень, команда расчёта, таймауты
 ├── app/shell.py          # ClusterShell → SshShell (paramiko exec+SFTP) / LocalShell; белый список команд
 ├── app/model_files.py    # разбор .data: секции, INCLUDE, счёт DATES
@@ -42,6 +43,8 @@ copy tnav-cluster.env.example tnav-cluster.env
 notepad tnav-cluster.env
 start-windows.bat
 ```
+
+`start-windows.bat` не парсит файл: Python читает `tnav-cluster.env` через kit `load_service_env` (`utf-8-sig`), как Activity. CMD `for /f` на поле ломал BOM и пароли с `=`.
 
 | Переменная | Что вписать | Пример |
 |---|---|---|

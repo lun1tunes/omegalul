@@ -7,3 +7,5 @@
 fastapi>=0.115.14,<0.116
 # Cross-platform advisory file locks for disk-backed sessions (Windows msvcrt + Unix fcntl).
 filelock>=3.15,<4.0
+# Field ``*.env`` loader (utf-8-sig). Same contract as MAS Activity — not CMD ``for /f``.
+python-dotenv>=1,<2

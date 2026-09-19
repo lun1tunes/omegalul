@@ -81,7 +81,7 @@ flowchart TB
 
 Третий агент — **кластерный** (`tNav Cluster Agent`): по SSH находит модель на ГД-кластере, подкладывает новое расписание рядом со старым, делает копию входного `.data` с новым `INCLUDE`, запускает расчёт `tNavigator` и сам сообщает в чат, сколько он считался и чем закончился. Он **выключен из коробки** — включается после того, как вы впишете доступ к кластеру (раздел «8. Кластерный агент»). Ничего не удаляет: `rm` запрещён в коде.
 
-Ещё нет: выгрузки результатов расчёта с кластера (профили, отчёты) — агент возвращает состояние и время расчёта, но не забирает файлы результатов. Широкий набор живых кейсов (два вопроса от разных агентов, перепривязка и даты в одной задаче, несколько INCLUDE) — после 6.2.
+Ещё нет: выгрузки результатов расчёта с кластера (профили, отчёты) — агент возвращает состояние и время расчёта, файлы из `RESULTS` не забирает. Широкий набор живых кейсов (два вопроса от разных агентов, перепривязка и даты в одной задаче, несколько INCLUDE) — Фаза 12 плана, не в этой сборке.
 
 Если оркестратор импортирован до правки thinking: в **Orchestrator — MAS** должны быть HTTP-ноды **Decision chat**, **Verify chat**, **Interpret chat**. У агентов Excel / Schedule / Demo — HTTP-нода **Agent chat**. На все эти ноды — тот же OpenAI-compatible credential; в Runtime Config заполнен `chat_base_url`. Иначе свободный ответ и следующий шаг снова пустеют. Thinking у модели выключен телом запроса (`reasoning.enabled`, `enable_thinking`, `chat_template_kwargs.enable_thinking`), не отдельной нодой языковой модели.
 
@@ -94,10 +94,10 @@ flowchart TB
 - Корпоративный **n8n 2.30.8** — только браузер, без доступа к серверу.
 - **PostgreSQL** с расширением `vector` — ставит DBA, вам выдают учётку для credential в n8n.
 - **Windows** с Python 3.11–3.13 (pip, без Node.js и без Docker).
-- Распакованный проект (четыре каталога сервисов рядом, как в репозитории) и пакет workflows.
+- Распакованный проект (каталоги сервисов рядом, как в репозитории) и пакет workflows.
 - Модель в n8n: credential типа OpenAI-compatible с вашим внутренним Base URL (тот же, что на **Decision chat** и **Agent chat**).
 
-Пакет импорта: в `dist/mas-<версия>.zip` лежат девять JSON, `IMPORT_ORDER.txt` и этот файл. Код сервисов — из распаковки проекта, не из zip.
+Пакет импорта: в `dist/mas-<версия>.zip` лежат десять JSON ядра, `IMPORT_ORDER.txt` и этот файл. Код сервисов — из распаковки проекта, не из zip.
 
 Если проекта на машине ещё нет: на машине с сетью `python3 scripts/project_pack.py pack`, на работе — `python3 project_pack.py unpack` (секреты в архив не входят).
 
@@ -107,7 +107,7 @@ flowchart TB
 
 Делайте по порядку. Activity запускайте только после шага 5 (прокси должен быть включён).
 
-### 1. Четыре сервиса на Windows
+### 1. Сервисы на Windows
 
 | Сервис | Каталог | Порт | Файл настроек |
 |---|---|---|---|
@@ -127,9 +127,11 @@ notepad <сервис>.env
 start-windows.bat
 ```
 
+`start-windows.bat` у Activity и кластерного агента **не читает** `*.env` — файл читает Python (иначе CMD ломает BOM из Блокнота и пароли с `=`). Excel Tools и Schedule Builder пока ещё парсят env через bat: не ставьте в пароль знак `=` и сохраняйте файл без «UTF-8 с BOM», либо дождитесь той же правки.
+
 Если n8n на другом компьютере — в env поставьте `*_HOST=0.0.0.0` и откройте порты в firewall.
 
-Проверка трёх сервисов (Activity ещё может молчать): из корня проекта `check-all-windows.bat`. Версия в `/health` должна совпасть с файлом `VERSION`.
+Проверка обязательных сервисов (Activity ещё может молчать): из корня проекта `check-all-windows.bat`. Версия в `/health` должна совпасть с файлом `VERSION`. Кластерный агент в этой проверке необязателен.
 
 В `mas-activity.env` заранее пропишите адреса **как их видит ваша Windows**:
 
@@ -191,7 +193,7 @@ n8n → **Import from File**, строго по `IMPORT_ORDER.txt`. Пока **�
 
 Excel Tools без Header Auth — ключ в Runtime Config и на агенте не нужен.
 
-Проверка связи: на Windows `check-all-windows.bat` / `python scripts/field_check.py` (`/health` четырёх сервисов, Activity `/ready`). В n8n — форма **MAS Deployment Health Check**.
+Проверка связи: на Windows `check-all-windows.bat` / `python scripts/field_check.py` (`/health` Excel, Schedule, Math, Activity `/ready`; кластерный агент — если запущен, иначе строка пропускается). В n8n — форма **MAS Deployment Health Check**.
 
 #### Матрица секретов и связей
 
@@ -245,7 +247,8 @@ Excel Tools без Header Auth — ключ в Runtime Config и на агент
 |---|---|---|
 | Orchestrator — MAS | Runtime endpoints | MAS — Runtime Config |
 | Каждый агент (Excel, Schedule, кластер) | Runtime configuration | MAS — Runtime Config |
-| Оркестратор и каждый агент | Call Knowledge Retrieval | MAS — Knowledge Retrieval |
+| Оркестратор | Call Knowledge Retrieval | MAS — Knowledge Retrieval |
+| Каждый агент (Excel, Schedule, кластер) | Call Knowledge Retrieval **и** Retrieve knowledge | MAS — Knowledge Retrieval — **две** ноды, обе на один workflow. Первая — краткий срез на старте, вторая — полный текст по запросу модели |
 | Форма Health Check | Runtime endpoints | MAS — Runtime Config; на пробах webhook — тот же Header Auth |
 
 Агентов к оркестратору кнопкой «привязать ноду» не цепляют. После импорта впишите новые id в `Runtime URLs` → `agent_workflow_ids`:
@@ -263,19 +266,22 @@ Settings каждого из: оркестратор, все агенты, Retri
 1. В **MAS — Control Plane Proxy** проверьте Header Auth и Postgres → **Activate**.
 2. Вызовите `POST /webhook/mas-control-plane` с телом `{"operation":"schema"}` и тем же Header Auth. Ответ `ok: true`. Роли n8n нужны права `CREATE TABLE`.
 3. Теперь запускайте Activity (`start-windows.bat` в `mas-activity-service`).
-4. `check-all-windows.bat` — все четыре сервиса OK, Activity `/ready` = 200, в `/health` поле `control_plane_backend` = `n8n_proxy`.
+4. `check-all-windows.bat` — Excel, Schedule, Math и Activity OK, Activity `/ready` = 200, в `/health` поле `control_plane_backend` = `n8n_proxy`. Кластерный сервис в этой проверке необязателен.
 
 Очистку кейсов (`clear`) сами не включайте.
 
 ### 6. База знаний
 
 1. В **MAS — Knowledge Ingestion** те же Postgres и Embeddings, что у Retrieval. Активируйте webhook.
-2. Activity → **База знаний** → **Загрузить в RAG**. Первый ingest после импорта пишет `tnavigator_schedule_knowledge_v2` (`baai/bge-m3`). В ответе должны быть ненулевые срезы для оркестратора и Excel.
+2. Activity → **База знаний**. Вкладки агентов с числом карточек, поиск и клик по тегу идут на сервер (полный текст, не только превью). После правок — **Загрузить в RAG** (весь корпус) или **Загрузить эту карточку**. Галочка «Удалить заменённые фрагменты» снимает из PGVector чанки со статусом superseded. Первый ingest после импорта пишет `tnavigator_schedule_knowledge_v2` (`baai/bge-m3`). В ответе должны быть ненулевые срезы для оркестратора и Excel.
+3. Та же карточка с тем же номером версии, но другим текстом, в RAG не попадёт, пока не поднимете версию (сохранение в UI поднимает её само). Страница знаний не ходит в интернет: шрифты и разметка карточек лежат в `static/vendor/`.
+
+Полевая форма n8n Ingestion по-прежнему принимает вставку JSON; опция `purge_superseded` и поля одной карточки — необязательны.
 
 ### 7. Проверка и включение
 
 1. В n8n откройте `/form/mas-deployment-health-check` (нужна ваша сессия). Цель — **PASS**, ни одного FAIL. Строка версии = `VERSION`.
-2. Активируйте по очереди: Ingestion, Retrieval, Excel Extractor, Schedule Builder, Error traces, **последним** оркестратор.
+2. Активируйте по очереди: Ingestion, Retrieval, Excel Extractor, Schedule Builder, кластерный агент (если импортировали), Error traces, **последним** оркестратор.
 3. Прогоните форму ещё раз.
 
 ### 8. Кластерный агент (расчёт на ГД-кластере)
@@ -293,6 +299,8 @@ copy tnav-cluster.env.example tnav-cluster.env
 notepad tnav-cluster.env
 start-windows.bat
 ```
+
+`start-windows.bat` сам файл не читает: его читает Python (`load_service_env`, как `mas-activity.env`). Иначе CMD ломает пароль с `=` и BOM из Блокнота.
 
 #### 8.2. Куда вписывать адрес кластера, логин и пароль
 
@@ -348,7 +356,7 @@ TNAV_CLI_COMMAND=/opt/tNavigator/tNavigator-con --cpu-num=8 --log-lang=ru --dump
 #### 8.6. Что сделать в n8n
 
 1. **Import from File** → `Agent — tNav Cluster Agent` (шестым в порядке импорта).
-2. В нём привязать: `Runtime configuration` → **MAS — Runtime Config**, `Call Knowledge Retrieval` → **MAS — Knowledge Retrieval**, на `tNav Cluster Agent Agent chat` — тот же OpenAI-compatible credential, что на Decision chat.
+2. В нём привязать: `Runtime configuration` → **MAS — Runtime Config**, **обе** ноды `Call Knowledge Retrieval` и `Retrieve knowledge` → **MAS — Knowledge Retrieval**, на `tNav Cluster Agent Agent chat` — тот же OpenAI-compatible credential, что на Decision chat.
 3. Settings этого workflow → **Error workflow** = `Error — MAS Node Traces`.
 4. В **MAS — Runtime Config** → `Runtime URLs`: `tnav_cluster_url` = `http://<IP-этой-Windows>:8400`.
 5. Там же в `agent_workflow_ids` добавить `"tnav_cluster":"<id из адресной строки этого workflow>"`.
@@ -386,7 +394,7 @@ Activity → **Агенты** → строка `tNav Cluster Agent` → вклю
 |---|---|---|
 | `orchestrator.decision` | шаг оркестратора | действие, `guard`, токены, `finish_reason`; в payload всегда `llm` и `rag`. В логе **после** `trace.rag` / `trace.llm` того же шага |
 | `trace.llm` | ход модели (Decision / Verify / Interpret / агент `role=agent`) | токены, `finish_reason`; `length` = ответ съеден thinking — гейт `llm_truncated`. Промпт — блоки `role` + текст, не одна JSON-строка |
-| `trace.rag` | запрос в базу знаний | query, status, карточки (`knowledge_id`, score, ветки). `unavailable` / 0 карточек у Schedule Builder на задачах «даты ввода» пока ожидаемо |
+| `trace.rag` | запрос в базу знаний | query, status, карточки (`knowledge_id`, score, ветки). На задачах «даты ввода» у Builder должен быть `ready` и ненулевой срез; пустой срез — дефект (`rag_empty`) |
 | `trace.tool` | вызов инструмента FastAPI | имя, ok, длительность, аргументы; в α2 не входит `retrieve_knowledge` |
 | `orchestrator.resume` | продолжение `source=agent` или `system` | ссылка на execution, если в payload есть `execution_id` и `workflow_id` |
 | `system.node_error` | упал узел n8n | имя узла + ссылка на execution |
